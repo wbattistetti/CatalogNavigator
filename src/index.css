@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: #0d0d0d;
+    font-size: 18px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0a1510;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2d6a4a;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3d8a60;
+  }
+}
+
+/* Word document rendered HTML */
+.word-content {
+  color: #c8e8d0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+.word-content h1, .word-content h2, .word-content h3 {
+  color: #6ee7b7;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.word-content p { margin-bottom: 0.75em; }
+.word-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1em;
+}
+.word-content td, .word-content th {
+  border: 1px solid #1a3a2a;
+  padding: 0.4em 0.75em;
+}
+.word-content th { background: #0a1510; color: #6ee7b7; }
+
+/* react-pdf-viewer dark override */
+.rpv-core__viewer {
+  background: #0d0d0d !important;
+}
+.rpv-core__page-layer {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.6);
+}

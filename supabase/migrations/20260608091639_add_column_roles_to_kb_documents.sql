@@ -1,0 +1,1 @@
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS column_roles jsonb DEFAULT '{}';
