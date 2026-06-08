@@ -2,7 +2,7 @@
  * Post-processes raw OpenAI JSON into validated analysis rows.
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
-import { expandLeafPathsToTree, isLeafSlot, sortSlotsTreeOrder } from './analysisTree';
+import { expandLeafPathsToTree, isLeafSlot, orderSlotsDepthFirst } from './analysisTree';
 
 /** Extracts unique slot paths from raw AI row objects. */
 export function extractSlotsFromAiRows(rows: unknown[]): string[] {
@@ -17,13 +17,14 @@ export function extractSlotsFromAiRows(rows: unknown[]): string[] {
 
 /** Converts slot paths to taxonomy-only rows (no NLU fields). */
 export function toTaxonomyRows(slots: string[]): AnalysisRow[] {
-  return sortSlotsTreeOrder(slots).map((slot_filling) => ({
+  return orderSlotsDepthFirst(slots).map((slot_filling) => ({
     slot_filling,
     question: null,
     grammar: null,
     no_match_1: null,
     no_match_2: null,
     no_match_3: null,
+    confirmation_text: null,
     status: null,
   }));
 }
@@ -59,6 +60,7 @@ export function normalizeAiRow(raw: Record<string, unknown>): AnalysisRow | null
     no_match_1: str(raw.no_match_1 ?? raw.noMatch1),
     no_match_2: str(raw.no_match_2 ?? raw.noMatch2),
     no_match_3: str(raw.no_match_3 ?? raw.noMatch3),
+    confirmation_text: str(raw.confirmation_text ?? raw.confirmation),
     status: null,
   };
 }
@@ -88,6 +90,7 @@ export function assembleRegenRows(slots: string[], aiRows: AnalysisRow[]): Analy
         no_match_1: null,
         no_match_2: null,
         no_match_3: null,
+        confirmation_text: matched.confirmation_text ?? null,
         status: null,
       };
     }

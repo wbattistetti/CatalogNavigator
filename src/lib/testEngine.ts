@@ -14,6 +14,11 @@ export interface TestState {
   selectedPath: string | null;
 }
 
+export interface AgentTestConfig {
+  start_question: string | null;
+  confirmation_preamble: string | null;
+}
+
 function pythonToJsRegex(pattern: string): string {
   return pattern
     .replace(/\(\?P</g, '(?<')
@@ -38,11 +43,26 @@ function applyGrammar(input: string, row: AnalysisRow): string | null {
   return null;
 }
 
-export function initTest(rows: AnalysisRow[]): TestState {
+/** Builds the final confirmation message when a leaf is selected. */
+export function formatLeafConfirmation(
+  targetPath: string,
+  targetRow: AnalysisRow,
+  preamble: string | null,
+): string {
+  const text = targetRow.confirmation_text?.trim();
+  if (text) {
+    const pre = preamble?.trim() || 'Quindi confermo:';
+    return `${pre} ${text}`;
+  }
+  return `Selezionato: ${targetPath}`;
+}
+
+export function initTest(rows: AnalysisRow[], config?: AgentTestConfig): TestState {
   const roots = rows.filter((r) => !r.slot_filling.includes('.'));
   const startRow = roots.length === 1 ? roots[0] : rows.find((r) => r.question !== null);
+  const startText = config?.start_question?.trim() || startRow?.question?.trim();
 
-  if (!startRow?.question) {
+  if (!startText) {
     return {
       messages: [{ id: '0', role: 'agent', text: 'Nessuna domanda di avvio trovata.' }],
       currentPath: null,
@@ -52,14 +72,19 @@ export function initTest(rows: AnalysisRow[]): TestState {
   }
 
   return {
-    messages: [{ id: '0', role: 'agent', text: startRow.question }],
-    currentPath: startRow.slot_filling,
+    messages: [{ id: '0', role: 'agent', text: startText }],
+    currentPath: startRow?.slot_filling ?? roots[0]?.slot_filling ?? null,
     noMatchCount: 0,
     selectedPath: null,
   };
 }
 
-export function processInput(state: TestState, input: string, rows: AnalysisRow[]): TestState {
+export function processInput(
+  state: TestState,
+  input: string,
+  rows: AnalysisRow[],
+  config?: AgentTestConfig,
+): TestState {
   if (state.selectedPath !== null) return state;
 
   const currentRow = rows.find((r) => r.slot_filling === state.currentPath);
@@ -94,7 +119,11 @@ export function processInput(state: TestState, input: string, rows: AnalysisRow[
     const resultMsg: TestMessage = {
       id: uid + '-r',
       role: 'agent',
-      text: `Selezionato: ${targetPath}`,
+      text: formatLeafConfirmation(
+        targetPath,
+        targetRow ?? { slot_filling: targetPath, question: null, grammar: null, no_match_1: null, no_match_2: null, no_match_3: null, confirmation_text: null },
+        config?.confirmation_preamble ?? null,
+      ),
       isResult: true,
     };
     return {

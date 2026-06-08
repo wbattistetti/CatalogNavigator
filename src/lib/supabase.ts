@@ -5,7 +5,26 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export type ColumnRole = 'selector' | 'data' | 'ignore';
+export type ColumnRole = 'selector' | 'data' | 'description' | 'ignore';
+
+/** Saved token dictionary for deterministic segmentation. */
+export interface SavedTokenDictionary {
+  descriptionColumn: string;
+  tokens?: Array<{
+    text: string;
+    enabled: boolean;
+    suppressedBy?: string;
+  }>;
+  /** @deprecated legacy n-gram format */
+  entries?: Array<{
+    text: string;
+    n?: 1 | 2 | 3;
+    frequency?: number;
+    enabled?: boolean;
+    manualOverride?: 'on' | 'off' | null;
+    suppressedBy?: string;
+  }>;
+}
 
 export interface KbDocument {
   id: string;
@@ -15,6 +34,7 @@ export interface KbDocument {
   file_size: number | null;
   column_headers: string[];
   column_roles: Record<string, ColumnRole>;
+  token_dictionary?: SavedTokenDictionary | null;
   created_at: string;
 }
 

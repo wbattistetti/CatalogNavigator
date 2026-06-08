@@ -56,5 +56,23 @@ export function useDocuments() {
     return data.publicUrl;
   }, []);
 
-  return { documents, loading, error, uploadDocument, deleteDocument, getFileUrl, reload: load };
+  const refreshDocument = useCallback(async (id: string): Promise<KbDocument | null> => {
+    const { data, error: err } = await supabase
+      .from('kb_documents')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (err || !data) return null;
+    setDocuments((prev) => prev.map((d) => (d.id === id ? data : d)));
+    return data as KbDocument;
+  }, []);
+
+  const upsertDocument = useCallback((doc: KbDocument) => {
+    setDocuments((prev) => prev.map((d) => (d.id === doc.id ? doc : d)));
+  }, []);
+
+  return {
+    documents, loading, error, uploadDocument, deleteDocument, getFileUrl,
+    reload: load, refreshDocument, upsertDocument,
+  };
 }

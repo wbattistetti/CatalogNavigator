@@ -10,14 +10,28 @@ export function segmentColorClass(depth: number): string {
 }
 
 /** Full path with alternating colors per segment. */
-export function SlotPathDisplay({ path, className = '' }: { path: string; className?: string }) {
+export function SlotPathDisplay({
+  path,
+  className = '',
+  emphasizeLeaf = false,
+}: {
+  path: string;
+  className?: string;
+  /** Bolds the last segment (leaf label within the full path). */
+  emphasizeLeaf?: boolean;
+}) {
   const segments = path.split('.');
+  const lastIdx = segments.length - 1;
   return (
-    <span className={`font-mono text-xs break-all ${className}`}>
+    <span className={`font-mono text-xs break-all leading-relaxed ${className}`}>
       {segments.map((seg, i) => (
         <span key={`${i}-${seg}`}>
           {i > 0 && <span className={DOT_COLOR}>.</span>}
-          <span className={segmentColorClass(i)}>{seg}</span>
+          <span
+            className={`${segmentColorClass(i)}${emphasizeLeaf && i === lastIdx ? ' font-semibold' : ''}`}
+          >
+            {seg}
+          </span>
         </span>
       ))}
     </span>

@@ -1,27 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bot, RotateCcw, X, Send, CheckCircle2 } from 'lucide-react';
 import type { AnalysisRow } from '../../hooks/useAnalysis';
-import { initTest, processInput, type TestState } from '../../lib/testEngine';
+import { initTest, processInput, type AgentTestConfig, type TestState } from '../../lib/testEngine';
 
 interface ChatPanelProps {
   rows: AnalysisRow[];
+  agentConfig: AgentTestConfig;
   onClose: () => void;
 }
 
-export function ChatPanel({ rows, onClose }: ChatPanelProps) {
-  const [state, setState] = useState<TestState>(() => initTest(rows));
+export function ChatPanel({ rows, agentConfig, onClose }: ChatPanelProps) {
+  const [state, setState] = useState<TestState>(() => initTest(rows, agentConfig));
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const restart = () => {
-    setState(initTest(rows));
+    setState(initTest(rows, agentConfig));
     setInput('');
   };
 
   const submit = () => {
     const trimmed = input.trim();
     if (!trimmed || state.selectedPath !== null) return;
-    setState((prev) => processInput(prev, trimmed, rows));
+    setState((prev) => processInput(prev, trimmed, rows, agentConfig));
     setInput('');
   };
 
@@ -84,7 +85,10 @@ export function ChatPanel({ rows, onClose }: ChatPanelProps) {
                     <p className="font-mono text-[9px] text-amber-400/50 uppercase tracking-widest mb-1">
                       Iter selezionato
                     </p>
-                    <p className="font-mono text-xs text-amber-300 font-bold break-all leading-relaxed">
+                    <p className="font-sans text-xs text-amber-200 leading-relaxed">
+                      {msg.text}
+                    </p>
+                    <p className="font-mono text-[9px] text-amber-400/40 mt-1 break-all">
                       {state.selectedPath}
                     </p>
                   </div>

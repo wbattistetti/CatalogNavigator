@@ -1,0 +1,1 @@
+-- Local dev seed (optional). Migrations create schema; no default data required.

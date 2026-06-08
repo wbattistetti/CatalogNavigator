@@ -14,6 +14,8 @@ function sanitizeJsonRegex(raw: string): string {
   return raw.replace(/\\([wWdDsSpPhHvV])/g, "\\\\$1");
 }
 
+const MAX_COMPLETION_TOKENS = 16384;
+
 async function openaiChat(
   openaiKey: string,
   systemPrompt: string,
@@ -26,6 +28,7 @@ async function openaiChat(
     body: JSON.stringify({
       model: "gpt-4o",
       temperature,
+      max_tokens: MAX_COMPLETION_TOKENS,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
@@ -35,7 +38,13 @@ async function openaiChat(
   });
   if (!res.ok) throw new Error(`OpenAI error: ${await res.text()}`);
   const data = await res.json();
-  return data.choices?.[0]?.message?.content ?? "{}";
+  const choice = data.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new Error(
+      "Risposta OpenAI troncata (limite token). Riduci il sottoalbero o rigenera per parti più piccole.",
+    );
+  }
+  return choice?.message?.content ?? "{}";
 }
 
 Deno.serve(async (req: Request) => {

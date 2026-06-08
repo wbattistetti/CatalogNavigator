@@ -4,10 +4,19 @@
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
-export async function invokeFunction<T>(name: string, body: Record<string, unknown>): Promise<T> {
-  const { data, error } = await supabase.functions.invoke(name, { body });
+export async function invokeFunction<T>(
+  name: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) throw new DOMException('Generazione annullata', 'AbortError');
+
+  const { data, error } = await supabase.functions.invoke(name, { body, signal });
+
+  if (signal?.aborted) throw new DOMException('Generazione annullata', 'AbortError');
 
   if (error) {
+    if (signal?.aborted) throw new DOMException('Generazione annullata', 'AbortError');
     if (error instanceof FunctionsHttpError && error.context) {
       try {
         const res = error.context as Response;

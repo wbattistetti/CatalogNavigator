@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { ColumnRole } from '../../lib/supabase';
@@ -37,6 +37,15 @@ const ROLE_CONFIG: Record<ColumnRole, {
     btnActive: 'bg-sky-500/25 text-sky-300 border-sky-500/40',
     btnInactive: 'text-sky-400/40 hover:text-sky-300/80 border-[#1a3a2a] hover:bg-sky-900/20',
   },
+  description: {
+    label: 'Descrizione',
+    thBg: 'bg-amber-900/20',
+    thText: 'text-amber-200/80',
+    tdBg: 'bg-amber-900/[0.07]',
+    dot: 'bg-amber-400',
+    btnActive: 'bg-amber-500/25 text-amber-300 border-amber-500/40',
+    btnInactive: 'text-amber-400/40 hover:text-amber-300/80 border-[#1a3a2a] hover:bg-amber-900/20',
+  },
   ignore: {
     label: 'Ignore',
     thBg: 'bg-gray-700/15',
@@ -48,7 +57,7 @@ const ROLE_CONFIG: Record<ColumnRole, {
   },
 };
 
-const ROLES: ColumnRole[] = ['selector', 'data', 'ignore'];
+const ROLES: ColumnRole[] = ['description', 'selector', 'data', 'ignore'];
 
 export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPreviewProps) {
   const { headers, rows } = tabular;
@@ -68,6 +77,22 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
       )
     : rows;
 
+  const sortColIdx = useMemo(() => {
+    const byRole = headers.findIndex((h) => columnRoles[h] === 'description');
+    if (byRole >= 0) return byRole;
+    const byName = headers.findIndex((h) => /descri/i.test(h));
+    if (byName >= 0) return byName;
+    return visibleIndices[0] ?? 0;
+  }, [headers, columnRoles, visibleIndices]);
+
+  const sortedRows = useMemo(
+    () =>
+      [...filtered].sort((a, b) =>
+        (a[sortColIdx] ?? '').localeCompare(b[sortColIdx] ?? '', 'it', { sensitivity: 'base' }),
+      ),
+    [filtered, sortColIdx],
+  );
+
   const ignoredCount = headers.filter((h) => columnRoles[h] === 'ignore').length;
 
   const handleRoleChange = async (colName: string, role: ColumnRole) => {
@@ -75,6 +100,11 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
     if (newRoles[colName] === role) {
       delete newRoles[colName];
     } else {
+      if (role === 'description') {
+        for (const h of Object.keys(newRoles)) {
+          if (h !== colName && newRoles[h] === 'description') delete newRoles[h];
+        }
+      }
       newRoles[colName] = role;
     }
     setColumnRoles(newRoles);
@@ -105,7 +135,6 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
             {showAll ? 'Nascondi escluse' : `+${ignoredCount} escluse`}
           </button>
         )}
-        <span className="flex-shrink-0 font-mono text-xs text-emerald-400/40">{filtered.length} righe</span>
       </div>
 
       {/* Table */}
@@ -126,11 +155,18 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
                     }`}
                   >
                     {/* Header row */}
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      {cfg && (
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+                    <div className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {cfg && (
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+                        )}
+                        <span className="truncate">{h}</span>
+                      </div>
+                      {ci === visibleIndices[0] && (
+                        <span className="flex-shrink-0 font-mono text-[9px] font-normal normal-case tracking-normal text-emerald-400/40 tabular-nums">
+                          {filter ? `${filtered.length}/${rows.length}` : rows.length} righe
+                        </span>
                       )}
-                      <span>{h}</span>
                     </div>
 
                     {/* Role toolbar — always rendered, visible on group-hover */}
@@ -160,7 +196,7 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
             </tr>
           </thead>
           <tbody>
-            {filtered.map((row, ri) => (
+            {sortedRows.map((row, ri) => (
               <tr
                 key={ri}
                 className={`border-b border-[#111] hover:brightness-110 transition-colors ${

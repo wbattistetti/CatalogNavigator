@@ -22,6 +22,11 @@ export function isTabularFormat(format: KbFileFormat): boolean {
   return format === 'xlsx' || format === 'csv';
 }
 
+/** Formats that can use the deterministic dictionary → taxonomy workflow. */
+export function supportsDictionaryFormat(format: KbFileFormat): boolean {
+  return format === 'xlsx' || format === 'csv' || format === 'txt' || format === 'md';
+}
+
 export function formatLabel(format: KbFileFormat): string {
   const labels: Record<KbFileFormat, string> = {
     pdf: 'PDF',

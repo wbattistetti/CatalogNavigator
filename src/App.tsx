@@ -9,7 +9,10 @@ import { xlsxToTabular } from './lib/parseTabular';
 import type { KbDocument } from './lib/supabase';
 
 export default function App() {
-  const { documents, loading, error, uploadDocument, deleteDocument, getFileUrl } = useDocuments();
+  const {
+    documents, loading, error, uploadDocument, deleteDocument, getFileUrl,
+    refreshDocument, upsertDocument,
+  } = useDocuments();
   const [selectedDoc, setSelectedDoc] = useState<KbDocument | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -50,6 +53,22 @@ export default function App() {
     [deleteDocument]
   );
 
+  const handleSelectDoc = useCallback(
+    async (doc: KbDocument) => {
+      const fresh = await refreshDocument(doc.id);
+      setSelectedDoc(fresh ?? doc);
+    },
+    [refreshDocument],
+  );
+
+  const handleDocUpdated = useCallback(
+    (updated: KbDocument) => {
+      setSelectedDoc(updated);
+      upsertDocument(updated);
+    },
+    [upsertDocument],
+  );
+
   const fileUrl = selectedDoc ? getFileUrl(selectedDoc.storage_path) : null;
 
   return (
@@ -74,7 +93,7 @@ export default function App() {
           documents={documents}
           loading={loading}
           selectedId={selectedDoc?.id ?? null}
-          onSelect={setSelectedDoc}
+          onSelect={handleSelectDoc}
           onDelete={handleDelete}
         >
           <UploadZone onFiles={handleFiles} uploading={uploading} />
@@ -82,7 +101,12 @@ export default function App() {
 
         <main className="flex flex-1 min-h-0 min-w-0">
           {selectedDoc && fileUrl ? (
-            <MainPanel key={selectedDoc.id} doc={selectedDoc} fileUrl={fileUrl} />
+            <MainPanel
+              key={selectedDoc.id}
+              doc={selectedDoc}
+              fileUrl={fileUrl}
+              onDocUpdated={handleDocUpdated}
+            />
           ) : (
             <div className="flex flex-col items-center justify-center flex-1 gap-4 text-emerald-400/20">
               <Database className="w-12 h-12" />

@@ -1,129 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { PdfViewer } from './viewers/PdfViewer';
 import { WordViewer } from './viewers/WordViewer';
 import { ImageViewer } from './viewers/ImageViewer';
 import { TabularPreview } from './TabularPreview';
 import { TextViewer } from './TextViewer';
-import { isTabularFormat } from '../../lib/fileFormat';
-import { parseTabularText, xlsxToTabular } from '../../lib/parseTabular';
 import type { KbDocument } from '../../lib/supabase';
-import type { ParsedTabular } from '../../lib/parseTabular';
-
-// Static URL import so Vite bundles the worker as an asset for fallback
-// @ts-ignore
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import type { DocumentContent } from '../../hooks/useDocumentContent';
 
 interface DocumentReaderProps {
   doc: KbDocument;
   fileUrl: string;
-  onTextReady?: (text: string) => void;
+  content: DocumentContent;
 }
 
-async function extractPdfText(ab: ArrayBuffer): Promise<string> {
-  // Pre-populate globalThis.pdfjsWorker so pdfjs fake-worker mode works in
-  // sandboxed environments (Bolt iframes) where new Worker(url) is unavailable.
-  const workerMod = await import('pdfjs-dist/build/pdf.worker.min.js');
-  (globalThis as any).pdfjsWorker = (workerMod as any).default ?? workerMod;
-
-  const pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(ab) }).promise;
-  const pages: string[] = [];
-
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const text = content.items
-      .filter((item): item is { str: string } => 'str' in item)
-      .map((item) => item.str)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (text) pages.push(text);
-  }
-
-  return pages.join('\n\n');
-}
-
-async function extractDocxText(ab: ArrayBuffer): Promise<string> {
-  const mammoth = await import('mammoth');
-  const result = await mammoth.default.extractRawText({ arrayBuffer: ab });
-  return result.value;
-}
-
-export function DocumentReader({ doc, fileUrl, onTextReady }: DocumentReaderProps) {
-  const [textContent, setTextContent] = useState<string | null>(null);
-  const [tabular, setTabular] = useState<ParsedTabular | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    setTextContent(null);
-    setTabular(null);
-
-    // PDF and DOCX: extract text silently in background; display handled by their own components
-    if (doc.format === 'pdf' || doc.format === 'docx') {
-      (async () => {
-        try {
-          const res = await fetch(fileUrl);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const ab = await res.arrayBuffer();
-          const text = doc.format === 'pdf'
-            ? await extractPdfText(ab)
-            : await extractDocxText(ab);
-          if (!cancelled) onTextReady?.(text);
-        } catch {
-          // Text extraction failure is non-fatal — display still works
-        }
-      })();
-      return () => { cancelled = true; };
-    }
-
-    // Images: no text to extract
-    if (doc.format === 'image') return;
-
-    // Text / tabular formats: extract and display
-    setLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(fileUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        if (doc.format === 'xlsx') {
-          const blob = await res.blob();
-          const file = new File([blob], doc.name, { type: blob.type });
-          const { tabular: t } = await xlsxToTabular(file);
-          if (!cancelled) {
-            setTabular(t);
-            const serialized = [t.headers.join('\t'), ...t.rows.map((r) => r.join('\t'))].join('\n');
-            onTextReady?.(serialized);
-          }
-        } else {
-          const text = await res.text();
-          if (!cancelled) {
-            if (isTabularFormat(doc.format)) {
-              const parsed = parseTabularText(text);
-              setTabular(parsed);
-              if (!parsed) setTextContent(text);
-            } else {
-              setTextContent(text);
-            }
-            onTextReady?.(text);
-          }
-        }
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [doc.id, fileUrl, doc.format, doc.name]);
+export function DocumentReader({ doc, fileUrl, content }: DocumentReaderProps) {
+  const { tabular, textContent, loading, error } = content;
 
   if (loading) {
     return (

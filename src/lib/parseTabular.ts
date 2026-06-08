@@ -20,6 +20,21 @@ export function parseTabularText(text: string): ParsedTabular | null {
   return { headers, rows };
 }
 
+/** One non-empty line per row — typical for plain .txt exam lists. */
+export function parseDescriptionList(text: string): ParsedTabular | null {
+  const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  return {
+    headers: ['descrizione'],
+    rows: lines.map((line) => [line]),
+  };
+}
+
+/** CSV/TSV first, then single-column description list. */
+export function parseTextForDictionary(text: string): ParsedTabular | null {
+  return parseTabularText(text) ?? parseDescriptionList(text);
+}
+
 function normalizeSlotLabel(value: string): string {
   return value
     .toLowerCase()
