@@ -1,6 +1,6 @@
 import type { AnalysisRow } from '../hooks/useAnalysis';
-import { matchBestItemPath } from './grammarMatch';
-import { resolveNavigationTarget } from './nluQuestionRules';
+import { matchBestItemPath, matchGrammarInput } from './grammarMatch';
+import { requiresInteractiveNode, resolveNavigationTarget } from './nluQuestionRules';
 
 export interface TestMessage {
   id: string;
@@ -19,6 +19,7 @@ export interface TestState {
 export interface AgentTestConfig {
   start_question: string | null;
   confirmation_preamble: string | null;
+  item_paths?: string[] | null;
 }
 
 /** Builds the final confirmation message when a leaf is selected. */
@@ -96,6 +97,77 @@ export function buildCumulativeUserText(state: TestState, currentInput: string):
   return parts.join(' ');
 }
 
+/** True when agent asked a disambiguation question and expects an answer grammar match. */
+function isAwaitingInteractiveAnswer(
+  state: TestState,
+  rows: AnalysisRow[],
+  itemPaths?: string[] | null,
+): boolean {
+  if (!state.currentPath || state.selectedPath !== null) return false;
+  const row = rows.find((r) => r.slot_filling === state.currentPath);
+  if (!row?.question?.trim() || !row.answer_grammar?.regex?.trim()) return false;
+  const slots = rows.map((r) => r.slot_filling);
+  return requiresInteractiveNode(slots, state.currentPath, itemPaths);
+}
+
+function processAnswerAtCurrentPath(
+  state: TestState,
+  input: string,
+  rows: AnalysisRow[],
+  config: AgentTestConfig | undefined,
+  uid: string,
+  userMsg: TestMessage,
+): TestState {
+  const row = rows.find((r) => r.slot_filling === state.currentPath)!;
+  const result = matchGrammarInput(input.trim(), {
+    ...row,
+    grammar: row.answer_grammar,
+  });
+
+  if (!result.targetPath) {
+    let fallback = noMatchReply(rows, state, config);
+    if (result.regexError) {
+      fallback = 'Errore configurazione grammatica risposta: regex non valida.';
+    }
+    const agentMsg: TestMessage = { id: uid + '-a', role: 'agent', text: fallback };
+    return {
+      ...state,
+      messages: [...state.messages, userMsg, agentMsg],
+      noMatchCount: Math.min(state.noMatchCount + 1, 2),
+    };
+  }
+
+  const resolved = resolveNavigationTarget(result.targetPath, rows, config?.item_paths);
+
+  if (resolved.isLeaf) {
+    const resultMsg: TestMessage = {
+      id: uid + '-r',
+      role: 'agent',
+      text: formatLeafConfirmation(resolved.path, resolved.row, config?.confirmation_preamble ?? null),
+      isResult: true,
+    };
+    return {
+      ...state,
+      messages: [...state.messages, userMsg, resultMsg],
+      currentPath: resolved.path,
+      noMatchCount: 0,
+      selectedPath: resolved.path,
+    };
+  }
+
+  const nextQuestion = resolved.row.question?.trim();
+  const agentText = nextQuestion
+    || `Ho individuato: ${resolved.path.replace(/\./g, ' ')}. Può essere più specifico?`;
+
+  const agentMsg: TestMessage = { id: uid + '-a', role: 'agent', text: agentText };
+  return {
+    ...state,
+    messages: [...state.messages, userMsg, agentMsg],
+    currentPath: resolved.path,
+    noMatchCount: 0,
+  };
+}
+
 export function processInput(
   state: TestState,
   input: string,
@@ -107,9 +179,14 @@ export function processInput(
   const uid = String(Date.now() + Math.random());
   const userMsg: TestMessage = { id: uid + '-u', role: 'user', text: input.trim() };
 
+  if (isAwaitingInteractiveAnswer(state, rows, config?.item_paths)) {
+    return processAnswerAtCurrentPath(state, input, rows, config, uid, userMsg);
+  }
+
   const cumulativeText = buildCumulativeUserText(state, input.trim());
   const grammarResult = matchBestItemPath(cumulativeText, rows, {
     anchorPath: state.currentPath,
+    itemPaths: config?.item_paths,
   });
 
   if (!grammarResult.targetPath) {
@@ -125,7 +202,7 @@ export function processInput(
     };
   }
 
-  const resolved = resolveNavigationTarget(grammarResult.targetPath, rows);
+  const resolved = resolveNavigationTarget(grammarResult.targetPath, rows, config?.item_paths);
 
   if (resolved.isLeaf) {
     const resultMsg: TestMessage = {

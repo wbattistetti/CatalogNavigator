@@ -39,6 +39,7 @@ function grammarMapToRows(map: Record<string, unknown>): unknown[] {
         slot_filling: slot,
         question: null,
         grammar: { regex: g.regex, mappings: g.mappings },
+        answer_grammar: null,
         no_match_1: null,
         no_match_2: null,
         no_match_3: null,

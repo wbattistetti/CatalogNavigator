@@ -3,6 +3,11 @@
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import { validateGrammarRegex } from './grammarNormalize';
+import {
+  isPrefixAmbiguityNode,
+  isTerminalItemSlot,
+  resolveItemPaths,
+} from './itemPaths';
 
 /** Unicode dash variants (e.g. pet‑tc from Word/PDF) → ASCII hyphen. */
 const UNICODE_DASHES = /[\u2010\u2011\u2012\u2013\u2014\u2212]/g;
@@ -152,6 +157,7 @@ function emptyTaxonomyRow(slot_filling: string): AnalysisRow {
     slot_filling,
     question: null,
     grammar: null,
+    answer_grammar: null,
     no_match_1: null,
     no_match_2: null,
     no_match_3: null,
@@ -165,6 +171,7 @@ function clearNluFields(row: AnalysisRow): AnalysisRow {
     ...row,
     question: null,
     grammar: null,
+    answer_grammar: null,
     no_match_1: null,
     no_match_2: null,
     no_match_3: null,
@@ -331,13 +338,18 @@ export function mergeSubtreeGrammarRows(
   return mergeSubtreeLayerRows(allRows, regenedBySlot, rootSlot, preserveComplete, isNodeComplete, (existing, regened) => ({
     ...existing,
     grammar: regened.grammar,
+    answer_grammar: regened.answer_grammar ?? null,
     status: preserveComplete ? (existing.status ?? null) : null,
   }));
 }
 
-function isInteractiveSlot(slots: string[], slot: string): boolean {
-  if (isLeafSlot(slots, slot)) return false;
-  return getDirectChildSlots(slots, slot).length !== 1;
+function isInteractiveSlot(slots: string[], slot: string, itemPathsInput?: string[] | null): boolean {
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
+  if (isTerminalItemSlot(slot, itemPaths)) return false;
+  const children = getDirectChildSlots(slots, slot);
+  if (children.length >= 2) return true;
+  if (isPrefixAmbiguityNode(slots, slot, itemPaths)) return true;
+  return false;
 }
 
 /** Returns internal nodes that are missing required NLU fields. */
@@ -377,20 +389,35 @@ export function rowHasMessage(row: AnalysisRow): boolean {
   return !!row.question?.trim();
 }
 
-/** Returns nodes missing or syntactically invalid recognition grammars. */
-export function findInvalidGrammarNodes(slots: string[], rows: AnalysisRow[]): string[] {
+/** Returns nodes missing or syntactically invalid node/answer grammars. */
+export function findInvalidGrammarNodes(
+  slots: string[],
+  rows: AnalysisRow[],
+  itemPathsInput?: string[] | null,
+): string[] {
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
   const bySlot = indexRowsBySlot(rows);
   const invalid: string[] = [];
   for (const slot of slots) {
     const row = getRowBySlot(bySlot, slot);
-    if (!row?.grammar?.regex?.trim()
-      || !row.grammar.mappings
-      || Object.keys(row.grammar.mappings).length === 0) {
+    if (!row) {
       invalid.push(slot);
       continue;
     }
-    const validation = validateGrammarRegex(row.grammar.regex, row.grammar.mappings);
-    if (!validation.valid) invalid.push(slot);
+    const nodeOk = !!(
+      row.grammar?.regex?.trim()
+      && row.grammar.mappings
+      && Object.keys(row.grammar.mappings).length > 0
+      && validateGrammarRegex(row.grammar.regex, row.grammar.mappings).valid
+    );
+    const needsAnswer = isInteractiveSlot(slots, slot, itemPaths);
+    const answerOk = !needsAnswer || !!(
+      row.answer_grammar?.regex?.trim()
+      && row.answer_grammar.mappings
+      && Object.keys(row.answer_grammar.mappings).length > 0
+      && validateGrammarRegex(row.answer_grammar.regex, row.answer_grammar.mappings).valid
+    );
+    if (!nodeOk || !answerOk) invalid.push(slot);
   }
   return invalid;
 }
@@ -407,13 +434,22 @@ export function hasAgentContent(rows: AnalysisRow[]): boolean {
   if (slots.length === 0) return false;
   const interactive = slots.filter((s) => isInteractiveSlot(slots, s));
   const bySlot = indexRowsBySlot(rows);
+  const itemPaths = resolveItemPaths(slots);
   const allGrammars = slots.every((slot) => {
     const row = getRowBySlot(bySlot, slot);
-    return !!(
-      row?.grammar?.regex?.trim()
-      && row.grammar.mappings
-      && Object.keys(row.grammar.mappings).length > 0
-    );
+    if (!row?.grammar?.regex?.trim()
+      || !row.grammar.mappings
+      || Object.keys(row.grammar.mappings).length === 0) {
+      return false;
+    }
+    if (isInteractiveSlot(slots, slot, itemPaths)) {
+      return !!(
+        row.answer_grammar?.regex?.trim()
+        && row.answer_grammar.mappings
+        && Object.keys(row.answer_grammar.mappings).length > 0
+      );
+    }
+    return true;
   });
   if (!allGrammars) return false;
   if (interactive.length === 0) return true;
@@ -494,16 +530,19 @@ export function orderAnalysisRowsDepthFirst(rows: AnalysisRow[]): AnalysisRow[] 
 }
 
 /** Describes which nodes require messages (questions + re-prompts). */
-export function formatMessagesNodesSection(slots: string[]): string {
-  const internal = slots.filter((s) => isInteractiveSlot(slots, s));
-  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s));
-  const leaves = slots.filter((s) => isLeafSlot(slots, s));
+export function formatMessagesNodesSection(slots: string[], itemPathsInput?: string[] | null): string {
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
+  const internal = slots.filter((s) => isInteractiveSlot(slots, s, itemPaths));
+  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths));
+  const terminalItems = slots.filter((s) => isTerminalItemSlot(s, itemPaths));
 
   const internalLines = internal.map((slot) => {
     const children = getDirectChildSlots(slots, slot);
-    const childNote = children.length <= 3
-      ? ' (elenca opzioni nella domanda)'
-      : ' (domanda aperta)';
+    const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
+      ? ' (disambiguazione: semplice vs estensione figlio-item)'
+      : children.length <= 3
+        ? ' (elenca opzioni nella domanda)'
+        : ' (domanda aperta)';
     return `- ${slot}\n  figli diretti: ${children.join(', ')}${childNote}`;
   });
 
@@ -512,8 +551,8 @@ export function formatMessagesNodesSection(slots: string[]): string {
     `${internalLines.join('\n')}\n\n` +
     `NODI TRASPARENTI (${passthrough.length}) — question=null, grammar=null, no_match=null:\n` +
     `${passthrough.map((s) => `- ${s}`).join('\n')}\n\n` +
-    `FOGLIE (${leaves.length}) — question=null, grammar=null, no_match=null:\n` +
-    `${leaves.map((s) => `- ${s}`).join('\n')}`
+    `ITEM TERMINALI (${terminalItems.length}) — question=null, grammar=null, no_match=null:\n` +
+    `${terminalItems.map((s) => `- ${s}`).join('\n')}`
   );
 }
 
@@ -540,35 +579,39 @@ export function formatGrammarsNodesSection(slots: string[], rows: AnalysisRow[])
 
   return (
     `OGNI NODO (${slots.length}) — grammar OBBLIGATORIA con sinonimi per riconoscere QUESTO nodo.\n` +
-    `Il motore prova tutte le grammatiche: per ogni item (foglia) conta i match sul path; vince l'item con più match.\n` +
+    `Il motore prova tutte le grammatiche: per ogni item corpus conta i match sul path; vince l'item con più match.\n` +
     `question=null, no_match=null.\n\n` +
     lines.join('\n\n')
   );
 }
 
 /** Describes which nodes require questions vs which are leaves. */
-export function formatInternalNodesSection(slots: string[]): string {
-  const internal = slots.filter((s) => !isLeafSlot(slots, s));
-  const leaves = slots.filter((s) => isLeafSlot(slots, s));
+export function formatInternalNodesSection(slots: string[], itemPathsInput?: string[] | null): string {
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
+  const internal = slots.filter((s) => isInteractiveSlot(slots, s, itemPaths));
+  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths));
+  const terminalItems = slots.filter((s) => isTerminalItemSlot(s, itemPaths));
 
   const internalLines = internal.map((slot) => {
     const children = getDirectChildSlots(slots, slot);
-    const childNote =
-      children.length === 1
-        ? ' (1 figlio → nodo trasparente: question=null, grammar=null)'
-        : children.length <= 3
-          ? ' (2-3 figli → elenca opzioni nella domanda)'
-          : ' (>=4 figli → domanda aperta)';
+    const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
+      ? ' (item con figlio-item → disambiguazione semplice vs estensione)'
+      : children.length <= 3
+        ? ' (2-3 figli → elenca opzioni nella domanda)'
+        : ' (>=4 figli → domanda aperta)';
     return `- ${slot}\n  figli diretti: ${children.join(', ')}${childNote}`;
   });
 
-  const leafLines = leaves.map((s) => `- ${s}`);
+  const passthroughLines = passthrough.map((s) => `- ${s}`);
+  const itemLines = terminalItems.map((s) => `- ${s}`);
 
   return (
     `NODI INTERNI (${internal.length}) — question, grammar, no_match OBBLIGATORI:\n` +
     `${internalLines.join('\n')}\n\n` +
-    `FOGLIE (${leaves.length}) — question=null, grammar=null, no_match=null:\n` +
-    `${leafLines.join('\n')}`
+    `NODI TRASPARENTI (${passthrough.length}) — question=null, grammar=null, no_match=null:\n` +
+    `${passthroughLines.join('\n')}\n\n` +
+    `ITEM TERMINALI (${terminalItems.length}) — question=null, grammar=null, no_match=null:\n` +
+    `${itemLines.join('\n')}`
   );
 }
 

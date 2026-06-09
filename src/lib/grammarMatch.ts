@@ -1,34 +1,29 @@
 /**
- * Grammar matching: score each leaf item by how many path nodes match the text;
- * the item with the most matches wins (not deepest single node).
+ * Grammar matching: score each corpus item by how many path nodes match the text;
+ * the item with the most matches wins; prefix-ambiguous ties prefer the parent item.
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
-import { extractLeafPaths } from './analysisTree';
+import { extractItemPathsInTree, resolveItemPaths } from './itemPaths';
 import { compileGrammarRegex, normalizeGrammarEntry } from './grammarNormalize';
 
 export interface GrammarMatchResult {
   targetPath: string | null;
-  /** Length of the regex match in the input (for tie-breaking). */
   matchedLength?: number;
-  /** Set when the regex string cannot be compiled. */
   regexError?: string;
-  /** Set when a group matched but has no mapping entry. */
   mappingMiss?: string;
 }
 
 export interface ItemGrammarMatchResult {
   targetPath: string | null;
-  /** Number of grammars matched on the winning item's path. */
   matchCount?: number;
   regexError?: string;
 }
 
 export interface MatchBestItemOptions {
-  /** When scores tie, prefer a leaf under this path (conversation context). */
   anchorPath?: string | null;
+  itemPaths?: string[] | null;
 }
 
-/** Prefix slots from root to target (inclusive), only if they exist in the tree. */
 function pathPrefixesInTree(targetPath: string, slots: string[]): string[] {
   const parts = targetPath.split('.').filter(Boolean);
   const prefixes: string[] = [];
@@ -82,21 +77,20 @@ export function matchGrammarInput(input: string, row: AnalysisRow): GrammarMatch
   };
 }
 
-interface LeafScore {
-  leafPath: string;
+interface ItemScore {
+  itemPath: string;
   matchCount: number;
   totalMatchLen: number;
   deepestMatched: string | null;
 }
 
-function scoreLeafItem(
-  leafPath: string,
-  rows: AnalysisRow[],
+function scoreItemPath(
+  itemPath: string,
   slots: string[],
   input: string,
   rowBySlot: Map<string, AnalysisRow>,
-): LeafScore {
-  const prefixes = pathPrefixesInTree(leafPath, slots);
+): ItemScore {
+  const prefixes = pathPrefixesInTree(itemPath, slots);
   let matchCount = 0;
   let totalMatchLen = 0;
   let deepestMatched: string | null = null;
@@ -111,15 +105,42 @@ function scoreLeafItem(
     deepestMatched = slot;
   }
 
-  return { leafPath, matchCount, totalMatchLen, deepestMatched };
+  return { itemPath, matchCount, totalMatchLen, deepestMatched };
 }
 
-function leafMatchesAnchor(leafPath: string, anchorPath: string): boolean {
-  return leafPath === anchorPath || leafPath.startsWith(`${anchorPath}.`);
+function leafMatchesAnchor(itemPath: string, anchorPath: string): boolean {
+  return itemPath === anchorPath || itemPath.startsWith(`${anchorPath}.`);
+}
+
+/** Picks winner; when parent and child items tie, prefer parent for disambiguation. */
+function pickWinningScore(candidates: ItemScore[], anchor: string | null): ItemScore {
+  const prefixAmbiguityParents = candidates.filter((c) =>
+    candidates.some(
+      (o) => o.itemPath !== c.itemPath && o.itemPath.startsWith(`${c.itemPath}.`),
+    ),
+  );
+
+  if (prefixAmbiguityParents.length > 0) {
+    prefixAmbiguityParents.sort(
+      (a, b) => a.itemPath.split('.').length - b.itemPath.split('.').length,
+    );
+    return prefixAmbiguityParents[0]!;
+  }
+
+  const sorted = [...candidates].sort((a, b) => {
+    if (anchor) {
+      const aAnchor = leafMatchesAnchor(a.itemPath, anchor) ? 1 : 0;
+      const bAnchor = leafMatchesAnchor(b.itemPath, anchor) ? 1 : 0;
+      if (aAnchor !== bAnchor) return bAnchor - aAnchor;
+    }
+    if (b.totalMatchLen !== a.totalMatchLen) return b.totalMatchLen - a.totalMatchLen;
+    return a.itemPath.localeCompare(b.itemPath, 'it', { sensitivity: 'base' });
+  });
+  return sorted[0]!;
 }
 
 /**
- * Scores every leaf item by counting how many nodes on its path match the input.
+ * Scores every corpus item by counting how many nodes on its path match the input.
  * Returns the deepest matched node on the winning item's path as navigation target.
  */
 export function matchBestItemPath(
@@ -128,8 +149,8 @@ export function matchBestItemPath(
   options?: MatchBestItemOptions,
 ): ItemGrammarMatchResult {
   const slots = rows.map((r) => r.slot_filling);
-  const leaves = extractLeafPaths(slots);
-  if (leaves.length === 0) {
+  const itemPaths = extractItemPathsInTree(slots, resolveItemPaths(slots, options?.itemPaths));
+  if (itemPaths.length === 0) {
     return { targetPath: null };
   }
 
@@ -147,7 +168,7 @@ export function matchBestItemPath(
     }
   }
 
-  const scores = leaves.map((leaf) => scoreLeafItem(leaf, rows, slots, input, rowBySlot));
+  const scores = itemPaths.map((item) => scoreItemPath(item, slots, input, rowBySlot));
   const maxCount = Math.max(...scores.map((s) => s.matchCount));
   if (maxCount === 0) {
     return {
@@ -158,19 +179,8 @@ export function matchBestItemPath(
 
   const anchor = options?.anchorPath?.trim() || null;
   const candidates = scores.filter((s) => s.matchCount === maxCount);
-
-  candidates.sort((a, b) => {
-    if (anchor) {
-      const aAnchor = leafMatchesAnchor(a.leafPath, anchor) ? 1 : 0;
-      const bAnchor = leafMatchesAnchor(b.leafPath, anchor) ? 1 : 0;
-      if (aAnchor !== bAnchor) return bAnchor - aAnchor;
-    }
-    if (b.totalMatchLen !== a.totalMatchLen) return b.totalMatchLen - a.totalMatchLen;
-    return a.leafPath.localeCompare(b.leafPath, 'it', { sensitivity: 'base' });
-  });
-
-  const winner = candidates[0]!;
-  const targetPath = winner.deepestMatched ?? winner.leafPath;
+  const winner = pickWinningScore(candidates, anchor);
+  const targetPath = winner.deepestMatched ?? winner.itemPath;
 
   return {
     targetPath,

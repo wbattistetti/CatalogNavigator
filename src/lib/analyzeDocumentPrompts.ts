@@ -71,10 +71,11 @@ NON aggiungere, NON rimuovere, NON rinominare nessuno slot.
 REGOLE TASSATIVE:
 1. Ogni slot della lista DEVE comparire esattamente una volta. I path contengono spazi: copiali IDENTICI.
 2. Campi obbligatori: slot_filling, question, grammar, no_match_1, no_match_2, no_match_3, status.
-3. Nodo interno con 2+ figli diretti: question OBBLIGATORIA, no_match_1/2/3 OBBLIGATORI, grammar=null.
-4. Nodo interno con 1 solo figlio diretto: question=null, grammar=null, no_match=null (nodo trasparente).
-5. Foglia: question=null, grammar=null, no_match_1=null, no_match_2=null, no_match_3=null.
-6. Domande (solo nodi con 2+ figli): 2-3 figli -> domanda che ELENCA le opzioni; >=4 figli -> domanda aperta senza elenco.
+3. Nodo interno con 2+ figli diretti (scelta sibling): question OBBLIGATORIA, no_match_1/2/3 OBBLIGATORI, grammar=null.
+4. Nodo strutturale con 1 figlio (NON item corpus): question=null, grammar=null, no_match=null (trasparente).
+5. Nodo ITEM con figlio-item (ambiguita prefisso, es. visita.cardiologica + visita.cardiologica.ecg): question OBBLIGATORIA che chiede se includere l'estensione figlio ("semplice o anche ecg?"), no_match_1/2/3 OBBLIGATORI, grammar=null.
+6. Item terminale (prestazione finale): question=null, grammar=null, no_match=null.
+7. Domande sibling (2+ figli): 2-3 figli -> elenca opzioni; >=4 figli -> domanda aperta.
 7. Imposta status=null per tutte le righe.
 
 IMPORTANTE: Rispondi SOLO con JSON valido.
@@ -91,10 +92,11 @@ RIGENERA SOLO domande e re-prompt (no_match). NON generare grammatiche regex. I 
 REGOLE TASSATIVE:
 1. NON aggiungere, NON rimuovere, NON rinominare nessuno slot. Copia i path IDENTICI (spazi inclusi).
 2. Campi: slot_filling, question, grammar, no_match_1, no_match_2, no_match_3, status.
-3. Nodo interno con 2+ figli: question + no_match_1/2/3 OBBLIGATORI, grammar=null.
-4. Nodo con 1 figlio: question=null, grammar=null, no_match=null.
-5. Foglia: question=null, grammar=null, no_match=null.
-6. Domande: 2-3 figli -> elenca opzioni; >=4 figli -> domanda aperta.
+3. Nodo con 2+ figli (sibling): question + no_match_1/2/3 OBBLIGATORI, grammar=null.
+4. Nodo strutturale con 1 figlio: question=null, grammar=null, no_match=null.
+5. Nodo ITEM con figlio-item (ambiguita prefisso): question che chiede "semplice o anche [figlio]?", no_match obbligatori, grammar=null.
+6. Item terminale: question=null, grammar=null, no_match=null.
+7. Domande sibling: 2-3 figli -> elenca opzioni; >=4 figli -> domanda aperta.
 7. status=null per tutte le righe.
 
 IMPORTANTE: Rispondi SOLO con JSON valido.
@@ -113,7 +115,7 @@ Genera una grammatica di RICONOSCIMENTO per OGNI nodo dell'albero (radici, inter
 MODELLO MOTORE:
 - Ogni nodo ha sinonimi per identificare QUEL nodo nel testo utente.
 - A runtime tutte le grammatiche vengono provate in parallelo.
-- Vince l'item (foglia) con più nodi del path che matchano il testo utente.
+- Vince l'item corpus con più nodi del path che matchano il testo utente (item possono essere nodi interni, non solo foglie).
 
 REGOLE TASSATIVE:
 1. Ogni slot DEVE comparire esattamente una volta. Path IDENTICI (spazi inclusi).
@@ -143,7 +145,8 @@ Formato:
 export const REGEN_GRAMMARS_PROMPT = `Sei un esperto di NLU regex per riconoscimento gerarchico parallelo.
 RIGENERA grammatiche di riconoscimento per OGNI nodo. NON modificare question ne no_match.
 
-MODELLO: grammatica per ogni nodo → per ogni item si contano i match sul path → vince l'item con più match.
+MODELLO: grammatica per ogni nodo → per ogni item corpus si contano i match sul path → vince l'item con più match.
+Nodi con ambiguita prefisso: grammatica con gruppo "solo/semplice" → path padre-item, sinonimi figlio → path figlio-item.
 Ogni mapping deve puntare al path del PROPRIO nodo (slot_filling), non ai figli.
 
 REGOLE:

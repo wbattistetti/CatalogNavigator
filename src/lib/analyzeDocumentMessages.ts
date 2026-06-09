@@ -38,6 +38,7 @@ export function buildGenerateAgentUserMessage(
   documentName: string,
   documentText?: string,
   correction = '',
+  itemPaths?: string[] | null,
 ): string {
   const docSection = documentText?.trim()
     ? `\n\nCONTESTO DOCUMENTO:\n${documentText.trim().slice(0, DOCUMENT_TEXT_MAX)}`
@@ -47,7 +48,7 @@ export function buildGenerateAgentUserMessage(
     `Genera domande, grammatiche e re-prompt per questa tassonomia approvata.\n` +
     `Documento: "${documentName}"\n\n` +
     `STRUTTURA (${slots.length} slot — NON modificare i path):\n${formatSlotTree(slots)}\n\n` +
-    formatInternalNodesSection(slots) +
+    formatInternalNodesSection(slots, itemPaths) +
     docSection +
     correction
   );
@@ -59,6 +60,7 @@ export function buildRegenSubtreeUserMessage(
   documentName: string,
   documentText?: string,
   correction = '',
+  itemPaths?: string[] | null,
 ): string {
   const docSection = documentText?.trim()
     ? `\n\nCONTESTO DOCUMENTO (per formulare domande e sinonimi pertinenti):\n${documentText.trim().slice(0, DOCUMENT_TEXT_MAX)}`
@@ -69,7 +71,7 @@ export function buildRegenSubtreeUserMessage(
     `Documento: "${documentName}"\n` +
     `Nodo radice del sottoalbero: "${rootSlot}"\n\n` +
     `STRUTTURA GERARCHICA (${slots.length} slot — NON modificare i path, spazi inclusi):\n${formatSlotTree(slots)}\n\n` +
-    formatInternalNodesSection(slots) +
+    formatInternalNodesSection(slots, itemPaths) +
     docSection +
     correction
   );
@@ -93,6 +95,7 @@ export function buildRegenMessagesSubtreeUserMessage(
   documentName: string,
   documentText?: string,
   correction = '',
+  itemPaths?: string[] | null,
 ): string {
   const docSection = documentText?.trim()
     ? `\n\nCONTESTO DOCUMENTO:\n${documentText.trim().slice(0, DOCUMENT_TEXT_MAX)}`
@@ -103,7 +106,7 @@ export function buildRegenMessagesSubtreeUserMessage(
     `Documento: "${documentName}"\n` +
     `Nodo radice del sottoalbero: "${rootSlot}"\n\n` +
     `STRUTTURA GERARCHICA (${slots.length} slot — NON modificare i path):\n${formatSlotTree(slots)}\n\n` +
-    formatMessagesNodesSection(slots) +
+    formatMessagesNodesSection(slots, itemPaths) +
     docSection +
     correction
   );

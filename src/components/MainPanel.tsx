@@ -13,7 +13,7 @@ import { formatLabel, formatColor, supportsDictionaryFormat } from '../lib/fileF
 import { DocumentReader } from './DocumentViewer/DocumentReader';
 import { AnalysisView } from './DocumentViewer/AnalysisView';
 import { DictionaryPanel, type DictionaryPanelState } from './DocumentViewer/DictionaryPanel';
-import { useAnalysis } from '../hooks/useAnalysis';
+import { useAnalysis, type GrammarEditTarget } from '../hooks/useAnalysis';
 import { useDocumentContent } from '../hooks/useDocumentContent';
 
 function FormatIcon({ format, className = '' }: { format: KbFileFormat; className?: string }) {
@@ -43,7 +43,7 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
   const [affinaOpen, setAffinaOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [grammarModalOpen, setGrammarModalOpen] = useState(false);
+  const [grammarEditTarget, setGrammarEditTarget] = useState<GrammarEditTarget | null>(null);
   const [grammarOverwrite, setGrammarOverwrite] = useState(false);
   const [showOnlyMessageNodes, setShowOnlyMessageNodes] = useState(false);
 
@@ -67,7 +67,7 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
     setAffinaOpen(false);
     setTestOpen(false);
     setSelectedSlot(null);
-    setGrammarModalOpen(false);
+    setGrammarEditTarget(null);
   }, [doc.id]);
 
   useEffect(() => {
@@ -125,9 +125,6 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
   const canGenerateMessages = dictionaryMode
     ? (dictState?.activeTokenCount ?? 0) > 0 && !generating
     : !!documentText && !generating;
-
-  const selectedRow = analysis?.rows.find((r) => r.slot_filling === selectedSlot) ?? null;
-  const canShowGrammar = !!selectedRow?.grammar?.regex;
 
   const leafDescriptionMap = useMemo(() => {
     if (!content.tabular) return null;
@@ -296,14 +293,25 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
           {hasData && (
             <button
               type="button"
-              onClick={() => setGrammarModalOpen(true)}
-              disabled={!canShowGrammar}
+              onClick={() => {
+                if (!selectedSlot) return;
+                setGrammarEditTarget((prev) => (
+                  prev?.slot === selectedSlot && prev.mode === 'node'
+                    ? null
+                    : { slot: selectedSlot, mode: 'node' }
+                ));
+              }}
+              disabled={!selectedSlot}
               title={selectedSlot
-                ? canShowGrammar
-                  ? `Grammatica di ${selectedSlot.split('.').pop()}`
-                  : 'Il nodo selezionato non ha grammatica'
+                ? grammarEditTarget?.slot === selectedSlot && grammarEditTarget.mode === 'node'
+                  ? `Chiudi editor sinonimi nodo di ${selectedSlot.split('.').pop()}`
+                  : `Sinonimi nodo di ${selectedSlot.split('.').pop()}`
                 : 'Seleziona un nodo nell\'albero'}
-              className="flex items-center justify-center w-8 h-8 rounded border border-sky-400/30 bg-sky-400/10 text-sky-300/80 hover:bg-sky-400/20 hover:text-sky-200 transition-colors disabled:opacity-30"
+              className={`flex items-center justify-center w-8 h-8 rounded border transition-colors disabled:opacity-30 ${
+                grammarEditTarget?.slot === selectedSlot && grammarEditTarget.mode === 'node'
+                  ? 'border-sky-400/60 bg-sky-400/25 text-sky-200 ring-1 ring-sky-400/40'
+                  : 'border-sky-400/30 bg-sky-400/10 text-sky-300/80 hover:bg-sky-400/20 hover:text-sky-200'
+              }`}
             >
               <Braces className="w-4 h-4" />
             </button>
@@ -517,8 +525,8 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
             leafDescriptionMap={leafDescriptionMap}
             selectedSlot={selectedSlot}
             onSelectedSlotChange={setSelectedSlot}
-            grammarModalOpen={grammarModalOpen}
-            onGrammarModalOpenChange={setGrammarModalOpen}
+            grammarEditTarget={grammarEditTarget}
+            onGrammarEditTargetChange={setGrammarEditTarget}
             showOnlyMessageNodes={showOnlyMessageNodes}
             grammarOverwrite={grammarOverwrite}
             onGrammarOverwriteChange={setGrammarOverwrite}

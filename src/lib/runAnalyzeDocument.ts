@@ -4,6 +4,7 @@
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import { coerceAiResponseToRows, parseOpenAiContent } from './coerceAiRows';
 import { invokeFunction } from './invokeFunction';
+import type { TaxonomyBuildResult } from './analyzeAiPostProcess';
 import {
   processGrammarsAiResponse,
   processMessagesAiResponse,
@@ -73,9 +74,10 @@ async function callLayerWithRetry(
   buildMessage: (correction: string) => string,
   slots: string[],
   buildCorrection: (err: string) => string,
-  process: (slots: string[], rawRows: unknown[]) => AnalysisRow[],
+  process: (slots: string[], rawRows: unknown[], itemPaths?: string[] | null) => AnalysisRow[],
   signal?: AbortSignal,
   proxyOptions?: OpenAiProxyOptions,
+  itemPaths?: string[] | null,
 ): Promise<AnalysisRow[]> {
   let lastError = '';
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -83,7 +85,7 @@ async function callLayerWithRetry(
     const correction = attempt === 0 ? '' : buildCorrection(lastError);
     try {
       const rawRows = await callOpenAiProxy(systemPrompt, buildMessage(correction), signal, proxyOptions);
-      return process(slots, rawRows);
+      return process(slots, rawRows, itemPaths);
     } catch (err) {
       if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) throw err;
       lastError = err instanceof Error ? err.message : String(err);
@@ -99,8 +101,11 @@ async function callNluWithRetry(
   slots: string[],
   buildCorrection: (err: string) => string,
   signal?: AbortSignal,
+  itemPaths?: string[] | null,
 ): Promise<AnalysisRow[]> {
-  return callLayerWithRetry(systemPrompt, buildMessage, slots, buildCorrection, processNluAiResponse, signal);
+  return callLayerWithRetry(
+    systemPrompt, buildMessage, slots, buildCorrection, processNluAiResponse, signal, undefined, itemPaths,
+  );
 }
 
 /** Generates taxonomy rows from document text. */
@@ -108,7 +113,7 @@ export async function runGenerateTaxonomy(
   documentText: string,
   documentName: string,
   signal?: AbortSignal,
-): Promise<AnalysisRow[]> {
+): Promise<TaxonomyBuildResult> {
   const rawRows = await callOpenAiProxy(
     TAXONOMY_SYSTEM_PROMPT,
     buildTaxonomyUserMessage(documentText, documentName),
@@ -121,7 +126,7 @@ export async function runGenerateTaxonomy(
 export async function runRefineTaxonomy(
   existingSlots: string[],
   refinementNotes: string,
-): Promise<AnalysisRow[]> {
+): Promise<TaxonomyBuildResult> {
   const rawRows = await callOpenAiProxy(
     REFINE_TAXONOMY_SYSTEM_PROMPT,
     buildRefineTaxonomyUserMessage(existingSlots, refinementNotes),
@@ -150,13 +155,15 @@ export async function runRegenSubtree(
   documentName: string,
   documentText?: string,
   signal?: AbortSignal,
+  itemPaths?: string[] | null,
 ): Promise<AnalysisRow[]> {
   return callNluWithRetry(
     REGEN_SYSTEM_PROMPT,
-    (correction) => buildRegenSubtreeUserMessage(slots, rootSlot, documentName, documentText, correction),
+    (correction) => buildRegenSubtreeUserMessage(slots, rootSlot, documentName, documentText, correction, itemPaths),
     slots,
     buildRegenCorrectionMessage,
     signal,
+    itemPaths,
   );
 }
 
@@ -167,14 +174,17 @@ export async function runRegenMessagesSubtree(
   documentName: string,
   documentText?: string,
   signal?: AbortSignal,
+  itemPaths?: string[] | null,
 ): Promise<AnalysisRow[]> {
   return callLayerWithRetry(
     REGEN_MESSAGES_PROMPT,
-    (correction) => buildRegenMessagesSubtreeUserMessage(slots, rootSlot, documentName, documentText, correction),
+    (correction) => buildRegenMessagesSubtreeUserMessage(slots, rootSlot, documentName, documentText, correction, itemPaths),
     slots,
     buildMessagesCorrectionMessage,
     processMessagesAiResponse,
     signal,
+    undefined,
+    itemPaths,
   );
 }
 

@@ -3,14 +3,12 @@ import { supabase } from '../lib/supabase';
 import {
   chunkArray,
   collectSubtreeSlots,
-  expandLeafPathsToTree,
   findInvalidGrammarNodes,
   getGrammarTargetSlots,
   findInvalidInternalNodes,
   findInvalidMessagesNodes,
   buildDefaultStartQuestion,
   getAgentGenerationRoots,
-  extractLeafPaths,
   hasAgentContent,
   hasMessagesContent,
   indexRowsBySlot,
@@ -28,8 +26,11 @@ import {
   isMessagesNodeComplete,
   isSubtreeGrammarsComplete,
   isSubtreeMessagesComplete,
+  applyNluQuestionRules,
+  invalidateNluAtSlots,
   mergeTaxonomyWithExistingNlu,
 } from '../lib/nluQuestionRules';
+import { reconcileItemPaths, resolveItemPaths } from '../lib/itemPaths';
 import { runGenerateConfirmations } from '../lib/runGenerateConfirmations';
 import {
   runGenerateTaxonomy,
@@ -38,13 +39,22 @@ import {
   runRegenMessagesSubtree,
   runRegenSubtree,
 } from '../lib/runAnalyzeDocument';
-import { normalizeGrammarRows, toTaxonomyRows } from '../lib/analyzeAiPostProcess';
+import { buildTaxonomyFromItemPaths, normalizeGrammarRows } from '../lib/analyzeAiPostProcess';
+import { migrateDualGrammars } from '../lib/grammarDual';
 import { applyTemplateGrammars, applyTemplateGrammarsToSlots } from '../lib/grammarTemplate';
 import { segmentAllDescriptions, type TokenDictionary } from '../lib/tokenDictionary';
 
 export interface GrammarEntry {
   regex: string;
   mappings: Record<string, string>;
+}
+
+/** Which inline grammar editor is open: node recognition vs question-answer routing. */
+export type GrammarEditMode = 'node' | 'answer';
+
+export interface GrammarEditTarget {
+  slot: string;
+  mode: GrammarEditMode;
 }
 
 export type RowStatus = 'approved' | 'rejected' | 'uncertain' | null;
@@ -60,7 +70,10 @@ export interface AgentGenProgress {
 export interface AnalysisRow {
   slot_filling: string;
   question: string | null;
+  /** Recognition grammar — maps to this node's own path. */
   grammar: GrammarEntry | null;
+  /** Answer grammar for disambiguation questions — maps to children (and parent-item when needed). */
+  answer_grammar: GrammarEntry | null;
   no_match_1: string | null;
   no_match_2: string | null;
   no_match_3: string | null;
@@ -72,6 +85,8 @@ export interface Analysis {
   id: string;
   document_id: string;
   rows: AnalysisRow[];
+  /** Corpus item paths (bookable prestations); may be internal nodes, not only tree leaves. */
+  item_paths: string[] | null;
   start_question: string | null;
   confirmation_preamble: string | null;
   created_at: string;
@@ -94,6 +109,7 @@ async function persistAnalysis(documentId: string, analysis: Analysis): Promise<
     .insert({
       document_id: documentId,
       rows: analysis.rows,
+      item_paths: analysis.item_paths ?? [],
       start_question: analysis.start_question,
       confirmation_preamble: analysis.confirmation_preamble,
     })
@@ -104,14 +120,23 @@ async function persistAnalysis(documentId: string, analysis: Analysis): Promise<
 }
 
 function normalizeLoadedAnalysis(data: Analysis): Analysis {
+  const rawRows = data.rows.map((r) => ({
+    ...r,
+    answer_grammar: r.answer_grammar ?? null,
+    confirmation_text: r.confirmation_text ?? null,
+  }));
+  const itemPaths = reconcileItemPaths(
+    rawRows.map((r) => r.slot_filling),
+    data.item_paths ?? null,
+  );
+  const rows = migrateDualGrammars(normalizeGrammarRows(rawRows), itemPaths);
+  const slots = rows.map((r) => r.slot_filling);
   return {
     ...data,
     start_question: data.start_question ?? null,
     confirmation_preamble: data.confirmation_preamble ?? 'Quindi confermo:',
-    rows: normalizeGrammarRows(data.rows.map((r) => ({
-      ...r,
-      confirmation_text: r.confirmation_text ?? null,
-    }))),
+    item_paths: reconcileItemPaths(slots, data.item_paths ?? null),
+    rows,
   };
 }
 
@@ -123,12 +148,22 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException('Generazione annullata', 'AbortError');
 }
 
-function draftAnalysis(documentId: string, rows: AnalysisRow[], existing?: Analysis | null): Analysis {
+function draftAnalysis(
+  documentId: string,
+  rows: AnalysisRow[],
+  existing?: Analysis | null,
+  item_paths?: string[] | null,
+): Analysis {
   const now = new Date().toISOString();
+  const slots = rows.map((r) => r.slot_filling);
+  const resolvedItems = item_paths !== undefined
+    ? reconcileItemPaths(slots, item_paths)
+    : reconcileItemPaths(slots, existing?.item_paths ?? null);
   return {
     id: existing?.id ?? '',
     document_id: documentId,
     rows,
+    item_paths: resolvedItems,
     start_question: existing?.start_question ?? null,
     confirmation_preamble: existing?.confirmation_preamble ?? 'Quindi confermo:',
     created_at: existing?.created_at ?? now,
@@ -231,10 +266,10 @@ export function useAnalysis(documentId: string) {
   ) => {
     if (!analysis) return;
     const slots = analysis.rows.map((r) => r.slot_filling);
-    const leaves = extractLeafPaths(slots);
-    if (leaves.length === 0) throw new Error('Nessuna foglia nell\'albero');
+    const itemPaths = resolveItemPaths(slots, analysis.item_paths);
+    if (itemPaths.length === 0) throw new Error('Nessun item corpus nell\'albero');
 
-    const items: LeafConfirmationInput[] = leaves.map((slot) => ({
+    const items: LeafConfirmationInput[] = itemPaths.map((slot) => ({
       slot_filling: slot,
       description: leafDescriptions?.get(slot)?.trim()
         || slot.replace(/\./g, ' ').replace(/_/g, ' '),
@@ -275,8 +310,9 @@ export function useAnalysis(documentId: string) {
     setAnalysis(draftWithStart(documentId, currentRows, existing));
     setAnalysisDirty(true);
 
+    const itemPaths = existing?.item_paths ?? null;
     const isComplete = (slot: string, row: AnalysisRow) =>
-      isMessagesNodeComplete(allSlots, slot, row);
+      isMessagesNodeComplete(allSlots, slot, row, itemPaths);
 
     for (let i = 0; i < roots.length; i++) {
       throwIfAborted(signal);
@@ -298,6 +334,7 @@ export function useAnalysis(documentId: string) {
         documentName,
         documentText,
         signal,
+        itemPaths,
       );
 
       throwIfAborted(signal);
@@ -309,6 +346,11 @@ export function useAnalysis(documentId: string) {
 
       const regenedBySlot = indexRowsBySlot(regenRows);
       currentRows = mergeSubtreeMessageRows(currentRows, regenedBySlot, rootSlot, true, isComplete);
+      currentRows = applyNluQuestionRules(
+        currentRows.map((r) => r.slot_filling),
+        currentRows,
+        itemPaths,
+      );
       setAnalysis(draftWithStart(documentId, currentRows, existing));
     }
 
@@ -357,7 +399,7 @@ export function useAnalysis(documentId: string) {
 
       for (const batch of batches) {
         throwIfAborted(signal);
-        const regenRows = await runRegenGrammarsSubtree(
+        await runRegenGrammarsSubtree(
           batch,
           rootSlot,
           currentRows,
@@ -367,13 +409,21 @@ export function useAnalysis(documentId: string) {
           signal,
         );
 
-        const invalid = findInvalidGrammarNodes(batch, regenRows);
+        currentRows = applyTemplateGrammarsToSlots(
+          currentRows,
+          batch,
+          overwriteExisting,
+          existing?.item_paths,
+        );
+
+        const invalid = findInvalidGrammarNodes(batch, currentRows, existing?.item_paths);
         if (invalid.length > 0) {
           throw new Error(`Grammatiche mancanti per ${rootSlot}: ${invalid.join(', ')}`);
         }
 
-        for (const row of regenRows) {
-          regenedBySlot.set(row.slot_filling, row);
+        for (const slot of batch) {
+          const row = currentRows.find((r) => r.slot_filling === slot);
+          if (row) regenedBySlot.set(slot, row);
         }
       }
       currentRows = mergeSubtreeGrammarRows(
@@ -386,7 +436,7 @@ export function useAnalysis(documentId: string) {
       setAnalysis(draftAnalysis(documentId, currentRows, existing));
     }
 
-    return currentRows;
+    return applyTemplateGrammars(currentRows, false, existing?.item_paths ?? null);
   }, [documentId]);
 
   /**
@@ -411,11 +461,8 @@ export function useAnalysis(documentId: string) {
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
-      const allSlots = expandLeafPathsToTree(leafPaths);
-      if (allSlots.length === 0) throw new Error('Espansione albero fallita');
-
-      const taxonomyRows = toTaxonomyRows(allSlots);
-      setAnalysis((prev) => draftAnalysis(documentId, taxonomyRows, prev));
+      const { rows: taxonomyRows, item_paths } = buildTaxonomyFromItemPaths(leafPaths);
+      setAnalysis((prev) => draftAnalysis(documentId, taxonomyRows, prev, item_paths));
       setAnalysisDirty(true);
       setDirtyRoots([]);
     } catch (e) {
@@ -448,19 +495,16 @@ export function useAnalysis(documentId: string) {
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
-      const allSlots = expandLeafPathsToTree(leafPaths);
-      if (allSlots.length === 0) throw new Error('Espansione albero fallita');
-
-      const taxonomyRows = mergeTaxonomyWithExistingNlu(
-        toTaxonomyRows(allSlots),
-        analysis?.rows,
-      );
+      const { rows: builtRows, item_paths } = buildTaxonomyFromItemPaths(leafPaths);
+      const taxonomyRows = mergeTaxonomyWithExistingNlu(builtRows, analysis?.rows);
+      const draft = draftAnalysis(documentId, taxonomyRows, analysis, item_paths);
+      setAnalysis(draft);
       setGeneratingPhase('messages');
       await generateMessagesByRootChunks(
         taxonomyRows,
         documentName,
         documentText ?? '',
-        analysis,
+        draft,
         signal,
       );
       setDirtyRoots([]);
@@ -484,9 +528,11 @@ export function useAnalysis(documentId: string) {
     setError(null);
     try {
       throwIfAborted(signal);
-      const taxonomyRows = await runGenerateTaxonomy(documentText, documentName, signal);
+      const taxonomy = await runGenerateTaxonomy(documentText, documentName, signal);
+      const draft = draftAnalysis(documentId, taxonomy.rows, analysis, taxonomy.item_paths);
+      setAnalysis(draft);
       setGeneratingPhase('messages');
-      await generateMessagesByRootChunks(taxonomyRows, documentName, documentText, null, signal);
+      await generateMessagesByRootChunks(taxonomy.rows, documentName, documentText, draft, signal);
       setDirtyRoots([]);
     } catch (e) {
       if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
@@ -514,7 +560,7 @@ export function useAnalysis(documentId: string) {
     }
     const allSlots = analysis.rows.map((r) => r.slot_filling);
     if (!overwriteExisting) {
-      const missing = findInvalidGrammarNodes(allSlots, analysis.rows);
+      const missing = findInvalidGrammarNodes(allSlots, analysis.rows, analysis.item_paths);
       if (missing.length === 0) {
         setError(null);
         return;
@@ -529,7 +575,7 @@ export function useAnalysis(documentId: string) {
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const newRows = applyTemplateGrammars(analysis.rows, overwriteExisting);
+      const newRows = applyTemplateGrammars(analysis.rows, overwriteExisting, analysis.item_paths);
       setAgentGenProgress({
         current: analysis.rows.length,
         total: analysis.rows.length,
@@ -561,7 +607,7 @@ export function useAnalysis(documentId: string) {
     }
     const allSlots = analysis.rows.map((r) => r.slot_filling);
     if (!overwriteExisting) {
-      const missing = findInvalidGrammarNodes(allSlots, analysis.rows);
+      const missing = findInvalidGrammarNodes(allSlots, analysis.rows, analysis.item_paths);
       if (missing.length === 0) {
         setError(null);
         return;
@@ -610,7 +656,9 @@ export function useAnalysis(documentId: string) {
       const targetSlots = getGrammarTargetSlots(subtreeSlots, analysis.rows, overwriteExisting);
       if (targetSlots.length === 0) return;
 
-      const newRows = applyTemplateGrammarsToSlots(analysis.rows, targetSlots, overwriteExisting);
+      const newRows = applyTemplateGrammarsToSlots(
+        analysis.rows, targetSlots, overwriteExisting, analysis.item_paths,
+      );
 
       setAnalysis({ ...analysis, rows: newRows });
       setAnalysisDirty(true);
@@ -626,8 +674,8 @@ export function useAnalysis(documentId: string) {
     setGeneratingPhase('taxonomy');
     setError(null);
     try {
-      const rows = await runGenerateTaxonomy(documentText, documentName);
-      setAnalysis((prev) => draftAnalysis(documentId, rows, prev));
+      const taxonomy = await runGenerateTaxonomy(documentText, documentName);
+      setAnalysis((prev) => draftAnalysis(documentId, taxonomy.rows, prev, taxonomy.item_paths));
       setAnalysisDirty(true);
       setDirtyRoots([]);
     } catch (e) {
@@ -665,8 +713,8 @@ export function useAnalysis(documentId: string) {
     setError(null);
     try {
       const existingSlots = analysis.rows.map((r) => r.slot_filling);
-      const rows = await runRefineTaxonomy(existingSlots, refinementNotes);
-      setAnalysis((prev) => draftAnalysis(documentId, rows, prev));
+      const taxonomy = await runRefineTaxonomy(existingSlots, refinementNotes);
+      setAnalysis((prev) => draftAnalysis(documentId, taxonomy.rows, prev, taxonomy.item_paths));
       setAnalysisDirty(true);
       setDirtyRoots([]);
     } catch (e) {
@@ -692,14 +740,23 @@ export function useAnalysis(documentId: string) {
     if (!analysis) return;
     const slot = analysis.rows[rowIndex]?.slot_filling;
     if (!slot) return;
-    const newRows = analysis.rows.filter(
+    let newRows = analysis.rows.filter(
       (r) => r.slot_filling !== slot && !r.slot_filling.startsWith(slot + '.'),
     );
     const dirty = findDirtyRoot(slot, newRows);
     if (dirty) {
+      newRows = invalidateNluAtSlots(newRows, [dirty]);
       setDirtyRoots((prev) => (prev.includes(dirty) ? prev : [...prev, dirty]));
     }
-    setAnalysis({ ...analysis, rows: newRows });
+    const slots = newRows.map((r) => r.slot_filling);
+    const nextItems = (analysis.item_paths ?? []).filter(
+      (p) => p !== slot && !p.startsWith(`${slot}.`),
+    );
+    setAnalysis({
+      ...analysis,
+      rows: newRows,
+      item_paths: reconcileItemPaths(slots, nextItems),
+    });
     setAnalysisDirty(true);
   }, [analysis]);
 
@@ -711,7 +768,9 @@ export function useAnalysis(documentId: string) {
       const slots = collectSubtreeSlots(analysis.rows, rootSlot);
       if (slots.length === 0) throw new Error('Nessuno slot nel sottoalbero da rigenerare');
 
-      const regenRows = await runRegenSubtree(slots, rootSlot, documentName, documentText);
+      const regenRows = await runRegenSubtree(
+        slots, rootSlot, documentName, documentText, undefined, analysis.item_paths,
+      );
 
       if (regenRows.length === 0) {
         throw new Error('La rigenerazione non ha restituito righe valide');
@@ -723,7 +782,8 @@ export function useAnalysis(documentId: string) {
       }
 
       const regenedBySlot = indexRowsBySlot(regenRows);
-      const newRows = mergeSubtreeRows(analysis.rows, regenedBySlot, rootSlot);
+      let newRows = mergeSubtreeRows(analysis.rows, regenedBySlot, rootSlot);
+      newRows = applyNluQuestionRules(slots, newRows, analysis.item_paths);
 
       setAnalysis({ ...analysis, rows: newRows });
       setAnalysisDirty(true);
@@ -739,13 +799,13 @@ export function useAnalysis(documentId: string) {
     if (!analysis) return;
     const newRow: AnalysisRow = {
       slot_filling: newSlot,
-      question: null, grammar: null,
+      question: null, grammar: null, answer_grammar: null,
       no_match_1: null, no_match_2: null, no_match_3: null,
       confirmation_text: null,
       status: null,
     };
     const parentSlot = newSlot.split('.').slice(0, -1).join('.');
-    const newRows = [...analysis.rows];
+    let newRows = [...analysis.rows];
     let insertAfterIdx = -1;
     for (let i = 0; i < newRows.length; i++) {
       const r = newRows[i]!;
@@ -759,9 +819,15 @@ export function useAnalysis(documentId: string) {
       newRows.push(newRow);
     }
     if (parentSlot) {
+      newRows = invalidateNluAtSlots(newRows, [parentSlot]);
       setDirtyRoots((prev) => prev.includes(parentSlot) ? prev : [...prev, parentSlot]);
     }
-    setAnalysis({ ...analysis, rows: newRows });
+    const slots = newRows.map((r) => r.slot_filling);
+    setAnalysis({
+      ...analysis,
+      rows: newRows,
+      item_paths: reconcileItemPaths(slots, analysis.item_paths),
+    });
     setAnalysisDirty(true);
   }, [analysis]);
 
@@ -773,9 +839,11 @@ export function useAnalysis(documentId: string) {
       const newSlot = normalizeSlotPath(newPathRaw);
       if (newSlot === oldSlot) return;
 
-      const newRows = restructureSlotPath(analysis.rows, oldSlot, newPathRaw);
       const parentNew = newSlot.split('.').slice(0, -1).join('.');
       const parentOld = oldSlot.split('.').slice(0, -1).join('.');
+      const parentsToInvalidate = [parentNew, parentOld].filter((p) => p.length > 0);
+      let newRows = restructureSlotPath(analysis.rows, oldSlot, newPathRaw);
+      newRows = invalidateNluAtSlots(newRows, parentsToInvalidate);
 
       setDirtyRoots((prev) => {
         let next = prev.map((s) => {
@@ -789,21 +857,83 @@ export function useAnalysis(documentId: string) {
         return next;
       });
 
-      setAnalysis({ ...analysis, rows: newRows });
+      const slots = newRows.map((r) => r.slot_filling);
+      const remappedItems = (analysis.item_paths ?? []).map((p) => {
+        if (p === oldSlot) return newSlot;
+        if (p.startsWith(`${oldSlot}.`)) return newSlot + p.slice(oldSlot.length);
+        return p;
+      });
+      setAnalysis({
+        ...analysis,
+        rows: newRows,
+        item_paths: reconcileItemPaths(slots, remappedItems),
+      });
       setAnalysisDirty(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [analysis]);
 
-  const messagesReady = analysis ? isMessagesLayerReady(analysis.rows) : false;
-  const grammarsReady = analysis ? isGrammarsLayerReady(analysis.rows) : false;
+  /** Regenerates messages then grammars for a dirty subtree in one pass. */
+  const regenSubtreeFull = useCallback(async (
+    rootSlot: string,
+    documentText: string,
+    documentName: string,
+    overwriteGrammars = false,
+  ) => {
+    if (!analysis) return;
+    setRegeningRoots((prev) => [...prev, rootSlot]);
+    setRegenError(null);
+    try {
+      const slots = collectSubtreeSlots(analysis.rows, rootSlot);
+      if (slots.length === 0) throw new Error('Nessuno slot nel sottoalbero da rigenerare');
+
+      const regenRows = await runRegenSubtree(
+        slots, rootSlot, documentName, documentText, undefined, analysis.item_paths,
+      );
+      if (regenRows.length === 0) {
+        throw new Error('La rigenerazione non ha restituito righe valide');
+      }
+
+      const invalid = findInvalidInternalNodes(slots, regenRows);
+      if (invalid.length > 0) {
+        throw new Error(`Domande mancanti per: ${invalid.join(', ')}`);
+      }
+
+      const regenedBySlot = indexRowsBySlot(regenRows);
+      let newRows = mergeSubtreeRows(analysis.rows, regenedBySlot, rootSlot);
+      newRows = applyNluQuestionRules(slots, newRows, analysis.item_paths);
+
+      const subtreeSlots = collectSubtreeSlots(newRows, rootSlot);
+      const targetSlots = getGrammarTargetSlots(subtreeSlots, newRows, overwriteGrammars);
+      if (targetSlots.length > 0) {
+        newRows = applyTemplateGrammarsToSlots(
+          newRows, targetSlots, overwriteGrammars, analysis.item_paths,
+        );
+      }
+
+      setAnalysis({ ...analysis, rows: newRows });
+      setAnalysisDirty(true);
+      setDirtyRoots((prev) => prev.filter((r) => r !== rootSlot));
+    } catch (e) {
+      setRegenError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRegeningRoots((prev) => prev.filter((r) => r !== rootSlot));
+    }
+  }, [analysis]);
+
+  const messagesReady = analysis ? isMessagesLayerReady(analysis.rows, analysis.item_paths) : false;
+  const grammarsReady = analysis ? isGrammarsLayerReady(analysis.rows, analysis.item_paths) : false;
   const agentReady = analysis ? hasAgentContent(analysis.rows) : false;
   const hasMessages = analysis ? hasMessagesContent(analysis.rows) : false;
   const hasTaxonomy = (analysis?.rows.length ?? 0) > 0;
   const canGenerateGrammars = hasTaxonomy && !generating;
   const missingGrammarCount = analysis
-    ? findInvalidGrammarNodes(analysis.rows.map((r) => r.slot_filling), analysis.rows).length
+    ? findInvalidGrammarNodes(
+      analysis.rows.map((r) => r.slot_filling),
+      analysis.rows,
+      analysis.item_paths,
+    ).length
     : 0;
 
   return {
@@ -815,6 +945,6 @@ export function useAnalysis(documentId: string) {
     generateTaxonomy, generateMessagesFromText, createAgentFromDictionary,
     generateMessagesFromDictionary, generateGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
     updateRow, deleteRow, addRow, restructurePath,
-    dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree,
+    dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree, regenSubtreeFull,
   };
 }

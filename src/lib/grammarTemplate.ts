@@ -1,79 +1,20 @@
 /**
  * Rule-based grammar generation from slot paths — instant, no API calls.
+ * Node grammar maps to self; answer grammar maps to children on interactive nodes.
  */
 import type { AnalysisRow, GrammarEntry } from '../hooks/useAnalysis';
-import { ensureGrammarMapsToSelf } from './analyzeAiPostProcess';
-import { groupNameFromSlotSegment, normalizeGrammarEntry, validateGrammarRegex } from './grammarNormalize';
+import { validateGrammarRegex } from './grammarNormalize';
+import {
+  buildInteractivePanels,
+  compileInteractiveGrammar,
+  compileSimpleGrammar,
+  defaultSynonymsForSlot,
+  seedDefaultPanels,
+} from './grammarSynonyms';
+import { resolveItemPaths } from './itemPaths';
+import { requiresInteractiveNode } from './nluQuestionRules';
 
-const UNICODE_DASHES = /[\u2010\u2011\u2012\u2013\u2014\u2212]/g;
-
-function lastSegment(slot: string): string {
-  const parts = slot.split('.');
-  return parts[parts.length - 1] ?? slot;
-}
-
-function escapeRegexLiteral(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Adds simple Italian morphological variants for a segment label. */
-function expandSegmentVariants(segment: string): string[] {
-  const norm = segment.trim().replace(UNICODE_DASHES, '-');
-  const out = new Set<string>();
-  const add = (v: string) => {
-    const t = v.trim();
-    if (t) out.add(t);
-  };
-
-  add(norm);
-  add(norm.replace(/-/g, ' '));
-  add(norm.replace(/-/g, ''));
-
-  if (norm.endsWith('a')) add(norm.slice(0, -1) + 'e');
-  if (norm.endsWith('o')) add(norm.slice(0, -1) + 'i');
-  if (norm.endsWith('e')) add(norm.slice(0, -1) + 'i');
-
-  return [...out];
-}
-
-/** Builds synonym phrases for a full slot path (deeper nodes include parent context). */
-function buildSynonymsForSlot(slot: string): string[] {
-  const parts = slot.split('.').map((p) => p.trim().replace(UNICODE_DASHES, '-'));
-  const segment = parts[parts.length - 1] ?? slot;
-  const synonyms = new Set(expandSegmentVariants(segment));
-
-  if (parts.length >= 2) {
-    const tail = parts.slice(-2).join(' ');
-    synonyms.add(tail);
-    synonyms.add(tail.replace(/-/g, ' '));
-  }
-  if (parts.length >= 3) {
-    const tail3 = parts.slice(-3).join(' ');
-    synonyms.add(tail3.replace(/-/g, ' '));
-  }
-
-  return [...synonyms].sort((a, b) => b.length - a.length);
-}
-
-/** Builds a recognition grammar for one node from its path segments. */
-export function buildTemplateGrammar(slot: string): GrammarEntry {
-  const segment = lastSegment(slot);
-  const groupName = groupNameFromSlotSegment(segment) || 'nodo';
-  const synonymParts = buildSynonymsForSlot(slot).map(escapeRegexLiteral).filter(Boolean);
-  const fallback = escapeRegexLiteral(segment.replace(UNICODE_DASHES, '-').trim());
-  const synonyms = synonymParts.length > 0 ? synonymParts.join('|') : fallback;
-  const entry = normalizeGrammarEntry({
-    regex: `(?P<${groupName}>${synonyms})`,
-    mappings: { [groupName]: slot },
-  });
-  const validation = validateGrammarRegex(entry.regex, entry.mappings);
-  if (!validation.valid) {
-    throw new Error(`Grammatica template non valida per ${slot}: ${validation.error ?? 'errore sconosciuto'}`);
-  }
-  return entry;
-}
-
-function isGrammarComplete(row: AnalysisRow): boolean {
+function isNodeGrammarComplete(row: AnalysisRow): boolean {
   return !!(
     row.grammar?.regex?.trim()
     && row.grammar.mappings
@@ -81,35 +22,90 @@ function isGrammarComplete(row: AnalysisRow): boolean {
   );
 }
 
-/**
- * Applies template grammars to rows (incremental or full overwrite).
- * Returns new rows array with grammars filled.
- */
-function shouldReplaceGrammar(row: AnalysisRow, overwriteExisting: boolean): boolean {
+function isAnswerGrammarComplete(row: AnalysisRow): boolean {
+  return !!(
+    row.answer_grammar?.regex?.trim()
+    && row.answer_grammar.mappings
+    && Object.keys(row.answer_grammar.mappings).length > 0
+  );
+}
+
+function buildNodeGrammarForSlot(slot: string): GrammarEntry {
+  return compileSimpleGrammar(slot, defaultSynonymsForSlot(slot));
+}
+
+function buildAnswerGrammarForSlot(
+  slot: string,
+  slots: string[],
+  itemPaths: string[],
+): GrammarEntry | null {
+  if (!requiresInteractiveNode(slots, slot, itemPaths)) return null;
+  let panels = buildInteractivePanels(slot, slots, itemPaths);
+  panels = seedDefaultPanels(panels, slot);
+  return compileInteractiveGrammar(panels);
+}
+
+function shouldReplaceNodeGrammar(row: AnalysisRow, overwriteExisting: boolean): boolean {
   if (overwriteExisting) return true;
-  if (!isGrammarComplete(row)) return true;
+  if (!isNodeGrammarComplete(row)) return true;
   const validation = validateGrammarRegex(row.grammar!.regex, row.grammar!.mappings);
   return !validation.valid;
 }
 
+function shouldReplaceAnswerGrammar(
+  row: AnalysisRow,
+  slots: string[],
+  itemPaths: string[],
+  overwriteExisting: boolean,
+): boolean {
+  if (!requiresInteractiveNode(slots, row.slot_filling, itemPaths)) return false;
+  if (overwriteExisting) return true;
+  if (!isAnswerGrammarComplete(row)) return true;
+  const validation = validateGrammarRegex(
+    row.answer_grammar!.regex,
+    row.answer_grammar!.mappings,
+  );
+  return !validation.valid;
+}
+
+function applyTemplateToRow(
+  row: AnalysisRow,
+  slots: string[],
+  itemPaths: string[],
+  overwriteExisting: boolean,
+): AnalysisRow {
+  let next = row;
+  if (shouldReplaceNodeGrammar(row, overwriteExisting)) {
+    next = { ...next, grammar: buildNodeGrammarForSlot(row.slot_filling) };
+  }
+  if (shouldReplaceAnswerGrammar(row, slots, itemPaths, overwriteExisting)) {
+    next = {
+      ...next,
+      answer_grammar: buildAnswerGrammarForSlot(row.slot_filling, slots, itemPaths),
+    };
+  } else if (!requiresInteractiveNode(slots, row.slot_filling, itemPaths)) {
+    next = { ...next, answer_grammar: null };
+  }
+  return { ...next, status: row.status ?? null };
+}
+
+/**
+ * Applies template grammars to rows (incremental or full overwrite).
+ * Returns new rows array with grammars filled.
+ */
 export function applyTemplateGrammars(
   rows: AnalysisRow[],
   overwriteExisting = false,
+  itemPathsInput?: string[] | null,
 ): AnalysisRow[] {
-  return rows.map((row) => {
-    if (!shouldReplaceGrammar(row, overwriteExisting)) return row;
-    const grammar = buildTemplateGrammar(row.slot_filling);
-    return ensureGrammarMapsToSelf({
-      ...row,
-      grammar,
-      status: row.status ?? null,
-    });
-  });
+  const slots = rows.map((r) => r.slot_filling);
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
+  return rows.map((row) => applyTemplateToRow(row, slots, itemPaths, overwriteExisting));
 }
 
 /** True when every row has a template-applicable grammar slot. */
 export function countMissingTemplateGrammars(rows: AnalysisRow[]): number {
-  return rows.filter((r) => !isGrammarComplete(r)).length;
+  return rows.filter((r) => !isNodeGrammarComplete(r)).length;
 }
 
 /** Applies templates only to rows whose slot is in targetSlots. */
@@ -117,12 +113,30 @@ export function applyTemplateGrammarsToSlots(
   rows: AnalysisRow[],
   targetSlots: string[],
   overwriteExisting = false,
+  itemPathsInput?: string[] | null,
 ): AnalysisRow[] {
+  const slots = rows.map((r) => r.slot_filling);
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
   const targets = new Set(targetSlots);
   return rows.map((row) => {
     if (!targets.has(row.slot_filling)) return row;
-    if (!shouldReplaceGrammar(row, overwriteExisting)) return row;
-    const grammar = buildTemplateGrammar(row.slot_filling);
-    return ensureGrammarMapsToSelf({ ...row, grammar, status: row.status ?? null });
+    return applyTemplateToRow(row, slots, itemPaths, overwriteExisting);
   });
+}
+
+/** @deprecated Use compileSimpleGrammar from grammarSynonyms. */
+export function buildTemplateGrammar(slot: string): GrammarEntry {
+  return compileSimpleGrammar(slot, defaultSynonymsForSlot(slot));
+}
+
+/** @deprecated Use compileInteractiveGrammar from grammarSynonyms. */
+export function buildPrefixDisambiguationGrammar(
+  parentSlot: string,
+  childItemSlots: string[],
+): GrammarEntry {
+  const slots = [parentSlot, ...childItemSlots];
+  const itemPaths = resolveItemPaths(slots, [parentSlot, ...childItemSlots]);
+  let panels = buildInteractivePanels(parentSlot, slots, itemPaths);
+  panels = seedDefaultPanels(panels, parentSlot);
+  return compileInteractiveGrammar(panels);
 }
