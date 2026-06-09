@@ -17,13 +17,18 @@ import {
   reorderCategory,
   rootTokenTexts,
 } from '../../lib/dictionaryTree';
-import type { TokenEntry } from '../../lib/tokenDictionary';
+import { aliasCanonicalHint, type TokenEntry } from '../../lib/tokenDictionary';
 
 export interface TokenTreeEditorProps {
   tokens: TokenEntry[];
   categories: TokenCategory[];
   onCategoriesChange: (categories: TokenCategory[]) => void;
-  onRemoveToken: (text: string) => void;
+  onRemoveCanonical: (text: string) => void;
+  onRemoveAlias: (text: string) => void;
+  aliasPickActive?: boolean;
+  aliasPickPhrase?: string | null;
+  onAliasTargetPick?: (canonicalText: string) => void;
+  onCancelAliasPick?: () => void;
 }
 
 interface TokenContextMenu {
@@ -35,28 +40,40 @@ interface TokenContextMenu {
 function TokenRow({
   entry,
   selected,
+  aliasPickActive,
   onToggleSelect,
   onRemove,
   onContextMenu,
+  onPickAsAliasTarget,
 }: {
   entry: TokenEntry;
   selected: boolean;
+  aliasPickActive?: boolean;
   onToggleSelect: () => void;
   onRemove: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onPickAsAliasTarget?: () => void;
 }) {
+  const pickable = aliasPickActive && onPickAsAliasTarget;
+
   return (
     <div
-      className={`group flex items-center gap-1.5 px-2 py-1 rounded cursor-default transition-colors ${
-        selected ? 'bg-sky-400/15 ring-1 ring-sky-400/35' : 'hover:bg-[#0f1a12]'
+      className={`group flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${
+        pickable
+          ? 'cursor-pointer hover:bg-sky-400/15 hover:ring-1 hover:ring-sky-400/40'
+          : selected
+            ? 'bg-sky-400/15 ring-1 ring-sky-400/35 cursor-default'
+            : 'hover:bg-[#0f1a12] cursor-default'
       }`}
-      onContextMenu={onContextMenu}
+      onClick={pickable ? onPickAsAliasTarget : undefined}
+      onContextMenu={pickable ? undefined : onContextMenu}
     >
       <input
         type="checkbox"
         checked={selected}
         onChange={onToggleSelect}
-        className="flex-shrink-0 accent-sky-400"
+        disabled={pickable}
+        className="flex-shrink-0 accent-sky-400 disabled:opacity-30"
         onClick={(e) => e.stopPropagation()}
       />
       <Circle className={`w-2 h-2 flex-shrink-0 ${entry.enabled ? 'text-amber-400/80 fill-amber-400/40' : 'text-emerald-400/25'}`} />
@@ -73,14 +90,19 @@ function TokenRow({
           ↳
         </span>
       )}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 hover:bg-red-400/10 transition-all"
-        title="Rimuovi token"
-      >
-        <Trash2 className="w-3 h-3" />
-      </button>
+      {!pickable && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 hover:bg-red-400/10 transition-all"
+          title="Rimuovi token"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -89,7 +111,12 @@ export function TokenTreeEditor({
   tokens,
   categories,
   onCategoriesChange,
-  onRemoveToken,
+  onRemoveCanonical,
+  onRemoveAlias,
+  aliasPickActive = false,
+  aliasPickPhrase = null,
+  onAliasTargetPick,
+  onCancelAliasPick,
 }: TokenTreeEditorProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -112,6 +139,19 @@ export function TokenTreeEditor({
   const rootTexts = useMemo(
     () => rootTokenTexts(tokens, categories),
     [tokens, categories],
+  );
+
+  const aliasEntries = useMemo(
+    () =>
+      tokens
+        .filter((t) => t.aliasOf)
+        .sort((a, b) => a.text.localeCompare(b.text, 'it', { sensitivity: 'base' })),
+    [tokens],
+  );
+
+  const canonicalCount = useMemo(
+    () => tokens.filter((t) => !t.aliasOf).length,
+    [tokens],
   );
 
   const selectedList = useMemo(() => [...selected], [selected]);
@@ -204,7 +244,7 @@ export function TokenTreeEditor({
     }
   }, [categories, ctxMenu, ctxNewCategoryName, onCategoriesChange]);
 
-  const allCount = tokens.length;
+  const allCount = canonicalCount;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -269,14 +309,38 @@ export function TokenTreeEditor({
         </div>
       </div>
 
-      <div className="flex-shrink-0 px-3 py-1.5 border-b border-[#1a3a2a] bg-[#0a1510] font-mono text-[10px] text-sky-400/50 uppercase tracking-wider">
-        Dizionario ({allCount}) · {sortedCategories.length} categorie
+      <div className="flex-shrink-0 px-3 py-1.5 border-b border-[#1a3a2a] bg-[#0a1510] font-mono text-[10px] uppercase tracking-wider">
+        {aliasPickActive ? (
+          <div className="flex items-start justify-between gap-2">
+            <div className="space-y-0.5 min-w-0">
+              <p className="text-sky-300/90">Alias of…</p>
+              <p className="text-[9px] text-emerald-400/45 normal-case truncate" title={aliasPickPhrase ?? undefined}>
+                {aliasPickPhrase}
+              </p>
+              <p className="text-[8px] text-sky-400/50 normal-case">Clicca un token · ESC annulla</p>
+            </div>
+            {onCancelAliasPick && (
+              <button
+                type="button"
+                onClick={onCancelAliasPick}
+                className="flex-shrink-0 font-mono text-[9px] text-emerald-400/50 hover:text-emerald-300 px-1"
+                title="Annulla (ESC)"
+              >
+                ESC
+              </button>
+            )}
+          </div>
+        ) : (
+          <span className="text-sky-400/50">
+            Dizionario ({allCount}) · {sortedCategories.length} categorie
+          </span>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-1.5 space-y-0.5">
-        {allCount === 0 ? (
+        {allCount === 0 && aliasEntries.length === 0 ? (
           <p className="font-mono text-[10px] text-emerald-400/25 px-2 py-4 text-center leading-relaxed">
-            Nessun token. Seleziona testo nelle descrizioni a sinistra.
+            Nessun token. Doppio click sul testo per creare un token.
           </p>
         ) : (
           <>
@@ -344,9 +408,15 @@ export function TokenTreeEditor({
                               key={text}
                               entry={entry}
                               selected={selected.has(text)}
+                              aliasPickActive={aliasPickActive}
                               onToggleSelect={() => toggleSelect(text)}
-                              onRemove={() => onRemoveToken(text)}
+                              onRemove={() => onRemoveCanonical(text)}
                               onContextMenu={(e) => openTokenContextMenu(e, text)}
+                              onPickAsAliasTarget={
+                                aliasPickActive && onAliasTargetPick
+                                  ? () => onAliasTargetPick(text)
+                                  : undefined
+                              }
                             />
                           );
                         })
@@ -370,12 +440,49 @@ export function TokenTreeEditor({
                       key={text}
                       entry={entry}
                       selected={selected.has(text)}
+                      aliasPickActive={aliasPickActive}
                       onToggleSelect={() => toggleSelect(text)}
-                      onRemove={() => onRemoveToken(text)}
+                      onRemove={() => onRemoveCanonical(text)}
                       onContextMenu={(e) => openTokenContextMenu(e, text)}
+                      onPickAsAliasTarget={
+                        aliasPickActive && onAliasTargetPick
+                          ? () => onAliasTargetPick(text)
+                          : undefined
+                      }
                     />
                   );
                 })}
+              </div>
+            )}
+
+            {aliasEntries.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-[#1a3a2a]/60">
+                <p className="font-mono text-[9px] uppercase tracking-wider text-sky-400/45 px-2 mb-1">
+                  Alias ({aliasEntries.length})
+                </p>
+                {aliasEntries.map((entry) => (
+                  <div
+                    key={entry.text}
+                    className="group flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#0f1a12] transition-colors"
+                    title={`alias of: ${entry.aliasOf}`}
+                  >
+                    <Circle className="w-2 h-2 flex-shrink-0 text-sky-400/60 fill-sky-400/25" />
+                    <span className="flex-1 min-w-0 font-mono text-[10px] text-sky-200/90 truncate">
+                      {entry.text}
+                      {entry.aliasOf && (
+                        <span className="text-sky-300/45"> ({aliasCanonicalHint(entry.aliasOf)})</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveAlias(entry.text)}
+                      className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 hover:bg-red-400/10 transition-all"
+                      title="Rimuovi alias"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </>

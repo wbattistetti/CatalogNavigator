@@ -1,18 +1,21 @@
 /**
  * Corpus editor: paired description/segmentation rows plus hierarchical token tree.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Key, X } from 'lucide-react';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import { removeTokenFromLayout } from '../../lib/dictionaryTree';
-import type { SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
+import type { HighlightSpan, SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
 import {
+  addAlias,
   addToken,
+  aliasCanonicalHint,
   findHighlightSpans,
-  getActiveTokens,
+  isCanonicalToken,
   getSelectionOffsetsInElement,
   segmentDescription,
-  removeToken,
+  removeAlias,
+  removeCanonicalToken,
   selectionToTokenPhrase,
 } from '../../lib/tokenDictionary';
 import { TokenTreeEditor } from './TokenTreeEditor';
@@ -32,27 +35,47 @@ interface ContextMenuState {
   range: SelectionRange | null;
 }
 
-/** Rounded chip for a matched token phrase; optional delete control. */
+interface AliasPickState {
+  phrase: string;
+  range: SelectionRange | null;
+  normalizedPhrase: string;
+}
+
+/** Rounded chip for a matched token phrase; optional delete control on hover. */
 function TokenChip({
   label,
   muted = false,
+  variant = 'token',
+  aliasOf,
   className = '',
   onRemove,
 }: {
   label: string;
   muted?: boolean;
+  variant?: 'token' | 'alias';
+  aliasOf?: string;
   className?: string;
   onRemove?: () => void;
 }) {
+  const isAlias = variant === 'alias';
+
   return (
     <span
       className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip ${
         muted
           ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-400/35'
-          : 'bg-amber-400/20 border-amber-400/40 text-amber-100'
+          : isAlias
+            ? 'bg-sky-400/20 border-sky-400/40 text-sky-100'
+            : 'bg-amber-400/20 border-amber-400/40 text-amber-100'
       } ${className}`}
+      title={isAlias && aliasOf ? `alias of: ${aliasOf}` : undefined}
     >
-      <span>{label}</span>
+      <span>
+        {label}
+        {isAlias && aliasOf && (
+          <span className="text-sky-300/50"> ({aliasCanonicalHint(aliasOf)})</span>
+        )}
+      </span>
       {onRemove && (
         <button
           type="button"
@@ -60,8 +83,8 @@ function TokenChip({
             e.stopPropagation();
             onRemove();
           }}
-          title="Rimuovi token"
-          className="flex-shrink-0 p-0.5 rounded text-red-400/70 hover:text-red-300 hover:bg-red-400/15 transition-colors"
+          title={isAlias ? 'Rimuovi alias' : 'Rimuovi token'}
+          className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover/chip:opacity-100 text-red-400/70 hover:text-red-300 hover:bg-red-400/15 transition-all"
         >
           <X className="w-2.5 h-2.5" />
         </button>
@@ -72,14 +95,14 @@ function TokenChip({
 
 function HighlightedDescription({
   text,
-  activeTokens,
-  onRemoveToken,
+  tokens,
+  onRemoveSpan,
 }: {
   text: string;
-  activeTokens: string[];
-  onRemoveToken: (token: string) => void;
+  tokens: TokenEntry[];
+  onRemoveSpan: (span: HighlightSpan) => void;
 }) {
-  const spans = useMemo(() => findHighlightSpans(text, activeTokens), [text, activeTokens]);
+  const spans = useMemo(() => findHighlightSpans(text, tokens), [text, tokens]);
 
   if (spans.length === 0) {
     return <span className="text-emerald-300/80">{text}</span>;
@@ -95,7 +118,9 @@ function HighlightedDescription({
       <span key={`h-${i}`} className="inline-block mx-0.5 my-0.5 align-baseline">
         <TokenChip
           label={text.slice(span.start, span.end)}
-          onRemove={() => onRemoveToken(span.token)}
+          variant={span.isAlias ? 'alias' : 'token'}
+          aliasOf={span.isAlias ? span.canonical : undefined}
+          onRemove={() => onRemoveSpan(span)}
         />
       </span>,
     );
@@ -110,18 +135,18 @@ function HighlightedDescription({
 
 function SegmentationChips({
   text,
-  activeTokens,
+  tokens,
   categories,
-  onRemoveToken,
+  onRemoveCanonical,
 }: {
   text: string;
-  activeTokens: string[];
+  tokens: TokenEntry[];
   categories: TokenCategory[];
-  onRemoveToken: (token: string) => void;
+  onRemoveCanonical: (token: string) => void;
 }) {
   const { segments, path, unmatched } = useMemo(
-    () => segmentDescription(text, activeTokens, categories),
-    [text, activeTokens, categories],
+    () => segmentDescription(text, tokens, categories),
+    [text, tokens, categories],
   );
 
   if (segments.length === 0) {
@@ -137,7 +162,7 @@ function SegmentationChips({
       <div className="flex flex-wrap items-center gap-1">
         {segments.map((token, i) => (
           <span key={i} className="inline-flex items-center">
-            <TokenChip label={token} onRemove={() => onRemoveToken(token)} />
+            <TokenChip label={token} onRemove={() => onRemoveCanonical(token)} />
             {i < segments.length - 1 && (
               <span className="text-emerald-400/25 font-mono text-xs mx-0.5">·</span>
             )}
@@ -159,10 +184,17 @@ export function CorpusTokenEditor({
   onCategoriesChange,
 }: CorpusTokenEditorProps) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [aliasPick, setAliasPick] = useState<AliasPickState | null>(null);
+  const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const activeTokens = useMemo(() => getActiveTokens(tokens), [tokens]);
-  const activeTokenSet = useMemo(() => new Set(activeTokens), [activeTokens]);
+  const aliasEntryByText = useMemo(() => {
+    const map = new Map<string, TokenEntry>();
+    for (const t of tokens) {
+      if (t.aliasOf) map.set(t.text, t);
+    }
+    return map;
+  }, [tokens]);
 
   const rows = useMemo(
     () =>
@@ -173,22 +205,33 @@ export function CorpusTokenEditor({
     [descriptions],
   );
 
+  const cancelAliasPick = useCallback(() => setAliasPick(null), []);
+
   useEffect(() => {
     if (!menu) return;
     const closeMenu = (e: PointerEvent) => {
       if (menuRef.current?.contains(e.target as Node)) return;
       setMenu(null);
     };
-    const closeOnScroll = () => setMenu(null);
     document.addEventListener('pointerdown', closeMenu);
-    window.addEventListener('scroll', closeOnScroll, true);
-    return () => {
-      document.removeEventListener('pointerdown', closeMenu);
-      window.removeEventListener('scroll', closeOnScroll, true);
-    };
+    return () => document.removeEventListener('pointerdown', closeMenu);
   }, [menu]);
 
-  const openMenuFromSelection = (
+  useEffect(() => {
+    if (!aliasPick) return;
+    const onMove = (e: MouseEvent) => setCursorPos({ x: e.clientX, y: e.clientY });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelAliasPick();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [aliasPick, cancelAliasPick]);
+
+  const openContextMenuFromSelection = (
     clientX: number,
     clientY: number,
     sourceText: string,
@@ -201,37 +244,78 @@ export function CorpusTokenEditor({
     setMenu({ x: clientX, y: clientY, phrase: raw, range });
   };
 
-  const handleMouseUp = (e: React.MouseEvent, sourceText: string) => {
+  const handleDoubleClick = (e: React.MouseEvent, sourceText: string) => {
     e.stopPropagation();
     const container = e.currentTarget as HTMLElement;
-    requestAnimationFrame(() => openMenuFromSelection(e.clientX, e.clientY, sourceText, container));
+    requestAnimationFrame(() => {
+      const range = getSelectionOffsetsInElement(container, sourceText);
+      const raw = window.getSelection()?.toString().trim() ?? '';
+      try {
+        onTokensChange(addToken(tokens, raw, range));
+      } catch {
+        /* invalid */
+      }
+      window.getSelection()?.removeAllRanges();
+    });
   };
 
   const handleContextMenu = (e: React.MouseEvent, sourceText: string) => {
     e.preventDefault();
+    if (aliasPick) return;
     const container = e.currentTarget as HTMLElement;
-    openMenuFromSelection(e.clientX, e.clientY, sourceText, container);
+    openContextMenuFromSelection(e.clientX, e.clientY, sourceText, container);
   };
 
-  const handleCreateToken = (rawPhrase: string, range: SelectionRange | null) => {
+  const startAliasPick = () => {
+    if (!menu) return;
+    const normalizedPhrase = selectionToTokenPhrase(menu.phrase, menu.range);
+    if (!normalizedPhrase) return;
+    setAliasPick({
+      phrase: menu.phrase,
+      range: menu.range,
+      normalizedPhrase,
+    });
+    setCursorPos({ x: menu.x, y: menu.y });
+    setMenu(null);
+  };
+
+  const handleAliasTargetPick = (canonicalText: string) => {
+    if (!aliasPick) return;
     try {
-      onTokensChange(addToken(tokens, rawPhrase, range));
+      onTokensChange(addAlias(tokens, aliasPick.phrase, canonicalText, aliasPick.range));
     } catch {
       /* invalid */
     }
-    setMenu(null);
+    setAliasPick(null);
     window.getSelection()?.removeAllRanges();
   };
 
-  const handleRemoveToken = (text: string) => {
-    onTokensChange(removeToken(tokens, text));
+  const handleRemoveCanonical = (text: string) => {
+    onTokensChange(removeCanonicalToken(tokens, text));
     onCategoriesChange(removeTokenFromLayout(categories, text));
   };
 
+  const handleRemoveAlias = (text: string) => {
+    onTokensChange(removeAlias(tokens, text));
+  };
+
+  const handleRemoveSpan = (span: HighlightSpan) => {
+    if (span.isAlias) {
+      handleRemoveAlias(span.entryText);
+    } else {
+      handleRemoveCanonical(span.entryText);
+    }
+  };
+
   const menuPhrase = menu ? selectionToTokenPhrase(menu.phrase, menu.range) : null;
+  const menuIsCanonical = menuPhrase
+    ? tokens.some((t) => t.text === menuPhrase && isCanonicalToken(t))
+    : false;
+  const menuAliasEntry = menuPhrase ? aliasEntryByText.get(menuPhrase) : undefined;
+  const canStartAliasPick = Boolean(menuPhrase && !menuIsCanonical);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className={`flex flex-col h-full min-h-0 ${aliasPick ? 'cursor-crosshair' : ''}`}>
       <div className="flex-1 min-h-0 flex border border-[#1a3a2a] rounded overflow-hidden bg-[#080e0a]">
         <div className="flex-[1] min-w-0 flex flex-col border-r border-[#1a3a2a]">
           <div className="flex-shrink-0 flex border-b border-[#1a3a2a] bg-[#0a1510]">
@@ -254,23 +338,23 @@ export function CorpusTokenEditor({
                 </span>
                 <div
                   className="flex-[2] min-w-0 px-3 py-2"
-                  onMouseUp={(e) => handleMouseUp(e, text)}
+                  onDoubleClick={(e) => handleDoubleClick(e, text)}
                   onContextMenu={(e) => handleContextMenu(e, text)}
                 >
                   <p className="font-mono text-xs select-text cursor-text">
                     <HighlightedDescription
                       text={text}
-                      activeTokens={activeTokens}
-                      onRemoveToken={handleRemoveToken}
+                      tokens={tokens}
+                      onRemoveSpan={handleRemoveSpan}
                     />
                   </p>
                 </div>
                 <div className="flex-[1.2] min-w-0 px-3 py-2 border-l border-[#111] pt-2">
                   <SegmentationChips
                     text={text}
-                    activeTokens={activeTokens}
+                    tokens={tokens}
                     categories={categories}
-                    onRemoveToken={handleRemoveToken}
+                    onRemoveCanonical={handleRemoveCanonical}
                   />
                 </div>
               </div>
@@ -283,7 +367,12 @@ export function CorpusTokenEditor({
             tokens={tokens}
             categories={categories}
             onCategoriesChange={onCategoriesChange}
-            onRemoveToken={handleRemoveToken}
+            onRemoveCanonical={handleRemoveCanonical}
+            onRemoveAlias={handleRemoveAlias}
+            aliasPickActive={aliasPick !== null}
+            aliasPickPhrase={aliasPick?.normalizedPhrase ?? null}
+            onAliasTargetPick={handleAliasTargetPick}
+            onCancelAliasPick={cancelAliasPick}
           />
         </div>
       </div>
@@ -291,25 +380,27 @@ export function CorpusTokenEditor({
       {menu && (
         <div
           ref={menuRef}
-          className="fixed z-[100] min-w-[160px] py-1 rounded border border-amber-400/30 bg-[#0a1510] shadow-2xl"
+          className="fixed z-[100] min-w-[180px] py-1 rounded border border-sky-400/30 bg-[#0a1510] shadow-2xl"
           style={{ left: menu.x, top: menu.y }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={() => handleCreateToken(menu.phrase, menu.range)}
-            className="w-full text-left px-3 py-1.5 font-mono text-xs text-amber-200 hover:bg-amber-400/15 transition-colors"
-          >
-            Crea token
-            <span className="block text-[9px] text-emerald-400/40 truncate max-w-[200px]">
-              {menuPhrase ?? menu.phrase}
-            </span>
-          </button>
-          {menuPhrase && activeTokenSet.has(menuPhrase) && (
+          {canStartAliasPick && (
+            <button
+              type="button"
+              onClick={startAliasPick}
+              className="w-full text-left px-3 py-1.5 font-mono text-xs text-sky-200 hover:bg-sky-400/15 transition-colors"
+            >
+              Alias of…
+              <span className="block text-[9px] text-emerald-400/40 truncate max-w-[200px]">
+                {menuPhrase}
+              </span>
+            </button>
+          )}
+          {menuIsCanonical && (
             <button
               type="button"
               onClick={() => {
-                handleRemoveToken(menuPhrase);
+                handleRemoveCanonical(menuPhrase!);
                 setMenu(null);
               }}
               className="w-full text-left px-3 py-1.5 font-mono text-xs text-red-300/80 hover:bg-red-400/10 transition-colors border-t border-[#1a3a2a]"
@@ -317,6 +408,33 @@ export function CorpusTokenEditor({
               Rimuovi token
             </button>
           )}
+          {menuAliasEntry && (
+            <button
+              type="button"
+              onClick={() => {
+                handleRemoveAlias(menuPhrase!);
+                setMenu(null);
+              }}
+              className="w-full text-left px-3 py-1.5 font-mono text-xs text-red-300/80 hover:bg-red-400/10 transition-colors border-t border-[#1a3a2a]"
+            >
+              Rimuovi alias
+              <span className="block text-[9px] text-emerald-400/40 truncate max-w-[200px]">
+                alias of: {menuAliasEntry.aliasOf}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {aliasPick && (
+        <div
+          className="fixed z-[300] pointer-events-none"
+          style={{ left: cursorPos.x + 14, top: cursorPos.y + 14 }}
+        >
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-mono text-[11px] bg-sky-400/25 border-sky-400/50 text-sky-100 shadow-lg">
+            <Key className="w-3 h-3 text-amber-400" />
+            alias of…
+          </span>
         </div>
       )}
     </div>

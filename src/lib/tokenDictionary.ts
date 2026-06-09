@@ -11,6 +11,14 @@ export interface TokenEntry {
   enabled: boolean;
   /** Shorter token disabled because a longer dictionary token contains it. */
   suppressedBy?: string;
+  /** Surface phrase that maps to another canonical token (synonym). */
+  aliasOf?: string;
+}
+
+/** Phrase matched in corpus text and its canonical token for path segmentation. */
+export interface MatchPhrase {
+  phrase: string;
+  canonical: string;
 }
 
 export interface TokenDictionary {
@@ -124,6 +132,12 @@ export function tokenizeToWords(text: string): string[] {
   return text.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
+/** Short parenthetical hint on alias chips (first word of the canonical token). */
+export function aliasCanonicalHint(canonical: string): string {
+  const words = tokenizeToWords(canonical);
+  return words[0] ?? canonical;
+}
+
 function wordCount(text: string): number {
   return tokenizeToWords(text).length;
 }
@@ -148,22 +162,28 @@ function contiguousSubphrases(text: string): string[] {
   return out;
 }
 
+function sortByPhraseLengthDesc(a: { text: string }, b: { text: string }): number {
+  const wa = wordCount(a.text);
+  const wb = wordCount(b.text);
+  if (wb !== wa) return wb - wa;
+  return b.text.length - a.text.length;
+}
+
 /**
  * Longer active tokens suppress shorter dictionary tokens they contain.
+ * Aliases are preserved as-is and do not participate in cascade.
  */
 export function applySuppressionCascade(tokens: TokenEntry[]): TokenEntry[] {
-  const next = tokens.map((t) => ({
-    ...t,
-    enabled: true,
-    suppressedBy: undefined as string | undefined,
-  }));
+  const aliases = tokens.filter((t) => t.aliasOf);
+  const next = tokens
+    .filter((t) => !t.aliasOf)
+    .map((t) => ({
+      ...t,
+      enabled: true,
+      suppressedBy: undefined as string | undefined,
+    }));
 
-  const suppressors = [...next].sort((a, b) => {
-    const wa = wordCount(a.text);
-    const wb = wordCount(b.text);
-    if (wb !== wa) return wb - wa;
-    return b.text.length - a.text.length;
-  });
+  const suppressors = [...next].sort(sortByPhraseLengthDesc);
 
   for (const long of suppressors) {
     for (const sub of contiguousSubphrases(long.text)) {
@@ -174,7 +194,53 @@ export function applySuppressionCascade(tokens: TokenEntry[]): TokenEntry[] {
     }
   }
 
-  return next;
+  return [...next, ...aliases];
+}
+
+/** True when the entry is a canonical token (not an alias surface phrase). */
+export function isCanonicalToken(entry: TokenEntry): boolean {
+  return !entry.aliasOf;
+}
+
+/** Active canonical token phrases, longest first (excludes aliases). */
+export function getActiveTokens(tokens: TokenEntry[]): string[] {
+  return tokens
+    .filter((t) => t.enabled && isCanonicalToken(t))
+    .sort(sortByPhraseLengthDesc)
+    .map((t) => t.text);
+}
+
+/** Active match phrases (canonical + aliases), longest first. */
+export function getActiveMatchPhrases(tokens: TokenEntry[]): MatchPhrase[] {
+  const canonicalActive = new Set(
+    tokens.filter((t) => t.enabled && isCanonicalToken(t)).map((t) => t.text),
+  );
+  const phrases: MatchPhrase[] = [];
+
+  for (const t of tokens) {
+    if (t.aliasOf) {
+      if (!canonicalActive.has(t.aliasOf)) continue;
+      phrases.push({ phrase: t.text, canonical: t.aliasOf });
+      continue;
+    }
+    if (t.enabled) {
+      phrases.push({ phrase: t.text, canonical: t.text });
+    }
+  }
+
+  return phrases.sort((a, b) => {
+    const wa = wordCount(a.phrase);
+    const wb = wordCount(b.phrase);
+    if (wb !== wa) return wb - wa;
+    return b.phrase.length - a.phrase.length;
+  });
+}
+
+/** Canonical tokens sorted for alias picker (excludes aliases). */
+export function listCanonicalTokensSorted(tokens: TokenEntry[]): TokenEntry[] {
+  return tokens
+    .filter(isCanonicalToken)
+    .sort((a, b) => a.text.localeCompare(b.text, 'it', { sensitivity: 'base' }));
 }
 
 /** Adds a token from manual selection; dedupes and applies cascade. */
@@ -185,26 +251,47 @@ export function addToken(
 ): TokenEntry[] {
   const text = selectionToTokenPhrase(rawPhrase, range);
   if (!text) throw new Error('Selezione vuota o non valida');
-  if (tokens.some((t) => t.text === text)) return applySuppressionCascade(tokens);
-  return applySuppressionCascade([...tokens, { text, enabled: true }]);
+  if (tokens.some((t) => t.text === text && isCanonicalToken(t))) {
+    return applySuppressionCascade(tokens);
+  }
+  const without = tokens.filter((t) => t.text !== text);
+  return applySuppressionCascade([...without, { text, enabled: true }]);
 }
 
-/** Removes a token and reapplies cascade. */
-export function removeToken(tokens: TokenEntry[], text: string): TokenEntry[] {
-  return applySuppressionCascade(tokens.filter((t) => t.text !== text));
+/** Adds an alias surface phrase pointing to a canonical token. */
+export function addAlias(
+  tokens: TokenEntry[],
+  rawPhrase: string,
+  canonicalText: string,
+  range?: SelectionRange | null,
+): TokenEntry[] {
+  const text = selectionToTokenPhrase(rawPhrase, range);
+  if (!text) throw new Error('Selezione vuota o non valida');
+
+  const canonical = normalizeDescriptionText(canonicalText);
+  if (!canonical) throw new Error('Token canonico non valido');
+  if (text === canonical) throw new Error('Un alias non può coincidere col token');
+
+  const canonicalEntry = tokens.find((t) => t.text === canonical && isCanonicalToken(t));
+  if (!canonicalEntry) throw new Error('Token canonico inesistente');
+
+  if (tokens.some((t) => t.text === text && isCanonicalToken(t))) {
+    throw new Error('La selezione è già un token canonico');
+  }
+
+  const without = tokens.filter((t) => t.text !== text);
+  return [...without, { text, enabled: true, aliasOf: canonical }];
 }
 
-/** Active token phrases for matching, longest first. */
-export function getActiveTokens(tokens: TokenEntry[]): string[] {
-  return tokens
-    .filter((t) => t.enabled)
-    .sort((a, b) => {
-      const wa = wordCount(a.text);
-      const wb = wordCount(b.text);
-      if (wb !== wa) return wb - wa;
-      return b.text.length - a.text.length;
-    })
-    .map((t) => t.text);
+/** Removes only an alias surface entry; canonical tokens are untouched. */
+export function removeAlias(tokens: TokenEntry[], aliasText: string): TokenEntry[] {
+  return tokens.filter((t) => !(t.text === aliasText && t.aliasOf));
+}
+
+/** Removes only a canonical token; linked aliases are preserved. */
+export function removeCanonicalToken(tokens: TokenEntry[], text: string): TokenEntry[] {
+  const filtered = tokens.filter((t) => !(t.text === text && isCanonicalToken(t)));
+  return applySuppressionCascade(filtered);
 }
 
 /** Matches a dictionary token only against consecutive whole words (exact equality per word). */
@@ -215,7 +302,7 @@ function wordsMatch(tokenWords: string[], start: number, phrase: string): boolea
 }
 
 /** Greedy longest-match segmentation on a word array (with match positions). */
-export function segmentWordsWithPositions(words: string[], activeTokens: string[]): {
+export function segmentWordsWithPositions(words: string[], matchPhrases: MatchPhrase[]): {
   matches: SegmentMatch[];
   unmatched: string[];
 } {
@@ -224,16 +311,16 @@ export function segmentWordsWithPositions(words: string[], activeTokens: string[
   let i = 0;
 
   while (i < words.length) {
-    let matched: string | null = null;
-    for (const token of activeTokens) {
-      if (wordsMatch(words, i, token)) {
-        matched = token;
+    let matched: MatchPhrase | null = null;
+    for (const rule of matchPhrases) {
+      if (wordsMatch(words, i, rule.phrase)) {
+        matched = rule;
         break;
       }
     }
     if (matched) {
-      matches.push({ text: matched, wordStartIndex: i });
-      i += tokenizeToWords(matched).length;
+      matches.push({ text: matched.canonical, wordStartIndex: i });
+      i += tokenizeToWords(matched.phrase).length;
     } else {
       unmatched.push(words[i]!);
       i += 1;
@@ -244,11 +331,11 @@ export function segmentWordsWithPositions(words: string[], activeTokens: string[
 }
 
 /** Greedy longest-match segmentation on a word array. */
-export function segmentWords(words: string[], activeTokens: string[]): {
+export function segmentWords(words: string[], matchPhrases: MatchPhrase[]): {
   segments: string[];
   unmatched: string[];
 } {
-  const { matches, unmatched } = segmentWordsWithPositions(words, activeTokens);
+  const { matches, unmatched } = segmentWordsWithPositions(words, matchPhrases);
   return { segments: matches.map((m) => m.text), unmatched };
 }
 
@@ -258,7 +345,7 @@ export function segmentWords(words: string[], activeTokens: string[]): {
  */
 export function segmentDescription(
   text: string,
-  activeTokens: string[],
+  tokens: TokenEntry[],
   categories: TokenCategory[] = [],
 ): SegmentationResult {
   const normalized = normalizeDescriptionText(text);
@@ -266,8 +353,9 @@ export function segmentDescription(
     return { segments: [], path: '', unmatched: [] };
   }
 
+  const matchPhrases = getActiveMatchPhrases(tokens);
   const words = tokenizeToWords(normalized);
-  const { matches, unmatched } = segmentWordsWithPositions(words, activeTokens);
+  const { matches, unmatched } = segmentWordsWithPositions(words, matchPhrases);
   const segments = orderSegmentsByCategories(matches, categories);
 
   return {
@@ -280,11 +368,11 @@ export function segmentDescription(
 /** Matched dictionary tokens in order (one entry per tree level). */
 export function getTokenBullets(
   text: string,
-  activeTokens: string[],
+  tokens: TokenEntry[],
   categories: TokenCategory[] = [],
 ): string[] {
-  if (activeTokens.length === 0) return [];
-  return segmentDescription(text, activeTokens, categories).segments;
+  if (getActiveMatchPhrases(tokens).length === 0) return [];
+  return segmentDescription(text, tokens, categories).segments;
 }
 
 export function buildEmptyDictionary(descriptionColumn: string): TokenDictionary {
@@ -316,6 +404,7 @@ export function loadSavedTokens(
       text,
       enabled: item.enabled !== false,
       suppressedBy: item.suppressedBy,
+      aliasOf: item.aliasOf ? normalizeDescriptionText(item.aliasOf) : undefined,
     });
   }
 
@@ -333,6 +422,7 @@ interface LegacySavedEntry {
   text: string;
   enabled?: boolean;
   suppressedBy?: string;
+  aliasOf?: string;
 }
 
 interface LegacyNgramEntry extends LegacySavedEntry {
@@ -353,14 +443,13 @@ export function segmentAllDescriptions(
   tokens: TokenEntry[],
   categories: TokenCategory[] = [],
 ): { leafPaths: string[]; rows: RowSegmentation[] } {
-  const activeTokens = getActiveTokens(tokens);
   const rows: RowSegmentation[] = [];
   const leafPaths: string[] = [];
 
   descriptions.forEach((sourceText, rowIndex) => {
     const trimmed = sourceText.trim();
     if (!trimmed) return;
-    const result = segmentDescription(trimmed, activeTokens, categories);
+    const result = segmentDescription(trimmed, tokens, categories);
     if (result.path) {
       leafPaths.push(result.path);
       rows.push({ rowIndex, sourceText: trimmed, path: result.path, unmatched: result.unmatched });
@@ -399,23 +488,33 @@ export function buildPhraseHighlightRegex(phrase: string): RegExp | null {
 export interface HighlightSpan {
   start: number;
   end: number;
-  token: string;
+  /** Dictionary entry key (alias phrase or canonical text). */
+  entryText: string;
+  canonical: string;
+  isAlias: boolean;
 }
 
-/** Finds non-overlapping highlight spans in source text (prefers longer tokens). */
-export function findHighlightSpans(sourceText: string, activeTokens: string[]): HighlightSpan[] {
-  if (activeTokens.length === 0) return [];
+/** Finds non-overlapping highlight spans in source text (prefers longer phrases). */
+export function findHighlightSpans(sourceText: string, tokens: TokenEntry[]): HighlightSpan[] {
+  const matchPhrases = getActiveMatchPhrases(tokens);
+  if (matchPhrases.length === 0) return [];
 
   const candidates: HighlightSpan[] = [];
-  for (const token of activeTokens) {
-    const re = buildPhraseHighlightRegex(token);
+  for (const rule of matchPhrases) {
+    const re = buildPhraseHighlightRegex(rule.phrase);
     if (!re) continue;
     let match: RegExpExecArray | null;
     while ((match = re.exec(sourceText)) !== null) {
       const start = match.index;
       const end = start + match[0].length;
       if (!isWholeWordSpan(sourceText, start, end)) continue;
-      candidates.push({ start, end, token });
+      candidates.push({
+        start,
+        end,
+        entryText: rule.phrase,
+        canonical: rule.canonical,
+        isAlias: rule.phrase !== rule.canonical,
+      });
     }
   }
 

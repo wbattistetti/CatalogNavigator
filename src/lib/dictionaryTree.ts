@@ -97,10 +97,13 @@ export function categorizedTokenTexts(categories: TokenCategory[]): Set<string> 
   return out;
 }
 
-/** Token texts not assigned to any category (root level). */
+/** Token texts not assigned to any category (root level); excludes aliases. */
 export function rootTokenTexts(tokens: TokenEntry[], categories: TokenCategory[]): string[] {
   const inCat = categorizedTokenTexts(categories);
-  return tokens.map((t) => t.text).filter((text) => !inCat.has(text));
+  return tokens
+    .filter((t) => !t.aliasOf)
+    .map((t) => t.text)
+    .filter((text) => !inCat.has(text));
 }
 
 /** Creates a category; selected tokens are moved into it. */
