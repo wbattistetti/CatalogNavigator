@@ -1,25 +1,45 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import {
+  chunkArray,
   collectSubtreeSlots,
   expandLeafPathsToTree,
+  findInvalidGrammarNodes,
+  getGrammarTargetSlots,
   findInvalidInternalNodes,
+  findInvalidMessagesNodes,
+  buildDefaultStartQuestion,
   getAgentGenerationRoots,
   extractLeafPaths,
   hasAgentContent,
+  hasMessagesContent,
   indexRowsBySlot,
+  mergeSubtreeGrammarRows,
+  mergeSubtreeMessageRows,
   mergeSubtreeRows,
   normalizeSlotPath,
   restructureSlotPath,
 } from '../lib/analysisTree';
 import type { LeafConfirmationInput } from '../lib/confirmAiPostProcess';
+import {
+  isGrammarNodeComplete,
+  isGrammarsLayerReady,
+  isMessagesLayerReady,
+  isMessagesNodeComplete,
+  isSubtreeGrammarsComplete,
+  isSubtreeMessagesComplete,
+  mergeTaxonomyWithExistingNlu,
+} from '../lib/nluQuestionRules';
 import { runGenerateConfirmations } from '../lib/runGenerateConfirmations';
 import {
   runGenerateTaxonomy,
   runRefineTaxonomy,
+  runRegenGrammarsSubtree,
+  runRegenMessagesSubtree,
   runRegenSubtree,
 } from '../lib/runAnalyzeDocument';
-import { toTaxonomyRows } from '../lib/analyzeAiPostProcess';
+import { normalizeGrammarRows, toTaxonomyRows } from '../lib/analyzeAiPostProcess';
+import { applyTemplateGrammars, applyTemplateGrammarsToSlots } from '../lib/grammarTemplate';
 import { segmentAllDescriptions, type TokenDictionary } from '../lib/tokenDictionary';
 
 export interface GrammarEntry {
@@ -29,7 +49,7 @@ export interface GrammarEntry {
 
 export type RowStatus = 'approved' | 'rejected' | 'uncertain' | null;
 
-export type GeneratingPhase = 'taxonomy' | 'agent' | null;
+export type GeneratingPhase = 'taxonomy' | 'messages' | 'grammars' | null;
 
 export interface AgentGenProgress {
   current: number;
@@ -88,10 +108,10 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     ...data,
     start_question: data.start_question ?? null,
     confirmation_preamble: data.confirmation_preamble ?? 'Quindi confermo:',
-    rows: data.rows.map((r) => ({
+    rows: normalizeGrammarRows(data.rows.map((r) => ({
       ...r,
       confirmation_text: r.confirmation_text ?? null,
-    })),
+    }))),
   };
 }
 
@@ -114,6 +134,20 @@ function draftAnalysis(documentId: string, rows: AnalysisRow[], existing?: Analy
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
+}
+
+/** Fills start_question from forest roots when missing (global opening, not a tree node). */
+function applyStartQuestionIfMissing(analysis: Analysis): Analysis {
+  if (analysis.start_question?.trim()) return analysis;
+  const slots = analysis.rows.map((r) => r.slot_filling);
+  return {
+    ...analysis,
+    start_question: buildDefaultStartQuestion(slots),
+  };
+}
+
+function draftWithStart(documentId: string, rows: AnalysisRow[], existing?: Analysis | null): Analysis {
+  return applyStartQuestionIfMissing(draftAnalysis(documentId, rows, existing));
 }
 
 export function useAnalysis(documentId: string) {
@@ -225,8 +259,8 @@ export function useAnalysis(documentId: string) {
     }
   }, [analysis]);
 
-  /** Generates NLU per forest root (or first-level branch), merging incrementally into rows. */
-  const generateNluByRootChunks = useCallback(async (
+  /** Generates messages per forest root, merging incrementally into rows. */
+  const generateMessagesByRootChunks = useCallback(async (
     taxonomyRows: AnalysisRow[],
     documentName: string,
     documentText: string,
@@ -238,17 +272,27 @@ export function useAnalysis(documentId: string) {
     if (roots.length === 0) throw new Error('Nessuna radice nell\'albero');
 
     let currentRows = taxonomyRows;
-    setAnalysis(draftAnalysis(documentId, currentRows, existing));
+    setAnalysis(draftWithStart(documentId, currentRows, existing));
     setAnalysisDirty(true);
+
+    const isComplete = (slot: string, row: AnalysisRow) =>
+      isMessagesNodeComplete(allSlots, slot, row);
 
     for (let i = 0; i < roots.length; i++) {
       throwIfAborted(signal);
       const rootSlot = roots[i]!;
       setAgentGenProgress({ current: i + 1, total: roots.length, rootSlot });
+
+      if (isSubtreeMessagesComplete(currentRows, rootSlot)) {
+        setRegeningRoots([]);
+        setAnalysis(draftWithStart(documentId, currentRows, existing));
+        continue;
+      }
+
       setRegeningRoots([rootSlot]);
 
       const subtreeSlots = collectSubtreeSlots(currentRows, rootSlot);
-      const regenRows = await runRegenSubtree(
+      const regenRows = await runRegenMessagesSubtree(
         subtreeSlots,
         rootSlot,
         documentName,
@@ -258,13 +302,87 @@ export function useAnalysis(documentId: string) {
 
       throwIfAborted(signal);
 
-      const invalid = findInvalidInternalNodes(subtreeSlots, regenRows);
+      const invalid = findInvalidMessagesNodes(subtreeSlots, regenRows);
       if (invalid.length > 0) {
-        throw new Error(`Domande mancanti per ${rootSlot}: ${invalid.join(', ')}`);
+        throw new Error(`Messaggi mancanti per ${rootSlot}: ${invalid.join(', ')}`);
       }
 
       const regenedBySlot = indexRowsBySlot(regenRows);
-      currentRows = mergeSubtreeRows(currentRows, regenedBySlot, rootSlot);
+      currentRows = mergeSubtreeMessageRows(currentRows, regenedBySlot, rootSlot, true, isComplete);
+      setAnalysis(draftWithStart(documentId, currentRows, existing));
+    }
+
+    return currentRows;
+  }, [documentId]);
+
+  /** Generates grammars per forest root — incremental by default, optional full overwrite. */
+  const generateGrammarsByRootChunks = useCallback(async (
+    baseRows: AnalysisRow[],
+    documentName: string,
+    documentText: string,
+    existing: Analysis | null,
+    overwriteExisting: boolean,
+    signal?: AbortSignal,
+  ): Promise<AnalysisRow[]> => {
+    const allSlots = baseRows.map((r) => r.slot_filling);
+    const roots = getAgentGenerationRoots(allSlots);
+    if (roots.length === 0) throw new Error('Nessuna radice nell\'albero');
+
+    let currentRows = baseRows;
+    setAnalysis(draftAnalysis(documentId, currentRows, existing));
+    setAnalysisDirty(true);
+
+    const isComplete = (slot: string, row: AnalysisRow) =>
+      isGrammarNodeComplete(allSlots, slot, row);
+
+    for (let i = 0; i < roots.length; i++) {
+      throwIfAborted(signal);
+      const rootSlot = roots[i]!;
+      const subtreeSlots = collectSubtreeSlots(currentRows, rootSlot);
+      const targetSlots = getGrammarTargetSlots(subtreeSlots, currentRows, overwriteExisting);
+
+      setAgentGenProgress({ current: i + 1, total: roots.length, rootSlot });
+
+      if (targetSlots.length === 0) {
+        setRegeningRoots([]);
+        setAnalysis(draftAnalysis(documentId, currentRows, existing));
+        continue;
+      }
+
+      setRegeningRoots([rootSlot]);
+
+      const GRAMMAR_BATCH_SIZE = 30;
+      const batches = chunkArray(targetSlots, GRAMMAR_BATCH_SIZE);
+      const regenedBySlot = new Map<string, AnalysisRow>();
+
+      for (const batch of batches) {
+        throwIfAborted(signal);
+        const regenRows = await runRegenGrammarsSubtree(
+          batch,
+          rootSlot,
+          currentRows,
+          documentName,
+          documentText,
+          !overwriteExisting,
+          signal,
+        );
+
+        const invalid = findInvalidGrammarNodes(batch, regenRows);
+        if (invalid.length > 0) {
+          throw new Error(`Grammatiche mancanti per ${rootSlot}: ${invalid.join(', ')}`);
+        }
+
+        for (const row of regenRows) {
+          regenedBySlot.set(row.slot_filling, row);
+        }
+      }
+      currentRows = mergeSubtreeGrammarRows(
+        currentRows,
+        regenedBySlot,
+        rootSlot,
+        !overwriteExisting,
+        isComplete,
+      );
       setAnalysis(draftAnalysis(documentId, currentRows, existing));
     }
 
@@ -285,7 +403,11 @@ export function useAnalysis(documentId: string) {
     setGeneratingPhase('taxonomy');
     setError(null);
     try {
-      const { leafPaths } = segmentAllDescriptions(descriptions, dictionary.tokens);
+      const { leafPaths } = segmentAllDescriptions(
+        descriptions,
+        dictionary.tokens,
+        dictionary.categories ?? [],
+      );
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
@@ -305,8 +427,8 @@ export function useAnalysis(documentId: string) {
     }
   }, [documentId]);
 
-  /** Deterministic tree from dictionary, then IA messages + grammars in one flow. */
-  const generateFullAgentFromDictionary = useCallback(async (
+  /** Deterministic tree from dictionary, then IA messages. */
+  const generateMessagesFromDictionary = useCallback(async (
     dictionary: TokenDictionary,
     descriptions: string[],
     documentName: string,
@@ -318,16 +440,23 @@ export function useAnalysis(documentId: string) {
     setError(null);
     try {
       throwIfAborted(signal);
-      const { leafPaths } = segmentAllDescriptions(descriptions, dictionary.tokens);
+      const { leafPaths } = segmentAllDescriptions(
+        descriptions,
+        dictionary.tokens,
+        dictionary.categories ?? [],
+      );
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
       const allSlots = expandLeafPathsToTree(leafPaths);
       if (allSlots.length === 0) throw new Error('Espansione albero fallita');
 
-      const taxonomyRows = toTaxonomyRows(allSlots);
-      setGeneratingPhase('agent');
-      await generateNluByRootChunks(
+      const taxonomyRows = mergeTaxonomyWithExistingNlu(
+        toTaxonomyRows(allSlots),
+        analysis?.rows,
+      );
+      setGeneratingPhase('messages');
+      await generateMessagesByRootChunks(
         taxonomyRows,
         documentName,
         documentText ?? '',
@@ -345,10 +474,10 @@ export function useAnalysis(documentId: string) {
       setGeneratingPhase(null);
       clearGenerationAbort();
     }
-  }, [documentId, analysis, generateNluByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+  }, [documentId, analysis, generateMessagesByRootChunks, beginGenerationAbort, clearGenerationAbort]);
 
-  /** IA taxonomy from plain text, then messages + grammars. */
-  const generateFullAgentFromText = useCallback(async (documentText: string, documentName: string) => {
+  /** IA taxonomy from plain text, then messages. */
+  const generateMessagesFromText = useCallback(async (documentText: string, documentName: string) => {
     const signal = beginGenerationAbort();
     setGenerating(true);
     setGeneratingPhase('taxonomy');
@@ -356,8 +485,8 @@ export function useAnalysis(documentId: string) {
     try {
       throwIfAborted(signal);
       const taxonomyRows = await runGenerateTaxonomy(documentText, documentName, signal);
-      setGeneratingPhase('agent');
-      await generateNluByRootChunks(taxonomyRows, documentName, documentText, null, signal);
+      setGeneratingPhase('messages');
+      await generateMessagesByRootChunks(taxonomyRows, documentName, documentText, null, signal);
       setDirtyRoots([]);
     } catch (e) {
       if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
@@ -369,7 +498,128 @@ export function useAnalysis(documentId: string) {
       setGeneratingPhase(null);
       clearGenerationAbort();
     }
-  }, [documentId, generateNluByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+  }, [generateMessagesByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+
+  /** Generates grammars instantly from slot paths (rule-based, no API). */
+  const generateGrammars = useCallback(async (
+    _documentText: string,
+    _documentName: string,
+    overwriteExisting = false,
+  ) => {
+    if (!analysis) {
+      throw new Error('Nessuna analisi caricata');
+    }
+    if (analysis.rows.length === 0) {
+      throw new Error('Genera prima la tassonomia');
+    }
+    const allSlots = analysis.rows.map((r) => r.slot_filling);
+    if (!overwriteExisting) {
+      const missing = findInvalidGrammarNodes(allSlots, analysis.rows);
+      if (missing.length === 0) {
+        setError(null);
+        return;
+      }
+    }
+    // overwriteExisting: rigenera tutti i nodi, anche con grammatica già presente
+
+    setGenerating(true);
+    setGeneratingPhase('grammars');
+    setAgentGenProgress({ current: 0, total: analysis.rows.length, rootSlot: 'preparazione' });
+    setError(null);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const newRows = applyTemplateGrammars(analysis.rows, overwriteExisting);
+      setAgentGenProgress({
+        current: analysis.rows.length,
+        total: analysis.rows.length,
+        rootSlot: 'completato',
+      });
+      setAnalysis(applyStartQuestionIfMissing({ ...analysis, rows: newRows }));
+      setAnalysisDirty(true);
+      setDirtyRoots([]);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setGenerating(false);
+      setGeneratingPhase(null);
+      setAgentGenProgress(null);
+    }
+  }, [analysis]);
+
+  /** Generates grammars via OpenAI (slow — use for refinement only). */
+  const generateGrammarsWithAi = useCallback(async (
+    documentText: string,
+    documentName: string,
+    overwriteExisting = false,
+  ) => {
+    if (!analysis) return;
+    if (analysis.rows.length === 0) {
+      throw new Error('Genera prima la tassonomia');
+    }
+    const allSlots = analysis.rows.map((r) => r.slot_filling);
+    if (!overwriteExisting) {
+      const missing = findInvalidGrammarNodes(allSlots, analysis.rows);
+      if (missing.length === 0) {
+        setError(null);
+        return;
+      }
+    }
+    const signal = beginGenerationAbort();
+    setGenerating(true);
+    setGeneratingPhase('grammars');
+    setError(null);
+    try {
+      await generateGrammarsByRootChunks(
+        analysis.rows,
+        documentName,
+        documentText,
+        analysis,
+        overwriteExisting,
+        signal,
+      );
+      setDirtyRoots([]);
+    } catch (e) {
+      if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setRegeningRoots([]);
+      setAgentGenProgress(null);
+      setGenerating(false);
+      setGeneratingPhase(null);
+      clearGenerationAbort();
+    }
+  }, [analysis, generateGrammarsByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+
+  /** Regenerates grammars for a subtree (incremental by default). */
+  const regenGrammarsSubtree = useCallback(async (
+    rootSlot: string,
+    documentText: string,
+    documentName: string,
+    overwriteExisting = false,
+  ) => {
+    if (!analysis) return;
+    setRegeningRoots((prev) => [...prev, rootSlot]);
+    setRegenError(null);
+    try {
+      const subtreeSlots = collectSubtreeSlots(analysis.rows, rootSlot);
+      if (subtreeSlots.length === 0) throw new Error('Nessuno slot nel sottoalbero');
+
+      const targetSlots = getGrammarTargetSlots(subtreeSlots, analysis.rows, overwriteExisting);
+      if (targetSlots.length === 0) return;
+
+      const newRows = applyTemplateGrammarsToSlots(analysis.rows, targetSlots, overwriteExisting);
+
+      setAnalysis({ ...analysis, rows: newRows });
+      setAnalysisDirty(true);
+    } catch (e) {
+      setRegenError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRegeningRoots((prev) => prev.filter((r) => r !== rootSlot));
+    }
+  }, [analysis]);
 
   const generateTaxonomy = useCallback(async (documentText: string, documentName: string) => {
     setGenerating(true);
@@ -392,10 +642,10 @@ export function useAnalysis(documentId: string) {
     if (!analysis) return;
     const signal = beginGenerationAbort();
     setGenerating(true);
-    setGeneratingPhase('agent');
+    setGeneratingPhase('messages');
     setError(null);
     try {
-      await generateNluByRootChunks(analysis.rows, documentName, documentText, analysis, signal);
+      await generateMessagesByRootChunks(analysis.rows, documentName, documentText, analysis, signal);
       setDirtyRoots([]);
     } catch (e) {
       if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
@@ -406,7 +656,7 @@ export function useAnalysis(documentId: string) {
       setGeneratingPhase(null);
       clearGenerationAbort();
     }
-  }, [analysis, documentId, generateNluByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+  }, [analysis, generateMessagesByRootChunks, beginGenerationAbort, clearGenerationAbort]);
 
   const refineTaxonomy = useCallback(async (refinementNotes: string) => {
     if (!analysis) return;
@@ -546,15 +796,25 @@ export function useAnalysis(documentId: string) {
     }
   }, [analysis]);
 
+  const messagesReady = analysis ? isMessagesLayerReady(analysis.rows) : false;
+  const grammarsReady = analysis ? isGrammarsLayerReady(analysis.rows) : false;
   const agentReady = analysis ? hasAgentContent(analysis.rows) : false;
+  const hasMessages = analysis ? hasMessagesContent(analysis.rows) : false;
+  const hasTaxonomy = (analysis?.rows.length ?? 0) > 0;
+  const canGenerateGrammars = hasTaxonomy && !generating;
+  const missingGrammarCount = analysis
+    ? findInvalidGrammarNodes(analysis.rows.map((r) => r.slot_filling), analysis.rows).length
+    : 0;
 
   return {
     analysis, loading, saving, analysisDirty, generating, generatingPhase, agentGenProgress,
     generatingConfirmations, error, regenError,
-    agentReady,
+    messagesReady, grammarsReady, hasMessages, agentReady, hasTaxonomy, canGenerateGrammars,
+    missingGrammarCount,
     load, saveAnalysis, discardAnalysisChanges, updateAgentConfig, generateConfirmations, cancelGeneration,
-    generateTaxonomy, generateFullAgentFromText, createAgentFromDictionary, generateFullAgentFromDictionary, generateAgent, refineTaxonomy,
+    generateTaxonomy, generateMessagesFromText, createAgentFromDictionary,
+    generateMessagesFromDictionary, generateGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
     updateRow, deleteRow, addRow, restructurePath,
-    dirtyRoots, regeningRoots, regenSubtree,
+    dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree,
   };
 }

@@ -30,6 +30,10 @@ export function ChatPanel({ rows, agentConfig, onClose }: ChatPanelProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [state.messages]);
 
+  useEffect(() => {
+    setState(initTest(rows, agentConfig));
+  }, [agentConfig.start_question, agentConfig.confirmation_preamble]);
+
   const isDone = state.selectedPath !== null;
 
   return (

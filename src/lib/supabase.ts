@@ -10,6 +10,12 @@ export type ColumnRole = 'selector' | 'data' | 'description' | 'ignore';
 /** Saved token dictionary for deterministic segmentation. */
 export interface SavedTokenDictionary {
   descriptionColumn: string;
+  categories?: Array<{
+    id: string;
+    name: string;
+    order: number;
+    tokenTexts: string[];
+  }>;
   tokens?: Array<{
     text: string;
     enabled: boolean;

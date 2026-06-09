@@ -7,9 +7,7 @@ export interface LeafConfirmationInput {
   description: string;
 }
 
-function normalizeSlotKey(slot: string): string {
-  return slot.toLowerCase().replace(/_/g, ' ');
-}
+import { normalizeSlotKey } from './analysisTree';
 
 /** Normalizes raw AI confirmation rows into a slot → confirmation_text map. */
 export function processConfirmationAiResponse(

@@ -1,55 +1,84 @@
 /**
- * Corpus editor: paired description/segmentation rows plus token registry.
+ * Corpus editor: paired description/segmentation rows plus hierarchical token tree.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { TokenEntry } from '../../lib/tokenDictionary';
+import { Trash2, X } from 'lucide-react';
+import type { TokenCategory } from '../../lib/dictionaryTree';
+import { removeTokenFromLayout } from '../../lib/dictionaryTree';
+import type { SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
 import {
   addToken,
   findHighlightSpans,
   getActiveTokens,
+  getSelectionOffsetsInElement,
   segmentDescription,
-  listAllTokensSorted,
   removeToken,
   selectionToTokenPhrase,
 } from '../../lib/tokenDictionary';
+import { TokenTreeEditor } from './TokenTreeEditor';
 
 interface CorpusTokenEditorProps {
   descriptions: string[];
   tokens: TokenEntry[];
-  onChange: (tokens: TokenEntry[]) => void;
+  categories: TokenCategory[];
+  onTokensChange: (tokens: TokenEntry[]) => void;
+  onCategoriesChange: (categories: TokenCategory[]) => void;
 }
 
 interface ContextMenuState {
   x: number;
   y: number;
   phrase: string;
+  range: SelectionRange | null;
 }
 
-/** Rounded chip for a matched token phrase. */
+/** Rounded chip for a matched token phrase; optional delete control. */
 function TokenChip({
   label,
   muted = false,
   className = '',
+  onRemove,
 }: {
   label: string;
   muted?: boolean;
   className?: string;
+  onRemove?: () => void;
 }) {
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap ${
+      className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip ${
         muted
           ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-400/35'
           : 'bg-amber-400/20 border-amber-400/40 text-amber-100'
       } ${className}`}
     >
-      {label}
+      <span>{label}</span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          title="Rimuovi token"
+          className="flex-shrink-0 p-0.5 rounded text-red-400/70 hover:text-red-300 hover:bg-red-400/15 transition-colors"
+        >
+          <X className="w-2.5 h-2.5" />
+        </button>
+      )}
     </span>
   );
 }
 
-function HighlightedDescription({ text, activeTokens }: { text: string; activeTokens: string[] }) {
+function HighlightedDescription({
+  text,
+  activeTokens,
+  onRemoveToken,
+}: {
+  text: string;
+  activeTokens: string[];
+  onRemoveToken: (token: string) => void;
+}) {
   const spans = useMemo(() => findHighlightSpans(text, activeTokens), [text, activeTokens]);
 
   if (spans.length === 0) {
@@ -64,7 +93,10 @@ function HighlightedDescription({ text, activeTokens }: { text: string; activeTo
     }
     parts.push(
       <span key={`h-${i}`} className="inline-block mx-0.5 my-0.5 align-baseline">
-        <TokenChip label={text.slice(span.start, span.end)} />
+        <TokenChip
+          label={text.slice(span.start, span.end)}
+          onRemove={() => onRemoveToken(span.token)}
+        />
       </span>,
     );
     cursor = span.end;
@@ -76,10 +108,20 @@ function HighlightedDescription({ text, activeTokens }: { text: string; activeTo
   return <span className="text-emerald-300/80 leading-relaxed">{parts}</span>;
 }
 
-function SegmentationChips({ text, activeTokens }: { text: string; activeTokens: string[] }) {
+function SegmentationChips({
+  text,
+  activeTokens,
+  categories,
+  onRemoveToken,
+}: {
+  text: string;
+  activeTokens: string[];
+  categories: TokenCategory[];
+  onRemoveToken: (token: string) => void;
+}) {
   const { segments, path, unmatched } = useMemo(
-    () => segmentDescription(text, activeTokens),
-    [text, activeTokens],
+    () => segmentDescription(text, activeTokens, categories),
+    [text, activeTokens, categories],
   );
 
   if (segments.length === 0) {
@@ -95,7 +137,7 @@ function SegmentationChips({ text, activeTokens }: { text: string; activeTokens:
       <div className="flex flex-wrap items-center gap-1">
         {segments.map((token, i) => (
           <span key={i} className="inline-flex items-center">
-            <TokenChip label={token} />
+            <TokenChip label={token} onRemove={() => onRemoveToken(token)} />
             {i < segments.length - 1 && (
               <span className="text-emerald-400/25 font-mono text-xs mx-0.5">·</span>
             )}
@@ -109,42 +151,18 @@ function SegmentationChips({ text, activeTokens }: { text: string; activeTokens:
   );
 }
 
-function TokenRegistryItem({
-  entry,
-  onRemove,
-}: {
-  entry: TokenEntry;
-  onRemove: (text: string) => void;
-}) {
-  return (
-    <div className="group flex items-center gap-1 px-1 py-1 rounded hover:bg-[#0f1a12] transition-colors">
-      <div className="flex-1 min-w-0 overflow-hidden">
-        <TokenChip label={entry.text} muted={!entry.enabled} />
-        {entry.suppressedBy && (
-          <span className="block font-mono text-[8px] text-emerald-400/30 pl-0.5 truncate" title={`Soppresso da: ${entry.suppressedBy}`}>
-            ↳ {entry.suppressedBy}
-          </span>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={() => onRemove(entry.text)}
-        className="flex-shrink-0 p-0.5 rounded text-red-400/0 group-hover:text-red-400/80 hover:bg-red-400/10 transition-all opacity-0 group-hover:opacity-100"
-        title="Rimuovi token"
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  );
-}
-
-export function CorpusTokenEditor({ descriptions, tokens, onChange }: CorpusTokenEditorProps) {
+export function CorpusTokenEditor({
+  descriptions,
+  tokens,
+  categories,
+  onTokensChange,
+  onCategoriesChange,
+}: CorpusTokenEditorProps) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const activeTokens = useMemo(() => getActiveTokens(tokens), [tokens]);
   const activeTokenSet = useMemo(() => new Set(activeTokens), [activeTokens]);
-  const allTokensSorted = useMemo(() => listAllTokensSorted(tokens), [tokens]);
 
   const rows = useMemo(
     () =>
@@ -170,28 +188,34 @@ export function CorpusTokenEditor({ descriptions, tokens, onChange }: CorpusToke
     };
   }, [menu]);
 
-  const openMenuFromSelection = (clientX: number, clientY: number) => {
-    const sel = window.getSelection();
-    const raw = sel?.toString().trim() ?? '';
-    if (!raw) return;
-    const phrase = selectionToTokenPhrase(raw);
+  const openMenuFromSelection = (
+    clientX: number,
+    clientY: number,
+    sourceText: string,
+    container: HTMLElement | null,
+  ) => {
+    const range = container ? getSelectionOffsetsInElement(container, sourceText) : null;
+    const raw = window.getSelection()?.toString().trim() ?? '';
+    const phrase = selectionToTokenPhrase(raw, range);
     if (!phrase) return;
-    setMenu({ x: clientX, y: clientY, phrase: raw });
+    setMenu({ x: clientX, y: clientY, phrase: raw, range });
   };
 
-  const handleMouseUp = (e: React.MouseEvent) => {
+  const handleMouseUp = (e: React.MouseEvent, sourceText: string) => {
     e.stopPropagation();
-    requestAnimationFrame(() => openMenuFromSelection(e.clientX, e.clientY));
+    const container = e.currentTarget as HTMLElement;
+    requestAnimationFrame(() => openMenuFromSelection(e.clientX, e.clientY, sourceText, container));
   };
 
-  const handleContextMenu = (e: React.MouseEvent) => {
+  const handleContextMenu = (e: React.MouseEvent, sourceText: string) => {
     e.preventDefault();
-    openMenuFromSelection(e.clientX, e.clientY);
+    const container = e.currentTarget as HTMLElement;
+    openMenuFromSelection(e.clientX, e.clientY, sourceText, container);
   };
 
-  const handleCreateToken = (rawPhrase: string) => {
+  const handleCreateToken = (rawPhrase: string, range: SelectionRange | null) => {
     try {
-      onChange(addToken(tokens, rawPhrase));
+      onTokensChange(addToken(tokens, rawPhrase, range));
     } catch {
       /* invalid */
     }
@@ -200,13 +224,15 @@ export function CorpusTokenEditor({ descriptions, tokens, onChange }: CorpusToke
   };
 
   const handleRemoveToken = (text: string) => {
-    onChange(removeToken(tokens, text));
+    onTokensChange(removeToken(tokens, text));
+    onCategoriesChange(removeTokenFromLayout(categories, text));
   };
+
+  const menuPhrase = menu ? selectionToTokenPhrase(menu.phrase, menu.range) : null;
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex-1 min-h-0 flex border border-[#1a3a2a] rounded overflow-hidden bg-[#080e0a]">
-        {/* Paired rows: description | segmentation (single scroll) */}
         <div className="flex-[1] min-w-0 flex flex-col border-r border-[#1a3a2a]">
           <div className="flex-shrink-0 flex border-b border-[#1a3a2a] bg-[#0a1510]">
             <span className="flex-shrink-0 w-8" />
@@ -228,37 +254,37 @@ export function CorpusTokenEditor({ descriptions, tokens, onChange }: CorpusToke
                 </span>
                 <div
                   className="flex-[2] min-w-0 px-3 py-2"
-                  onMouseUp={handleMouseUp}
-                  onContextMenu={handleContextMenu}
+                  onMouseUp={(e) => handleMouseUp(e, text)}
+                  onContextMenu={(e) => handleContextMenu(e, text)}
                 >
                   <p className="font-mono text-xs select-text cursor-text">
-                    <HighlightedDescription text={text} activeTokens={activeTokens} />
+                    <HighlightedDescription
+                      text={text}
+                      activeTokens={activeTokens}
+                      onRemoveToken={handleRemoveToken}
+                    />
                   </p>
                 </div>
                 <div className="flex-[1.2] min-w-0 px-3 py-2 border-l border-[#111] pt-2">
-                  <SegmentationChips text={text} activeTokens={activeTokens} />
+                  <SegmentationChips
+                    text={text}
+                    activeTokens={activeTokens}
+                    categories={categories}
+                    onRemoveToken={handleRemoveToken}
+                  />
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Token registry (independent scroll) */}
-        <div className="w-44 flex-shrink-0 flex flex-col min-w-0">
-          <div className="flex-shrink-0 px-3 py-1.5 border-b border-[#1a3a2a] bg-[#0a1510] font-mono text-[10px] text-sky-400/50 uppercase tracking-wider">
-            Token ({allTokensSorted.length})
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto p-1">
-            {allTokensSorted.length === 0 ? (
-              <p className="font-mono text-[10px] text-emerald-400/25 px-2 py-4 text-center leading-relaxed">
-                Nessun token. Seleziona testo a sinistra.
-              </p>
-            ) : (
-              allTokensSorted.map((entry) => (
-                <TokenRegistryItem key={entry.text} entry={entry} onRemove={handleRemoveToken} />
-              ))
-            )}
-          </div>
+        <div className="w-56 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
+          <TokenTreeEditor
+            tokens={tokens}
+            categories={categories}
+            onCategoriesChange={onCategoriesChange}
+            onRemoveToken={handleRemoveToken}
+          />
         </div>
       </div>
 
@@ -271,19 +297,19 @@ export function CorpusTokenEditor({ descriptions, tokens, onChange }: CorpusToke
         >
           <button
             type="button"
-            onClick={() => handleCreateToken(menu.phrase)}
+            onClick={() => handleCreateToken(menu.phrase, menu.range)}
             className="w-full text-left px-3 py-1.5 font-mono text-xs text-amber-200 hover:bg-amber-400/15 transition-colors"
           >
             Crea token
             <span className="block text-[9px] text-emerald-400/40 truncate max-w-[200px]">
-              {selectionToTokenPhrase(menu.phrase) ?? menu.phrase}
+              {menuPhrase ?? menu.phrase}
             </span>
           </button>
-          {selectionToTokenPhrase(menu.phrase) && activeTokenSet.has(selectionToTokenPhrase(menu.phrase)!) && (
+          {menuPhrase && activeTokenSet.has(menuPhrase) && (
             <button
               type="button"
               onClick={() => {
-                handleRemoveToken(selectionToTokenPhrase(menu.phrase)!);
+                handleRemoveToken(menuPhrase);
                 setMenu(null);
               }}
               className="w-full text-left px-3 py-1.5 font-mono text-xs text-red-300/80 hover:bg-red-400/10 transition-colors border-t border-[#1a3a2a]"

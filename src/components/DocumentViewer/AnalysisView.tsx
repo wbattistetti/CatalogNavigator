@@ -1,10 +1,15 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sparkles, Loader2, AlertCircle, ChevronRight, ChevronDown,
   List, GitBranch, Wand2, X, ThumbsUp, ThumbsDown, HelpCircle,
   Pencil, Check, Zap, FlaskConical, Trash2, RefreshCw, Braces, Plus,
-  Layers, Bot, Save, RotateCcw,
+  Layers, Bot, Save, RotateCcw, MessageCircle,
 } from 'lucide-react';
+import type { GrammarEntry } from '../../hooks/useAnalysis';
+import { ensureGrammarMapsToSelf } from '../../lib/analyzeAiPostProcess';
+import { CAPTURE_GROUP_NAME_RULES, validateGrammarRegex } from '../../lib/grammarNormalize';
+import { requiresInteractiveNode } from '../../lib/nluQuestionRules';
 import type { useAnalysis, AnalysisRow, RowStatus } from '../../hooks/useAnalysis';
 import type { KbDocument } from '../../lib/supabase';
 import { ChatPanel } from './ChatPanel';
@@ -14,6 +19,7 @@ import {
   isLeafSlot,
   isSlotHiddenByCollapse,
   orderAnalysisRowsDepthFirst,
+  rowHasMessage,
   slotsWithDirectChildren,
 } from '../../lib/analysisTree';
 
@@ -33,6 +39,15 @@ interface AnalysisViewProps {
   onTestOpenChange?: (open: boolean) => void;
   /** Corpus descriptions keyed by leaf path (for IA confirmation generation). */
   leafDescriptionMap?: Map<string, string> | null;
+  selectedSlot?: string | null;
+  onSelectedSlotChange?: (slot: string | null) => void;
+  grammarModalOpen?: boolean;
+  onGrammarModalOpenChange?: (open: boolean) => void;
+  /** When true, table shows only rows with a question message. */
+  showOnlyMessageNodes?: boolean;
+  /** When true, grammar generation overwrites existing regex. */
+  grammarOverwrite?: boolean;
+  onGrammarOverwriteChange?: (overwrite: boolean) => void;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -57,31 +72,99 @@ function statusBgClass(status: RowStatus | undefined) {
 
 // ── Grammar modal ─────────────────────────────────────────────────────────────
 
-function GrammarModal({ grammar, onClose }: {
-  grammar: import('../../hooks/useAnalysis').GrammarEntry;
+function GrammarModal({ slotLabel, grammar, editable = false, onSave, onClose }: {
+  slotLabel?: string;
+  grammar: GrammarEntry;
+  editable?: boolean;
+  onSave?: (grammar: GrammarEntry) => void;
   onClose: () => void;
 }) {
+  const [draftRegex, setDraftRegex] = useState(grammar.regex);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const mappingEntries = Object.entries(grammar.mappings);
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/60" />
+
+  const draftValidation = useMemo(
+    () => (draftRegex.trim() ? validateGrammarRegex(draftRegex, grammar.mappings) : null),
+    [draftRegex, grammar.mappings],
+  );
+
+  useEffect(() => {
+    setDraftRegex(grammar.regex);
+    setSaveError(null);
+  }, [grammar.regex]);
+
+  const handleSave = () => {
+    const validation = draftValidation ?? validateGrammarRegex(draftRegex, grammar.mappings);
+    if (!validation.valid) {
+      setSaveError(validation.error ?? 'Regex non valida');
+      return;
+    }
+    onSave?.({
+      regex: validation.normalizedRegex,
+      mappings: validation.normalizedMappings ?? grammar.mappings,
+    });
+    onClose();
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="grammar-modal-title"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="absolute inset-0 bg-black/70" aria-hidden />
       <div
-        className="relative w-full max-w-lg bg-[#070d09] border border-[#1a3a2a] rounded-lg shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        className="relative z-10 w-full max-w-2xl mx-auto bg-[#070d09] border border-[#1a3a2a] rounded-lg shadow-2xl overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#1a3a2a]">
-          <div className="flex items-center gap-2 text-emerald-400/70">
-            <Braces className="w-3.5 h-3.5" />
-            <span className="font-mono text-[11px] font-semibold uppercase tracking-widest">Grammatica</span>
+          <div className="flex items-center gap-2 text-sky-400/80 min-w-0">
+            <Braces className="w-3.5 h-3.5 flex-shrink-0" />
+            <span id="grammar-modal-title" className="font-mono text-[11px] font-semibold uppercase tracking-widest truncate">
+              Grammatica{slotLabel ? ` · ${slotLabel}` : ''}
+            </span>
           </div>
-          <button onClick={onClose} className="text-emerald-400/30 hover:text-emerald-400/70 transition-colors">
+          <button type="button" onClick={onClose} className="text-emerald-400/30 hover:text-emerald-400/70 transition-colors">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
         <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <div>
             <p className="font-mono text-[9px] uppercase tracking-widest text-emerald-400/40 mb-1.5">Regex</p>
-            <pre className="bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2.5 font-mono text-[11px] text-emerald-300/80 whitespace-pre-wrap break-all leading-relaxed">{grammar.regex}</pre>
+            {editable && (
+              <p className="font-mono text-[9px] text-emerald-400/35 mb-2 leading-relaxed">
+                Nomi gruppo (?P&lt;nome&gt;): {CAPTURE_GROUP_NAME_RULES}
+              </p>
+            )}
+            {editable ? (
+              <textarea
+                value={draftRegex}
+                onChange={(e) => {
+                  setDraftRegex(e.target.value);
+                  setSaveError(null);
+                }}
+                rows={6}
+                className="w-full bg-[#0a1510] border border-sky-400/30 rounded px-3 py-2.5 font-mono text-[11px] text-emerald-200 resize-y focus:outline-none focus:border-sky-400/60 leading-relaxed"
+              />
+            ) : (
+              <pre className="bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2.5 font-mono text-[11px] text-emerald-300/80 whitespace-pre-wrap break-all leading-relaxed">{grammar.regex}</pre>
+            )}
           </div>
           {mappingEntries.length > 0 && (
             <div>
@@ -98,9 +181,50 @@ function GrammarModal({ grammar, onClose }: {
               </table>
             </div>
           )}
+          {saveError && (
+            <p className="font-mono text-[10px] text-red-400/90 px-2 py-1.5 rounded border border-red-400/30 bg-red-400/5">
+              {saveError}
+            </p>
+          )}
+          {draftValidation?.groupNameWarnings && draftValidation.groupNameWarnings.length > 0 && (
+            <p className="font-mono text-[10px] text-amber-300/90 px-2 py-1.5 rounded border border-amber-400/30 bg-amber-400/5">
+              Al salvataggio i nomi gruppo verranno corretti: {draftValidation.groupNameWarnings.join('; ')}
+            </p>
+          )}
+          {editable && (
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-1.5 font-mono text-[10px] text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 transition-colors"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!draftRegex.trim()}
+                className="px-3 py-1.5 font-mono text-[10px] font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
+              >
+                Salva regex
+              </button>
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Glossy bubble icon for nodes that require a question. */
+function QuestionNodeIcon({ className = '' }: { className?: string }) {
+  return (
+    <MessageCircle
+      className={`w-3.5 h-3.5 flex-shrink-0 text-sky-300 drop-shadow-[0_0_6px_rgba(56,189,248,0.85)] ${className}`}
+      strokeWidth={2.25}
+      aria-hidden
+    />
   );
 }
 
@@ -384,6 +508,7 @@ const TreeNode = memo(function TreeNode({
   isCollapsed,
   isHidden,
   isStart,
+  isInteractive,
   onToggleCollapse,
   onUpdateRow,
   onDeleteRow,
@@ -392,6 +517,7 @@ const TreeNode = memo(function TreeNode({
   isDirty,
   isRegening,
   onRegenRoot,
+  onOpenGrammar,
 }: {
   row: AnalysisRow;
   originalIndex: number;
@@ -399,6 +525,8 @@ const TreeNode = memo(function TreeNode({
   isCollapsed: boolean;
   isHidden: boolean;
   isStart: boolean;
+  isInteractive: boolean;
+  onOpenGrammar: (slot: string) => void;
   onToggleCollapse: (slot: string) => void;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
@@ -414,7 +542,6 @@ const TreeNode = memo(function TreeNode({
 
   const [editingField, setEditingField] = useState<EditField | null>(null);
   const [draftValue, setDraftValue] = useState('');
-  const [grammarOpen, setGrammarOpen] = useState(false);
   const [addMode, setAddMode] = useState<'child' | 'sibling' | null>(null);
   const [addDraft, setAddDraft] = useState('');
   const [editingPath, setEditingPath] = useState(false);
@@ -486,6 +613,11 @@ const TreeNode = memo(function TreeNode({
           ) : (
             <span className="w-4 flex-shrink-0" />
           )}
+          {!editingPath && isInteractive && (
+            <span title="Nodo con domanda" className="flex-shrink-0">
+              <QuestionNodeIcon />
+            </span>
+          )}
           {editingPath ? (
             <PathEditor
               value={pathDraft}
@@ -532,7 +664,7 @@ const TreeNode = memo(function TreeNode({
             onUncertain={() => handleValidation('uncertain')}
             onEdit={() => { setPathDraft(row.slot_filling); setEditingPath(true); }}
             onDelete={() => onDeleteRow(originalIndex)}
-            onShowGrammar={row.grammar ? () => setGrammarOpen(true) : undefined}
+            onShowGrammar={row.grammar ? () => onOpenGrammar(row.slot_filling) : undefined}
             onAddChild={() => { setAddMode('child'); setAddDraft(''); }}
             onAddSibling={depth > 0 ? () => { setAddMode('sibling'); setAddDraft(''); } : undefined}
             onRegen={() => onRegenRoot(row.slot_filling)}
@@ -559,9 +691,6 @@ const TreeNode = memo(function TreeNode({
               <X className="w-3 h-3" />
             </button>
           </div>
-        )}
-        {grammarOpen && row.grammar && (
-          <GrammarModal grammar={row.grammar} onClose={() => setGrammarOpen(false)} />
         )}
       </td>
 
@@ -615,6 +744,7 @@ const COL_HEADERS = ['Albero', 'Domanda', '1° no match', '2° no match', '3° n
 
 function TreeTable({
   rows,
+  showOnlyMessageNodes = false,
   onUpdateRow,
   onDeleteRow,
   onAddRow,
@@ -622,8 +752,10 @@ function TreeTable({
   dirtyRoots,
   regeningRoots,
   onRegenRoot,
+  onOpenGrammar,
 }: {
   rows: AnalysisRow[];
+  showOnlyMessageNodes?: boolean;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
   onAddRow: (slot: string) => void;
@@ -631,11 +763,15 @@ function TreeTable({
   dirtyRoots: string[];
   regeningRoots: string[];
   onRegenRoot: (root: string) => void;
+  onOpenGrammar: (slot: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const collapsedKey = useMemo(() => [...collapsed].sort().join('\0'), [collapsed]);
 
-  const orderedRows = useMemo(() => orderAnalysisRowsDepthFirst(rows), [rows]);
+  const orderedRows = useMemo(() => {
+    const ordered = orderAnalysisRowsDepthFirst(rows);
+    return showOnlyMessageNodes ? ordered.filter(rowHasMessage) : ordered;
+  }, [rows, showOnlyMessageNodes]);
   const indexBySlot = useMemo(
     () => new Map(rows.map((r, i) => [r.slot_filling, i])),
     [rows],
@@ -647,6 +783,7 @@ function TreeTable({
     [rows],
   );
   const singleRoot = rootNodes.length === 1 ? rootNodes[0]!.slot_filling : null;
+  const allSlots = useMemo(() => rows.map((r) => r.slot_filling), [rows]);
 
   const onToggleCollapse = useCallback((slot: string) => {
     setCollapsed((prev) => {
@@ -715,6 +852,8 @@ function TreeTable({
               isCollapsed={item.isCollapsed}
               isHidden={item.isHidden}
               isStart={item.row.slot_filling === singleRoot}
+              isInteractive={requiresInteractiveNode(allSlots, item.row.slot_filling)}
+              onOpenGrammar={onOpenGrammar}
               onToggleCollapse={onToggleCollapse}
               onUpdateRow={onUpdateRow}
               onDeleteRow={onDeleteRow}
@@ -741,6 +880,17 @@ const SplitMessageRow = memo(function SplitMessageRow({
   isHighlighted,
   isStart,
   isLeaf,
+  isInteractive,
+  isSelected,
+  depth,
+  hasChildren,
+  isCollapsed,
+  singleRoot,
+  isTreeHovered,
+  isTreeChildHighlight,
+  onToggleCollapse,
+  onTreeHover,
+  onSelectSlot,
   onUpdateRow,
   onDeleteRow,
   onAddRow,
@@ -748,12 +898,25 @@ const SplitMessageRow = memo(function SplitMessageRow({
   isDirty,
   isRegening,
   onRegenRoot,
+  onOpenGrammar,
 }: {
   row: AnalysisRow;
   originalIndex: number;
   isHighlighted: boolean;
   isStart: boolean;
   isLeaf: boolean;
+  isInteractive: boolean;
+  isSelected: boolean;
+  depth: number;
+  hasChildren: boolean;
+  isCollapsed: boolean;
+  singleRoot: string | null;
+  isTreeHovered: boolean;
+  isTreeChildHighlight: boolean;
+  onToggleCollapse: (slot: string) => void;
+  onTreeHover: (slot: string | null) => void;
+  onSelectSlot: (slot: string) => void;
+  onOpenGrammar: (slot: string) => void;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
   onAddRow: (slot: string) => void;
@@ -762,11 +925,8 @@ const SplitMessageRow = memo(function SplitMessageRow({
   isRegening: boolean;
   onRegenRoot: (root: string) => void;
 }) {
-  const depth = row.slot_filling.split('.').length - 1;
-  const parentSlot = row.slot_filling.split('.').slice(0, -1).join('.');
   const [editingField, setEditingField] = useState<EditField | null>(null);
   const [draftValue, setDraftValue] = useState('');
-  const [grammarOpen, setGrammarOpen] = useState(false);
   const [slotHover, setSlotHover] = useState<HoverAction>(null);
 
   const startEdit = (field: EditField) => {
@@ -796,8 +956,47 @@ const SplitMessageRow = memo(function SplitMessageRow({
         ? statusBgClass(row.status)
         : 'bg-[#0d0d0d]';
 
+  const treeBg = isTreeChildHighlight
+    ? 'bg-sky-400/[0.08]'
+    : isTreeHovered
+      ? 'bg-emerald-400/[0.06]'
+      : '';
+
   return (
     <tr className={`${rowBg} hover:brightness-110`}>
+      <td
+        className={`w-[260px] max-w-[260px] px-2 py-1.5 border-r border-[#1a3a2a] align-top cursor-pointer ${treeBg} ${isSelected ? 'ring-1 ring-inset ring-sky-400/50 bg-sky-400/[0.06]' : ''}`}
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        onMouseEnter={() => onTreeHover(row.slot_filling)}
+        onMouseLeave={() => onTreeHover(null)}
+        onClick={() => onSelectSlot(row.slot_filling)}
+      >
+        <div className="flex items-center gap-1 min-h-[2rem]">
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onToggleCollapse(row.slot_filling); }}
+              className="flex-shrink-0 w-4 h-4 flex items-center justify-center text-emerald-400/50 hover:text-emerald-400"
+            >
+              {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          ) : (
+            <span className="w-4 flex-shrink-0" />
+          )}
+          {isInteractive && (
+            <span title="Nodo con domanda" className="flex-shrink-0">
+              <QuestionNodeIcon />
+            </span>
+          )}
+          <SlotLabelDisplay
+            path={row.slot_filling}
+            className={row.slot_filling === singleRoot ? 'font-bold text-amber-300' : ''}
+          />
+          {row.slot_filling === singleRoot && (
+            <Zap className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />
+          )}
+        </div>
+      </td>
       <td className="group relative px-3 py-1.5 border-r border-[#1a3a2a] align-top min-w-[200px]">
         {editingField === 'question' ? (
           <textarea
@@ -827,13 +1026,10 @@ const SplitMessageRow = memo(function SplitMessageRow({
             onReject={() => handleValidation('rejected')}
             onUncertain={() => handleValidation('uncertain')}
             onEdit={() => startEdit('question')}
-            onShowGrammar={row.grammar ? () => setGrammarOpen(true) : undefined}
+            onShowGrammar={row.grammar ? () => onOpenGrammar(row.slot_filling) : undefined}
             onRegen={() => onRegenRoot(row.slot_filling)}
             onHoverChange={setSlotHover}
           />
-        )}
-        {grammarOpen && row.grammar && (
-          <GrammarModal grammar={row.grammar} onClose={() => setGrammarOpen(false)} />
         )}
       </td>
       <DataCell field="no_match_1" value={row.no_match_1} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
@@ -906,6 +1102,9 @@ function AgentConfigBar({
 
 function SplitAgentTable({
   rows,
+  showOnlyMessageNodes = false,
+  selectedSlot,
+  onSelectSlot,
   onUpdateRow,
   onDeleteRow,
   onAddRow,
@@ -913,8 +1112,12 @@ function SplitAgentTable({
   dirtyRoots,
   regeningRoots,
   onRegenRoot,
+  onOpenGrammar,
 }: {
   rows: AnalysisRow[];
+  showOnlyMessageNodes?: boolean;
+  selectedSlot: string | null;
+  onSelectSlot: (slot: string) => void;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
   onAddRow: (slot: string) => void;
@@ -922,12 +1125,16 @@ function SplitAgentTable({
   dirtyRoots: string[];
   regeningRoots: string[];
   onRegenRoot: (root: string) => void;
+  onOpenGrammar: (slot: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [hoveredSlot, setHoveredSlot] = useState<string | null>(null);
   const collapsedKey = useMemo(() => [...collapsed].sort().join('\0'), [collapsed]);
 
-  const orderedRows = useMemo(() => orderAnalysisRowsDepthFirst(rows), [rows]);
+  const orderedRows = useMemo(() => {
+    const ordered = orderAnalysisRowsDepthFirst(rows);
+    return showOnlyMessageNodes ? ordered.filter(rowHasMessage) : ordered;
+  }, [rows, showOnlyMessageNodes]);
   const indexBySlot = useMemo(() => new Map(rows.map((r, i) => [r.slot_filling, i])), [rows]);
   const parentSlots = useMemo(() => slotsWithDirectChildren(rows), [rows]);
   const rootNodes = useMemo(() => rows.filter((r) => !r.slot_filling.includes('.')), [rows]);
@@ -965,58 +1172,18 @@ function SplitAgentTable({
   }, [orderedRows, indexBySlot, parentSlots, collapsedKey]);
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden">
-      <div className="w-[260px] flex-shrink-0 flex flex-col border-r border-[#1a3a2a] bg-[#080e0a]">
-        <div className="flex-shrink-0 px-3 py-2 border-b border-[#1a3a2a] font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 sticky top-0 bg-[#080e0a] z-10">
-          Albero
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {displayRows.map((item) => {
-            if (item.isHidden) return null;
-            const isHovered = hoveredSlot === item.row.slot_filling;
-            const isChildHighlight = highlightSlots.has(item.row.slot_filling);
-            return (
-              <div
-                key={item.originalIndex}
-                className={`flex items-center gap-1 px-2 py-1.5 border-b border-[#111] min-h-[2.75rem] cursor-default transition-colors ${
-                  isChildHighlight ? 'bg-sky-400/15' : isHovered ? 'bg-emerald-400/10' : 'hover:bg-[#0f1a12]'
-                }`}
-                style={{ paddingLeft: `${8 + item.depth * 14}px` }}
-                onMouseEnter={() => setHoveredSlot(item.row.slot_filling)}
-                onMouseLeave={() => setHoveredSlot(null)}
-              >
-                {item.hasChildren ? (
-                  <button
-                    type="button"
-                    onClick={() => onToggleCollapse(item.row.slot_filling)}
-                    className="flex-shrink-0 w-4 h-4 flex items-center justify-center text-emerald-400/50 hover:text-emerald-400"
-                  >
-                    {item.isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  </button>
-                ) : (
-                  <span className="w-4 flex-shrink-0" />
-                )}
-                <SlotLabelDisplay
-                  path={item.row.slot_filling}
-                  className={item.row.slot_filling === singleRoot ? 'font-bold text-amber-300' : ''}
-                />
-                {item.row.slot_filling === singleRoot && (
-                  <Zap className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div className="flex flex-col h-full min-h-0 min-w-0 bg-[#080e0a]">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
         <table className="w-full border-collapse text-left">
-          <thead className="sticky top-0 z-10 bg-[#080e0a]">
+          <thead className="sticky top-0 z-20 bg-[#080e0a]">
             <tr className="border-b border-[#1a3a2a]">
+              <th className="w-[260px] min-w-[260px] px-3 py-2 border-r border-[#1a3a2a] font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 text-left">
+                Albero
+              </th>
               {MSG_HEADERS.map((h, i) => (
                 <th
                   key={h}
-                  className={`px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 ${i < MSG_HEADERS.length - 1 ? 'border-r border-[#1a3a2a]' : ''}`}
+                  className={`px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 whitespace-nowrap ${i < MSG_HEADERS.length - 1 ? 'border-r border-[#1a3a2a]' : ''}`}
                 >
                   {h}
                 </th>
@@ -1030,9 +1197,20 @@ function SplitAgentTable({
                   <SplitMessageRow
                     row={item.row}
                     originalIndex={item.originalIndex}
+                    depth={item.depth}
+                    hasChildren={item.hasChildren}
+                    isCollapsed={item.isCollapsed}
+                    singleRoot={singleRoot}
+                    isTreeHovered={hoveredSlot === item.row.slot_filling}
+                    isTreeChildHighlight={highlightSlots.has(item.row.slot_filling)}
+                    onToggleCollapse={onToggleCollapse}
+                    onTreeHover={setHoveredSlot}
+                    onSelectSlot={onSelectSlot}
                     isHighlighted={highlightSlots.has(item.row.slot_filling)}
                     isStart={item.row.slot_filling === singleRoot}
                     isLeaf={isLeafSlot(allSlots, item.row.slot_filling)}
+                    isInteractive={requiresInteractiveNode(allSlots, item.row.slot_filling)}
+                    isSelected={selectedSlot === item.row.slot_filling}
                     onUpdateRow={onUpdateRow}
                     onDeleteRow={onDeleteRow}
                     onAddRow={onAddRow}
@@ -1040,6 +1218,7 @@ function SplitAgentTable({
                     isDirty={dirtyRoots.includes(item.row.slot_filling)}
                     isRegening={regeningRoots.includes(item.row.slot_filling)}
                     onRegenRoot={onRegenRoot}
+                    onOpenGrammar={onOpenGrammar}
                   />
                 )}
               </Fragment>
@@ -1065,6 +1244,7 @@ function FlatRow({
   isDirty,
   isRegening,
   onRegen,
+  onOpenGrammar,
 }: {
   row: AnalysisRow;
   rowIndex: number;
@@ -1077,13 +1257,13 @@ function FlatRow({
   isDirty: boolean;
   isRegening: boolean;
   onRegen: () => void;
+  onOpenGrammar: (slot: string) => void;
 }) {
   const depth = row.slot_filling.split('.').length - 1;
   const parentSlot = row.slot_filling.split('.').slice(0, -1).join('.');
   const [editingField, setEditingField] = useState<EditField | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [slotHover, setSlotHover] = useState<HoverAction>(null);
-  const [grammarOpen, setGrammarOpen] = useState(false);
   const [editingPath, setEditingPath] = useState(false);
   const [pathDraft, setPathDraft] = useState('');
 
@@ -1186,7 +1366,7 @@ function FlatRow({
               onUncertain={() => handleValidation('uncertain')}
               onEdit={() => { setPathDraft(row.slot_filling); setEditingPath(true); }}
               onDelete={onDelete}
-              onShowGrammar={row.grammar ? () => setGrammarOpen(true) : undefined}
+              onShowGrammar={row.grammar ? () => onOpenGrammar(row.slot_filling) : undefined}
               onAddChild={() => { setAddMode('child'); setAddDraft(''); }}
               onAddSibling={depth > 0 ? () => { setAddMode('sibling'); setAddDraft(''); } : undefined}
               onRegen={onRegen}
@@ -1213,9 +1393,6 @@ function FlatRow({
                 <X className="w-3 h-3" />
               </button>
             </div>
-          )}
-          {grammarOpen && row.grammar && (
-            <GrammarModal grammar={row.grammar} onClose={() => setGrammarOpen(false)} />
           )}
         </td>
         <DataCell
@@ -1267,6 +1444,7 @@ function FlatRow({
 
 function FlatTable({
   rows,
+  showOnlyMessageNodes = false,
   onUpdateRow,
   onDeleteRow,
   onAddRow,
@@ -1274,8 +1452,10 @@ function FlatTable({
   dirtyRoots,
   regeningRoots,
   onRegenRoot,
+  onOpenGrammar,
 }: {
   rows: AnalysisRow[];
+  showOnlyMessageNodes?: boolean;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
   onAddRow: (slot: string) => void;
@@ -1283,8 +1463,12 @@ function FlatTable({
   dirtyRoots: string[];
   regeningRoots: string[];
   onRegenRoot: (root: string) => void;
+  onOpenGrammar: (slot: string) => void;
 }) {
-  const orderedRows = orderAnalysisRowsDepthFirst(rows);
+  const orderedRows = (() => {
+    const ordered = orderAnalysisRowsDepthFirst(rows);
+    return showOnlyMessageNodes ? ordered.filter(rowHasMessage) : ordered;
+  })();
   const indexBySlot = new Map(rows.map((r, i) => [r.slot_filling, i]));
   const rootNodes = rows.filter((r) => !r.slot_filling.includes('.'));
   const singleRoot = rootNodes.length === 1 ? rootNodes[0]!.slot_filling : null;
@@ -1310,22 +1494,26 @@ function FlatTable({
           const firstForestIdx = orderedRows.findIndex(
             (r) => r.slot_filling.split('.').length - 1 === forestLevel,
           );
-          return orderedRows.map((row, i) => (
+          return orderedRows.map((row, i) => {
+            const rowIndex = indexBySlot.get(row.slot_filling) ?? i;
+            return (
             <FlatRow
               key={row.slot_filling}
               row={row}
-              rowIndex={indexBySlot.get(row.slot_filling) ?? i}
+              rowIndex={rowIndex}
               isStart={row.slot_filling === singleRoot}
               needsSeparator={row.slot_filling.split('.').length - 1 === forestLevel && i !== firstForestIdx}
-              onUpdate={(updates) => onUpdateRow(i, updates)}
-              onDelete={() => onDeleteRow(i)}
+              onUpdate={(updates) => onUpdateRow(rowIndex, updates)}
+              onDelete={() => onDeleteRow(rowIndex)}
               onAddRow={onAddRow}
-              onRestructurePath={(newPath) => onRestructurePath(i, newPath)}
+              onRestructurePath={(newPath) => onRestructurePath(rowIndex, newPath)}
               isDirty={dirtyRoots.includes(row.slot_filling)}
               isRegening={regeningRoots.includes(row.slot_filling)}
               onRegen={() => onRegenRoot(row.slot_filling)}
+              onOpenGrammar={onOpenGrammar}
             />
-          ));
+            );
+          });
         })()}
       </tbody>
     </table>
@@ -1426,14 +1614,36 @@ export function AnalysisView({
   testOpen: testOpenProp,
   onTestOpenChange,
   leafDescriptionMap = null,
+  selectedSlot = null,
+  onSelectedSlotChange,
+  grammarModalOpen = false,
+  onGrammarModalOpenChange,
+  showOnlyMessageNodes: showOnlyMessageNodesProp = false,
+  grammarOverwrite: grammarOverwriteProp = false,
+  onGrammarOverwriteChange,
 }: AnalysisViewProps) {
   const {
     analysis, loading, saving, analysisDirty, generating, generatingPhase, agentGenProgress,
-    generatingConfirmations, error, regenError, agentReady,
-    generateTaxonomy, generateAgent, refineTaxonomy, saveAnalysis, discardAnalysisChanges,
+    generatingConfirmations, error, regenError, messagesReady, hasMessages, agentReady, hasTaxonomy, canGenerateGrammars,
+    missingGrammarCount, grammarsReady,
+    generateTaxonomy, generateAgent, generateGrammars, generateGrammarsWithAi, refineTaxonomy, saveAnalysis, discardAnalysisChanges,
     updateAgentConfig, generateConfirmations,
-    updateRow, deleteRow, addRow, restructurePath, dirtyRoots, regeningRoots, regenSubtree,
+    updateRow, deleteRow, addRow, restructurePath, dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree,
   } = analysisApi;
+  const [showOnlyMessageNodesLocal, setShowOnlyMessageNodesLocal] = useState(false);
+  const [grammarOverwriteLocal, setGrammarOverwriteLocal] = useState(false);
+  const showOnlyMessageNodes = externalToolbar
+    ? showOnlyMessageNodesProp
+    : (showOnlyMessageNodesLocal || showOnlyMessageNodesProp);
+  const grammarOverwrite = externalToolbar
+    ? grammarOverwriteProp
+    : (grammarOverwriteLocal || grammarOverwriteProp);
+  const setGrammarOverwriteMode = useCallback((value: boolean) => {
+    if (externalToolbar) onGrammarOverwriteChange?.(value);
+    else setGrammarOverwriteLocal(value);
+  }, [externalToolbar, onGrammarOverwriteChange]);
+  const canRunGrammarGeneration = hasTaxonomy && !generating
+    && (grammarOverwrite || missingGrammarCount > 0);
   const [viewMode, setViewMode] = useState<ViewMode>('tree');
   const [affinaOpenLocal, setAffinaOpenLocal] = useState(false);
   const [testOpenLocal, setTestOpenLocal] = useState(false);
@@ -1475,18 +1685,53 @@ export function AnalysisView({
   };
 
   const handleRegenRoot = (root: string) => {
-    regenSubtree(root, documentText ?? '', doc.name);
+    if (dirtyRoots.includes(root)) {
+      regenSubtree(root, documentText ?? '', doc.name);
+      return;
+    }
+    void regenGrammarsSubtree(root, documentText ?? '', doc.name, grammarOverwrite);
   };
 
   const canRun = !!documentText && !generating;
-  const taxonomyOnly = hasData && !agentReady;
+  const taxonomyOnly = hasData && !hasMessages;
 
   const generatingLabel =
     generatingPhase === 'taxonomy'
       ? 'Sto costruendo la tassonomia…'
-      : generatingPhase === 'agent'
-        ? 'Sto generando domande e grammatiche…'
-        : 'Caricamento…';
+      : generatingPhase === 'messages'
+        ? 'Sto generando messaggi…'
+        : generatingPhase === 'grammars'
+          ? 'Sto generando grammatiche…'
+          : 'Caricamento…';
+
+  const selectedRow = selectedSlot
+    ? rows.find((r) => r.slot_filling === selectedSlot) ?? null
+    : null;
+  const selectedRowIndex = selectedRow
+    ? rows.findIndex((r) => r.slot_filling === selectedSlot)
+    : -1;
+
+  const openGrammarForSlot = useCallback((slot: string) => {
+    onSelectedSlotChange?.(slot);
+    onGrammarModalOpenChange?.(true);
+  }, [onSelectedSlotChange, onGrammarModalOpenChange]);
+
+  const handleGrammarSave = (grammar: GrammarEntry) => {
+    if (selectedRowIndex < 0 || !selectedRow?.grammar) return;
+    const updated = ensureGrammarMapsToSelf({
+      ...selectedRow,
+      grammar,
+      status: null,
+    });
+    updateRow(selectedRowIndex, {
+      grammar: updated.grammar,
+      status: null,
+    });
+  };
+
+  const closeGrammarModal = useCallback(() => {
+    onGrammarModalOpenChange?.(false);
+  }, [onGrammarModalOpenChange]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const approvedCount = rows.filter((r) => r.status === 'approved').length;
@@ -1514,9 +1759,19 @@ export function AnalysisView({
             <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wider border ${
               agentReady
                 ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-400'
-                : 'border-amber-400/40 bg-amber-400/10 text-amber-400'
+                : messagesReady
+                  ? 'border-sky-400/40 bg-sky-400/10 text-sky-300'
+                  : hasMessages
+                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
+                    : 'border-amber-400/40 bg-amber-400/10 text-amber-400'
             }`}>
-              {agentReady ? <><Bot className="w-2.5 h-2.5" /> Agente</> : <><Layers className="w-2.5 h-2.5" /> Tassonomia</>}
+              {agentReady
+                ? <><Bot className="w-2.5 h-2.5" /> Agente</>
+                : messagesReady
+                  ? <><Braces className="w-2.5 h-2.5" /> Messaggi ok</>
+                  : hasMessages
+                    ? <><MessageCircle className="w-2.5 h-2.5" /> Messaggi</>
+                    : <><Layers className="w-2.5 h-2.5" /> Tassonomia</>}
             </span>
           )}
           {hasData && (approvedCount > 0 || rejectedCount > 0 || uncertainCount > 0) && (
@@ -1587,8 +1842,77 @@ export function AnalysisView({
                 disabled={!canRun}
                 className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
               >
-                {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
-                {generatingPhase === 'agent' ? 'Generazione…' : 'Genera Agente'}
+                {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                {generatingPhase === 'messages' ? 'Generazione…' : 'Genera messaggi'}
+              </button>
+            )}
+            {hasData && !externalToolbar && (
+              <button
+                type="button"
+                onClick={() => setShowOnlyMessageNodesLocal((v) => !v)}
+                title={showOnlyMessageNodes ? 'Mostra tutti i nodi' : 'Mostra solo nodi con messaggio'}
+                className={`flex items-center gap-1 px-2 py-1 font-mono text-[10px] rounded border transition-colors ${
+                  showOnlyMessageNodes
+                    ? 'text-amber-300 border-amber-400/40 bg-amber-400/10'
+                    : 'text-emerald-400/50 border-[#1a3a2a] hover:border-emerald-400/30'
+                }`}
+              >
+                Solo messaggi
+              </button>
+            )}
+            {hasData && !agentReady && !externalToolbar && (
+              <>
+                <button
+                  onClick={() => void (async () => {
+                    const overwrite = grammarOverwrite;
+                    try {
+                      await generateGrammars(documentText ?? '', doc.name, overwrite);
+                      if (overwrite) setGrammarOverwriteMode(false);
+                    } catch { /* error in hook */ }
+                  })()}
+                  disabled={!canRun || !canRunGrammarGeneration}
+                  title={grammarOverwrite
+                    ? 'Sovrascrive tutte le grammatiche (istantaneo)'
+                    : 'Genera grammatiche dai path (istantaneo)'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
+                >
+                  <Braces className="w-3.5 h-3.5" />
+                  {grammarOverwrite
+                    ? 'Rigenera tutte'
+                    : missingGrammarCount > 0
+                      ? `Genera mancanti (${missingGrammarCount})`
+                      : 'Genera grammatiche'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void (async () => {
+                    const overwrite = grammarOverwrite;
+                    try {
+                      await generateGrammarsWithAi(documentText ?? '', doc.name, overwrite);
+                      if (overwrite) setGrammarOverwriteMode(false);
+                    } catch { /* error in hook */ }
+                  })()}
+                  disabled={!canRun || !canRunGrammarGeneration}
+                  title="Affina grammatiche con IA (lento)"
+                  className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] rounded border border-violet-400/30 text-violet-300/80 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
+                >
+                  {generating && generatingPhase === 'grammars' ? <Loader2 className="w-3 h-3 animate-spin" /> : 'IA'}
+                </button>
+              </>
+            )}
+            {hasData && !externalToolbar && (
+              <button
+                type="button"
+                onClick={() => setGrammarOverwriteMode(!grammarOverwrite)}
+                disabled={generating}
+                title={grammarOverwrite ? 'Rigenera tutte (attivo)' : 'Solo mancanti (attivo)'}
+                className={`flex items-center justify-center w-7 h-7 rounded border transition-colors ${
+                  grammarOverwrite
+                    ? 'border-amber-400/50 bg-amber-400/15 text-amber-300'
+                    : 'border-[#1a3a2a] text-emerald-400/40'
+                }`}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
               </button>
             )}
             {hasData && !taxonomyOnly && (
@@ -1601,13 +1925,18 @@ export function AnalysisView({
                 <Layers className="w-3 h-3" />Rigenera tassonomia
               </button>
             )}
-            {hasData && (
+            {hasMessages && (
               <button
                 onClick={() => setTestOpen(!testOpen)}
+                title={agentReady
+                  ? 'Apri chat di test'
+                  : 'Apri chat (genera le grammatiche per il riconoscimento risposte)'}
                 className={`flex items-center gap-1 px-2 py-1 font-mono text-[10px] border rounded transition-colors ${
                   testOpen
                     ? 'text-emerald-300 border-emerald-400/50 bg-emerald-400/10'
-                    : 'text-emerald-400/60 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-400/90'
+                    : agentReady
+                      ? 'text-emerald-400/60 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-400/90'
+                      : 'text-amber-400/60 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-400/90'
                 }`}
               >
                 <FlaskConical className="w-3 h-3" />Test
@@ -1638,7 +1967,7 @@ export function AnalysisView({
 
       {taxonomyOnly && !generating && !affinaOpen && !externalToolbar && (
         <div className="flex-shrink-0 px-4 py-2 border-b border-amber-400/20 bg-amber-400/5 font-mono text-[11px] text-amber-400/80">
-          Tassonomia pronta ({rows.length} nodi). Usa <strong className="font-normal">Affina</strong> per raffinare la struttura, poi <strong className="font-normal">Genera Agente</strong> per domande e grammatiche.
+          Tassonomia pronta ({rows.length} nodi). Usa <strong className="font-normal">Affina</strong> per raffinare la struttura, poi <strong className="font-normal">Genera messaggi</strong> e infine <strong className="font-normal">Crea grammatiche</strong>.
         </div>
       )}
 
@@ -1649,12 +1978,12 @@ export function AnalysisView({
         </div>
       )}
 
-      {generating && generatingPhase === 'agent' && hasData && externalToolbar && (
+      {generating && (generatingPhase === 'messages' || generatingPhase === 'grammars') && hasData && externalToolbar && (
         <div className="flex-shrink-0 flex items-center gap-2 px-4 py-1.5 border-b border-emerald-400/15 bg-emerald-400/5 font-mono text-[10px] text-emerald-400/70">
           <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
           {agentGenProgress
-            ? `Popolamento NLU — ramo ${agentGenProgress.current}/${agentGenProgress.total}`
-            : 'Preparazione messaggi e grammatiche…'}
+            ? `${generatingPhase === 'grammars' ? 'Grammatiche' : 'Messaggi'} — ramo ${agentGenProgress.current}/${agentGenProgress.total}`
+            : generatingPhase === 'grammars' ? 'Preparazione grammatiche…' : 'Preparazione messaggi…'}
         </div>
       )}
 
@@ -1676,7 +2005,7 @@ export function AnalysisView({
           <Bot className="w-10 h-10" />
           <p className="font-mono text-sm text-center px-8">
             {externalToolbar
-              ? 'Premi "Genera agente" in alto per costruire albero, messaggi e grammatiche.'
+              ? 'Usa "Genera messaggi" per albero e domande, poi "Crea grammatiche agente".'
               : documentText
                 ? 'Premi "Genera tassonomia" per estrarre la struttura dal documento.'
                 : 'Caricamento documento in corso…'}
@@ -1684,9 +2013,9 @@ export function AnalysisView({
         </div>
       )}
 
-      {!loading && hasData && (!generating || generatingPhase === 'agent') && (
+      {!loading && hasData && (!generating || generatingPhase === 'messages' || generatingPhase === 'grammars') && (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {externalToolbar && agentReady && (
+          {externalToolbar && hasData && (
             <AgentConfigBar
               startQuestion={analysis?.start_question ?? ''}
               confirmationPreamble={analysis?.confirmation_preamble ?? 'Quindi confermo:'}
@@ -1698,10 +2027,13 @@ export function AnalysisView({
             />
           )}
           <div className="flex-1 min-h-0 flex overflow-hidden">
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className="flex-1 min-h-0 overflow-hidden">
             {externalToolbar ? (
               <SplitAgentTable
                 rows={rows}
+                showOnlyMessageNodes={showOnlyMessageNodes}
+                selectedSlot={selectedSlot}
+                onSelectSlot={(slot) => onSelectedSlotChange?.(slot)}
                 onUpdateRow={updateRow}
                 onDeleteRow={deleteRow}
                 onAddRow={addRow}
@@ -1709,11 +2041,12 @@ export function AnalysisView({
                 dirtyRoots={dirtyRoots}
                 regeningRoots={regeningRoots}
                 onRegenRoot={handleRegenRoot}
+                onOpenGrammar={openGrammarForSlot}
               />
             ) : viewMode === 'tree' ? (
-              <TreeTable rows={rows} onUpdateRow={updateRow} onDeleteRow={deleteRow} onAddRow={addRow} onRestructurePath={restructurePath} dirtyRoots={dirtyRoots} regeningRoots={regeningRoots} onRegenRoot={handleRegenRoot} />
+              <TreeTable rows={rows} showOnlyMessageNodes={showOnlyMessageNodes} onUpdateRow={updateRow} onDeleteRow={deleteRow} onAddRow={addRow} onRestructurePath={restructurePath} dirtyRoots={dirtyRoots} regeningRoots={regeningRoots} onRegenRoot={handleRegenRoot} onOpenGrammar={openGrammarForSlot} />
             ) : (
-              <FlatTable rows={rows} onUpdateRow={updateRow} onDeleteRow={deleteRow} onAddRow={addRow} onRestructurePath={restructurePath} dirtyRoots={dirtyRoots} regeningRoots={regeningRoots} onRegenRoot={handleRegenRoot} />
+              <FlatTable rows={rows} showOnlyMessageNodes={showOnlyMessageNodes} onUpdateRow={updateRow} onDeleteRow={deleteRow} onAddRow={addRow} onRestructurePath={restructurePath} dirtyRoots={dirtyRoots} regeningRoots={regeningRoots} onRegenRoot={handleRegenRoot} onOpenGrammar={openGrammarForSlot} />
             )}
           </div>
           {testOpen && (
@@ -1728,6 +2061,16 @@ export function AnalysisView({
           )}
           </div>
         </div>
+      )}
+
+      {grammarModalOpen && selectedRow?.grammar && (
+        <GrammarModal
+          slotLabel={selectedSlot?.split('.').pop() ?? selectedSlot ?? undefined}
+          grammar={selectedRow.grammar}
+          editable
+          onSave={handleGrammarSave}
+          onClose={closeGrammarModal}
+        />
       )}
     </div>
   );

@@ -2,10 +2,29 @@
  * Tree utilities for slot-filling analysis rows (ordering, merge, validation).
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
+import { validateGrammarRegex } from './grammarNormalize';
 
-/** Normalizes a slot path for fuzzy matching (underscore ↔ space). */
+/** Unicode dash variants (e.g. pet‑tc from Word/PDF) → ASCII hyphen. */
+const UNICODE_DASHES = /[\u2010\u2011\u2012\u2013\u2014\u2212]/g;
+
+/** Normalizes a slot path for fuzzy matching (dashes, underscore ↔ space). */
 export function normalizeSlotKey(slot: string): string {
-  return slot.toLowerCase().replace(/_/g, ' ');
+  return slot
+    .toLowerCase()
+    .replace(UNICODE_DASHES, '-')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Normalizes an AI-returned slot path segment separators while keeping dots. */
+export function normalizeSlotPathFromAi(slot: string): string {
+  return slot
+    .trim()
+    .split('.')
+    .map((part) => part.trim().replace(UNICODE_DASHES, '-'))
+    .filter(Boolean)
+    .join('.');
 }
 
 /** Normalizes user-edited path: trim, lowercase, clean segments. */
@@ -14,9 +33,19 @@ export function normalizeSlotPath(raw: string): string {
     .trim()
     .toLowerCase()
     .split('.')
-    .map((s) => s.trim())
+    .map((s) => s.trim().replace(UNICODE_DASHES, '-'))
     .filter(Boolean)
     .join('.');
+}
+
+/** Splits an array into fixed-size chunks for batched IA calls. */
+export function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 /** Indexes rows by exact and normalized slot path. */
@@ -56,6 +85,32 @@ export function getAgentGenerationRoots(slots: string[]): string[] {
   if (forest.length !== 1) return forest;
   const children = getDirectChildSlots(slots, forest[0]!).sort((a, b) => a.localeCompare(b, 'it'));
   return children.length > 1 ? children : forest;
+}
+
+function humanizeSegment(segment: string): string {
+  return segment.replace(UNICODE_DASHES, '-').replace(/_/g, ' ');
+}
+
+function formatRootOptionsList(labels: string[]): string {
+  if (labels.length === 2) return `${labels[0]} o ${labels[1]}`;
+  if (labels.length === 3) return `${labels[0]}, ${labels[1]} o ${labels[2]}`;
+  return labels.join(', ');
+}
+
+/**
+ * Builds the global opening question that disambiguates among forest root nodes.
+ * Used as start_question — separate from per-node questions in the tree.
+ */
+export function buildDefaultStartQuestion(slots: string[]): string {
+  const roots = getAgentGenerationRoots(slots);
+  const labels = roots.map((r) => humanizeSegment(lastPathSegment(r)));
+  if (labels.length === 0) {
+    return 'Buongiorno, quale esame o prestazione desidera prenotare?';
+  }
+  if (labels.length <= 4) {
+    return `Buongiorno, quale prestazione desidera prenotare: ${formatRootOptionsList(labels)}?`;
+  }
+  return 'Buongiorno, quale esame o prestazione desidera prenotare?';
 }
 
 /** Collects a root slot and all its descendants from analysis rows. */
@@ -163,11 +218,14 @@ export function restructureSlotPath(
 /**
  * Replaces the subtree rooted at `rootSlot` with regened rows, preserving
  * tree order from the original rows array.
+ * When `preserveComplete` is true, keeps existing rows that already have full NLU.
  */
 export function mergeSubtreeRows(
   allRows: AnalysisRow[],
   regenedBySlot: Map<string, AnalysisRow>,
   rootSlot: string,
+  preserveComplete = false,
+  isNodeComplete?: (slot: string, row: AnalysisRow) => boolean,
 ): AnalysisRow[] {
   const subtreeSet = new Set(
     allRows
@@ -178,13 +236,16 @@ export function mergeSubtreeRows(
   const orderedSubtree = allRows
     .filter((r) => subtreeSet.has(r.slot_filling))
     .map((r) => {
+      if (preserveComplete && isNodeComplete?.(r.slot_filling, r)) {
+        return r;
+      }
       const regened = getRowBySlot(regenedBySlot, r.slot_filling);
       if (!regened) throw new Error(`Rigenerazione incompleta: manca lo slot "${r.slot_filling}"`);
       return {
         ...regened,
         slot_filling: r.slot_filling,
         confirmation_text: regened.confirmation_text ?? r.confirmation_text ?? null,
-        status: null as AnalysisRow['status'],
+        status: preserveComplete ? (r.status ?? null) : (null as AnalysisRow['status']),
       };
     });
 
@@ -203,21 +264,169 @@ export function mergeSubtreeRows(
   return result;
 }
 
+function mergeSubtreeLayerRows(
+  allRows: AnalysisRow[],
+  regenedBySlot: Map<string, AnalysisRow>,
+  rootSlot: string,
+  preserveComplete: boolean,
+  isNodeComplete: ((slot: string, row: AnalysisRow) => boolean) | undefined,
+  pickFields: (existing: AnalysisRow, regened: AnalysisRow) => AnalysisRow,
+): AnalysisRow[] {
+  const subtreeSet = new Set(
+    allRows
+      .filter((r) => r.slot_filling === rootSlot || r.slot_filling.startsWith(`${rootSlot}.`))
+      .map((r) => r.slot_filling),
+  );
+
+  const orderedSubtree = allRows
+    .filter((r) => subtreeSet.has(r.slot_filling))
+    .map((r) => {
+      if (preserveComplete && isNodeComplete?.(r.slot_filling, r)) return r;
+      const regened = getRowBySlot(regenedBySlot, r.slot_filling);
+      if (!regened) throw new Error(`Rigenerazione incompleta: manca lo slot "${r.slot_filling}"`);
+      return pickFields(r, regened);
+    });
+
+  const result: AnalysisRow[] = [];
+  let inserted = false;
+  for (const row of allRows) {
+    if (subtreeSet.has(row.slot_filling)) {
+      if (!inserted) {
+        result.push(...orderedSubtree);
+        inserted = true;
+      }
+    } else {
+      result.push(row);
+    }
+  }
+  return result;
+}
+
+/** Merges messages layer into existing rows, preserving grammars. */
+export function mergeSubtreeMessageRows(
+  allRows: AnalysisRow[],
+  regenedBySlot: Map<string, AnalysisRow>,
+  rootSlot: string,
+  preserveComplete = false,
+  isNodeComplete?: (slot: string, row: AnalysisRow) => boolean,
+): AnalysisRow[] {
+  return mergeSubtreeLayerRows(allRows, regenedBySlot, rootSlot, preserveComplete, isNodeComplete, (existing, regened) => ({
+    ...existing,
+    question: regened.question,
+    no_match_1: regened.no_match_1,
+    no_match_2: regened.no_match_2,
+    no_match_3: regened.no_match_3,
+    status: preserveComplete ? (existing.status ?? null) : null,
+  }));
+}
+
+/** Merges grammars layer into existing rows, preserving messages. */
+export function mergeSubtreeGrammarRows(
+  allRows: AnalysisRow[],
+  regenedBySlot: Map<string, AnalysisRow>,
+  rootSlot: string,
+  preserveComplete = false,
+  isNodeComplete?: (slot: string, row: AnalysisRow) => boolean,
+): AnalysisRow[] {
+  return mergeSubtreeLayerRows(allRows, regenedBySlot, rootSlot, preserveComplete, isNodeComplete, (existing, regened) => ({
+    ...existing,
+    grammar: regened.grammar,
+    status: preserveComplete ? (existing.status ?? null) : null,
+  }));
+}
+
+function isInteractiveSlot(slots: string[], slot: string): boolean {
+  if (isLeafSlot(slots, slot)) return false;
+  return getDirectChildSlots(slots, slot).length !== 1;
+}
+
 /** Returns internal nodes that are missing required NLU fields. */
 export function findInvalidInternalNodes(slots: string[], rows: AnalysisRow[]): string[] {
+  return findInvalidMessagesNodes(slots, rows);
+}
+
+/** Returns interactive nodes missing questions or re-prompts. */
+export function findInvalidMessagesNodes(slots: string[], rows: AnalysisRow[]): string[] {
   const bySlot = indexRowsBySlot(rows);
   const invalid: string[] = [];
   for (const slot of slots) {
-    if (isLeafSlot(slots, slot)) continue;
+    if (!isInteractiveSlot(slots, slot)) continue;
     const row = getRowBySlot(bySlot, slot);
-    if (!row?.question?.trim()) invalid.push(slot);
+    if (!row?.question?.trim()
+      || !row.no_match_1?.trim()
+      || !row.no_match_2?.trim()
+      || !row.no_match_3?.trim()) {
+      invalid.push(slot);
+    }
   }
   return invalid;
 }
 
-/** True when at least one row has NLU content (agent phase completed). */
+/** Slots that need grammar generation (all subtree slots or only missing). */
+export function getGrammarTargetSlots(
+  subtreeSlots: string[],
+  rows: AnalysisRow[],
+  overwriteExisting: boolean,
+): string[] {
+  if (overwriteExisting) return subtreeSlots;
+  return findInvalidGrammarNodes(subtreeSlots, rows);
+}
+
+/** True when a row has an agent question message. */
+export function rowHasMessage(row: AnalysisRow): boolean {
+  return !!row.question?.trim();
+}
+
+/** Returns nodes missing or syntactically invalid recognition grammars. */
+export function findInvalidGrammarNodes(slots: string[], rows: AnalysisRow[]): string[] {
+  const bySlot = indexRowsBySlot(rows);
+  const invalid: string[] = [];
+  for (const slot of slots) {
+    const row = getRowBySlot(bySlot, slot);
+    if (!row?.grammar?.regex?.trim()
+      || !row.grammar.mappings
+      || Object.keys(row.grammar.mappings).length === 0) {
+      invalid.push(slot);
+      continue;
+    }
+    const validation = validateGrammarRegex(row.grammar.regex, row.grammar.mappings);
+    if (!validation.valid) invalid.push(slot);
+  }
+  return invalid;
+}
+
+/** True when at least one interactive node has a question. */
+export function hasMessagesContent(rows: AnalysisRow[]): boolean {
+  const slots = rows.map((r) => r.slot_filling);
+  return rows.some((r) => isInteractiveSlot(slots, r.slot_filling) && !!r.question?.trim());
+}
+
+/** True when all nodes have grammars and interactive nodes have messages (ready for test). */
 export function hasAgentContent(rows: AnalysisRow[]): boolean {
-  return rows.some((r) => !!r.question?.trim());
+  const slots = rows.map((r) => r.slot_filling);
+  if (slots.length === 0) return false;
+  const interactive = slots.filter((s) => isInteractiveSlot(slots, s));
+  const bySlot = indexRowsBySlot(rows);
+  const allGrammars = slots.every((slot) => {
+    const row = getRowBySlot(bySlot, slot);
+    return !!(
+      row?.grammar?.regex?.trim()
+      && row.grammar.mappings
+      && Object.keys(row.grammar.mappings).length > 0
+    );
+  });
+  if (!allGrammars) return false;
+  if (interactive.length === 0) return true;
+  return interactive.every((slot) => {
+    const row = getRowBySlot(bySlot, slot);
+    if (!row) return false;
+    return !!(
+      row.question?.trim()
+      && row.no_match_1?.trim()
+      && row.no_match_2?.trim()
+      && row.no_match_3?.trim()
+    );
+  });
 }
 
 /** Sorts slot paths parent-before-child, alphabetical per level. */
@@ -284,6 +493,59 @@ export function orderAnalysisRowsDepthFirst(rows: AnalysisRow[]): AnalysisRow[] 
   });
 }
 
+/** Describes which nodes require messages (questions + re-prompts). */
+export function formatMessagesNodesSection(slots: string[]): string {
+  const internal = slots.filter((s) => isInteractiveSlot(slots, s));
+  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s));
+  const leaves = slots.filter((s) => isLeafSlot(slots, s));
+
+  const internalLines = internal.map((slot) => {
+    const children = getDirectChildSlots(slots, slot);
+    const childNote = children.length <= 3
+      ? ' (elenca opzioni nella domanda)'
+      : ' (domanda aperta)';
+    return `- ${slot}\n  figli diretti: ${children.join(', ')}${childNote}`;
+  });
+
+  return (
+    `NODI CON DOMANDA (${internal.length}) — question + no_match_1/2/3 OBBLIGATORI, grammar=null:\n` +
+    `${internalLines.join('\n')}\n\n` +
+    `NODI TRASPARENTI (${passthrough.length}) — question=null, grammar=null, no_match=null:\n` +
+    `${passthrough.map((s) => `- ${s}`).join('\n')}\n\n` +
+    `FOGLIE (${leaves.length}) — question=null, grammar=null, no_match=null:\n` +
+    `${leaves.map((s) => `- ${s}`).join('\n')}`
+  );
+}
+
+function lastPathSegment(slot: string): string {
+  const parts = slot.split('.');
+  return parts[parts.length - 1] ?? slot;
+}
+
+/** Describes every node for per-node synonym grammar generation. */
+export function formatGrammarsNodesSection(slots: string[], rows: AnalysisRow[]): string {
+  const bySlot = indexRowsBySlot(rows);
+  const lines = slots.map((slot) => {
+    const row = getRowBySlot(bySlot, slot);
+    const segment = lastPathSegment(slot);
+    const question = row?.question?.trim();
+    const note = question ? `domanda figli: "${question}"` : 'foglia o nodo senza domanda';
+    return (
+      `- ${slot}\n` +
+      `  segmento: "${segment}"\n` +
+      `  ${note}\n` +
+      `  mappings DEVE puntare a: "${slot}" (il path di QUESTO nodo, non ai figli)`
+    );
+  });
+
+  return (
+    `OGNI NODO (${slots.length}) — grammar OBBLIGATORIA con sinonimi per riconoscere QUESTO nodo.\n` +
+    `Il motore prova tutte le grammatiche: per ogni item (foglia) conta i match sul path; vince l'item con più match.\n` +
+    `question=null, no_match=null.\n\n` +
+    lines.join('\n\n')
+  );
+}
+
 /** Describes which nodes require questions vs which are leaves. */
 export function formatInternalNodesSection(slots: string[]): string {
   const internal = slots.filter((s) => !isLeafSlot(slots, s));
@@ -291,7 +553,13 @@ export function formatInternalNodesSection(slots: string[]): string {
 
   const internalLines = internal.map((slot) => {
     const children = getDirectChildSlots(slots, slot);
-    return `- ${slot}\n  figli diretti: ${children.join(', ')}`;
+    const childNote =
+      children.length === 1
+        ? ' (1 figlio → nodo trasparente: question=null, grammar=null)'
+        : children.length <= 3
+          ? ' (2-3 figli → elenca opzioni nella domanda)'
+          : ' (>=4 figli → domanda aperta)';
+    return `- ${slot}\n  figli diretti: ${children.join(', ')}${childNote}`;
   });
 
   const leafLines = leaves.map((s) => `- ${s}`);

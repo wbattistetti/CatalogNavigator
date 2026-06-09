@@ -6,7 +6,9 @@ import { BookOpen, Loader2, AlertCircle, Check } from 'lucide-react';
 import type { KbDocument } from '../../lib/supabase';
 import type { ParsedTabular } from '../../lib/parseTabular';
 import { supabase } from '../../lib/supabase';
-import { serializeTokenEntries } from '../../lib/serializeTokens';
+import { serializeDictionarySnapshot } from '../../lib/serializeTokens';
+import type { TokenCategory } from '../../lib/dictionaryTree';
+import { loadSavedCategories, syncCategoriesWithTokens } from '../../lib/dictionaryTree';
 import {
   getActiveTokens,
   loadSavedTokens,
@@ -54,6 +56,7 @@ export function DictionaryPanel({
     () => guessDescriptionColumn(tabular.headers, doc.column_roles ?? {}),
   );
   const [tokens, setTokens] = useState<TokenEntry[]>([]);
+  const [categories, setCategories] = useState<TokenCategory[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -69,13 +72,19 @@ export function DictionaryPanel({
   const syncFromDoc = (column: string | null, dictionary = doc.token_dictionary) => {
     if (!column) {
       setTokens([]);
-      savedSnapshot.current = serializeTokenEntries([]);
+      setCategories([]);
+      savedSnapshot.current = serializeDictionarySnapshot([], []);
       setDirty(false);
       return;
     }
     const loaded = loadSavedTokens(dictionary, column);
+    const loadedCategories = syncCategoriesWithTokens(
+      loadSavedCategories(dictionary),
+      loaded,
+    );
     setTokens(loaded);
-    savedSnapshot.current = serializeTokenEntries(loaded);
+    setCategories(loadedCategories);
+    savedSnapshot.current = serializeDictionarySnapshot(loaded, loadedCategories);
     setDirty(false);
   };
 
@@ -90,6 +99,9 @@ export function DictionaryPanel({
 
     const payload = {
       descriptionColumn,
+      categories: categories.map(({ id, name, order, tokenTexts }) => ({
+        id, name, order, tokenTexts,
+      })),
       tokens: tokens.map(({ text, enabled, suppressedBy }) => ({
         text, enabled, suppressedBy,
       })),
@@ -124,7 +136,7 @@ export function DictionaryPanel({
     }
 
     onDocUpdated(fresh as KbDocument);
-    savedSnapshot.current = serializeTokenEntries(tokens);
+    savedSnapshot.current = serializeDictionarySnapshot(tokens, categories);
     setDirty(false);
     setSaveStatus('saved');
     setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
@@ -145,10 +157,21 @@ export function DictionaryPanel({
     setSaveStatus('idle');
   };
 
-  const handleTokensChange = (next: TokenEntry[]) => {
-    setTokens(next);
-    setDirty(serializeTokenEntries(next) !== savedSnapshot.current);
+  const markDirty = (nextTokens: TokenEntry[], nextCategories: TokenCategory[]) => {
+    setDirty(serializeDictionarySnapshot(nextTokens, nextCategories) !== savedSnapshot.current);
     setSaveStatus('idle');
+  };
+
+  const handleTokensChange = (next: TokenEntry[]) => {
+    const syncedCategories = syncCategoriesWithTokens(categories, next);
+    setTokens(next);
+    setCategories(syncedCategories);
+    markDirty(next, syncedCategories);
+  };
+
+  const handleCategoriesChange = (next: TokenCategory[]) => {
+    setCategories(next);
+    markDirty(tokens, next);
   };
 
   const activeCount = getActiveTokens(tokens).length;
@@ -156,7 +179,7 @@ export function DictionaryPanel({
 
   const getDictionary = (): TokenDictionary | null => {
     if (!descriptionColumn) return null;
-    return { descriptionColumn, tokens };
+    return { descriptionColumn, tokens, categories };
   };
 
   useEffect(() => {
@@ -171,14 +194,14 @@ export function DictionaryPanel({
       getDescriptions: () => descriptions,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirty, saveStatus, activeCount, descriptionColumn, tokens, descriptions, onStateChange]);
+  }, [dirty, saveStatus, activeCount, descriptionColumn, tokens, categories, descriptions, onStateChange]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex-shrink-0 px-4 py-3 border-b border-[#1a3a2a] bg-[#070d09] space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <BookOpen className="w-4 h-4 text-amber-400/70" />
-          <span className="font-mono text-sm font-semibold text-emerald-300">Tokenizzazione</span>
+          <span className="font-mono text-sm font-semibold text-emerald-300">Ontologia</span>
           {dirty && (
             <span className="font-mono text-[10px] text-amber-400/90 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10">
               modifiche non salvate
@@ -196,7 +219,7 @@ export function DictionaryPanel({
           )}
         </div>
         <p className="font-mono text-[11px] text-emerald-400/50 leading-relaxed">
-          Definisci i token e verifica la segmentazione. Salva dal pulsante in alto, poi passa a Messaggi agente.
+          Definisci i token e verifica la segmentazione. Salva dal pulsante in alto, poi passa ad Agente Virtuale.
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           <label className="font-mono text-[10px] text-emerald-400/50 uppercase tracking-wider">
@@ -214,7 +237,7 @@ export function DictionaryPanel({
           </select>
           {descriptionColumn && (
             <span className="font-mono text-[10px] text-emerald-400/40">
-              {rowCount} righe · {tokens.length} token · {activeCount} attivi
+              {rowCount} righe · {tokens.length} token · {categories.length} cat. · {activeCount} attivi
             </span>
           )}
         </div>
@@ -236,7 +259,9 @@ export function DictionaryPanel({
           <CorpusTokenEditor
             descriptions={descriptions}
             tokens={tokens}
-            onChange={handleTokensChange}
+            categories={categories}
+            onTokensChange={handleTokensChange}
+            onCategoriesChange={handleCategoriesChange}
           />
         </div>
       )}

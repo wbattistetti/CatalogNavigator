@@ -1,4 +1,6 @@
 import type { AnalysisRow } from '../hooks/useAnalysis';
+import { matchBestItemPath } from './grammarMatch';
+import { resolveNavigationTarget } from './nluQuestionRules';
 
 export interface TestMessage {
   id: string;
@@ -19,30 +21,6 @@ export interface AgentTestConfig {
   confirmation_preamble: string | null;
 }
 
-function pythonToJsRegex(pattern: string): string {
-  return pattern
-    .replace(/\(\?P</g, '(?<')
-    .replace(/\(\?P\\([A-Za-z_])/g, '(?<$1')
-    .replace(/\\\\([wWdDsSpPhHvVbBnNrRtT])/g, '\\$1');
-}
-
-function applyGrammar(input: string, row: AnalysisRow): string | null {
-  if (!row.grammar) return null;
-  try {
-    const re = new RegExp(pythonToJsRegex(row.grammar.regex), 'i');
-    const match = re.exec(input);
-    if (match?.groups) {
-      const matched = Object.entries(match.groups).find(([, v]) => v !== undefined);
-      if (matched) {
-        return row.grammar.mappings[matched[0]] ?? null;
-      }
-    }
-  } catch {
-    // invalid regex
-  }
-  return null;
-}
-
 /** Builds the final confirmation message when a leaf is selected. */
 export function formatLeafConfirmation(
   targetPath: string,
@@ -57,14 +35,21 @@ export function formatLeafConfirmation(
   return `Selezionato: ${targetPath}`;
 }
 
-export function initTest(rows: AnalysisRow[], config?: AgentTestConfig): TestState {
-  const roots = rows.filter((r) => !r.slot_filling.includes('.'));
-  const startRow = roots.length === 1 ? roots[0] : rows.find((r) => r.question !== null);
-  const startText = config?.start_question?.trim() || startRow?.question?.trim();
+function getOpeningText(_rows: AnalysisRow[], config?: AgentTestConfig): string | null {
+  if (config?.start_question?.trim()) return config.start_question.trim();
+  return null;
+}
 
-  if (!startText) {
+export function initTest(rows: AnalysisRow[], config?: AgentTestConfig): TestState {
+  const openingText = getOpeningText(rows, config);
+
+  if (!openingText) {
     return {
-      messages: [{ id: '0', role: 'agent', text: 'Nessuna domanda di avvio trovata.' }],
+      messages: [{
+        id: '0',
+        role: 'agent',
+        text: 'Imposta la Domanda di start (apertura generale) nella barra in alto, poi salva.',
+      }],
       currentPath: null,
       noMatchCount: 0,
       selectedPath: null,
@@ -72,11 +57,43 @@ export function initTest(rows: AnalysisRow[], config?: AgentTestConfig): TestSta
   }
 
   return {
-    messages: [{ id: '0', role: 'agent', text: startText }],
-    currentPath: startRow?.slot_filling ?? roots[0]?.slot_filling ?? null,
+    messages: [{ id: '0', role: 'agent', text: openingText }],
+    currentPath: null,
     noMatchCount: 0,
     selectedPath: null,
   };
+}
+
+function noMatchReply(
+  rows: AnalysisRow[],
+  state: TestState,
+  config?: AgentTestConfig,
+): string {
+  const idx = state.noMatchCount;
+  const contextual = state.currentPath
+    ? rows.find((r) => r.slot_filling === state.currentPath)
+    : null;
+
+  if (contextual) {
+    const nm =
+      idx === 0 ? contextual.no_match_1
+      : idx === 1 ? contextual.no_match_2
+      : contextual.no_match_3;
+    if (nm?.trim()) return nm;
+    if (contextual.question?.trim()) return contextual.question;
+  }
+
+  return config?.start_question?.trim() || 'Non ho capito. Può ripetere?';
+}
+
+/** Joins all user utterances in the session for multi-turn grammar scoring. */
+export function buildCumulativeUserText(state: TestState, currentInput: string): string {
+  const prior = state.messages
+    .filter((m) => m.role === 'user')
+    .map((m) => m.text.trim())
+    .filter(Boolean);
+  const parts = [...prior, currentInput.trim()].filter(Boolean);
+  return parts.join(' ');
 }
 
 export function processInput(
@@ -87,25 +104,20 @@ export function processInput(
 ): TestState {
   if (state.selectedPath !== null) return state;
 
-  const currentRow = rows.find((r) => r.slot_filling === state.currentPath);
-  if (!currentRow) return state;
-
   const uid = String(Date.now() + Math.random());
   const userMsg: TestMessage = { id: uid + '-u', role: 'user', text: input.trim() };
 
-  const targetPath = applyGrammar(input, currentRow);
+  const cumulativeText = buildCumulativeUserText(state, input.trim());
+  const grammarResult = matchBestItemPath(cumulativeText, rows, {
+    anchorPath: state.currentPath,
+  });
 
-  if (!targetPath) {
-    const idx = state.noMatchCount;
-    const nm =
-      idx === 0 ? currentRow.no_match_1
-      : idx === 1 ? currentRow.no_match_2
-      : currentRow.no_match_3;
-    const agentMsg: TestMessage = {
-      id: uid + '-a',
-      role: 'agent',
-      text: nm ?? currentRow.question ?? 'Non ho capito. Può ripetere?',
-    };
+  if (!grammarResult.targetPath) {
+    let fallback = noMatchReply(rows, state, config);
+    if (grammarResult.regexError) {
+      fallback = 'Errore configurazione grammatica: regex non valida su uno o più nodi.';
+    }
+    const agentMsg: TestMessage = { id: uid + '-a', role: 'agent', text: fallback };
     return {
       ...state,
       messages: [...state.messages, userMsg, agentMsg],
@@ -113,33 +125,33 @@ export function processInput(
     };
   }
 
-  const targetRow = rows.find((r) => r.slot_filling === targetPath);
+  const resolved = resolveNavigationTarget(grammarResult.targetPath, rows);
 
-  if (!targetRow || !targetRow.question) {
+  if (resolved.isLeaf) {
     const resultMsg: TestMessage = {
       id: uid + '-r',
       role: 'agent',
-      text: formatLeafConfirmation(
-        targetPath,
-        targetRow ?? { slot_filling: targetPath, question: null, grammar: null, no_match_1: null, no_match_2: null, no_match_3: null, confirmation_text: null },
-        config?.confirmation_preamble ?? null,
-      ),
+      text: formatLeafConfirmation(resolved.path, resolved.row, config?.confirmation_preamble ?? null),
       isResult: true,
     };
     return {
       ...state,
       messages: [...state.messages, userMsg, resultMsg],
-      currentPath: targetPath,
+      currentPath: resolved.path,
       noMatchCount: 0,
-      selectedPath: targetPath,
+      selectedPath: resolved.path,
     };
   }
 
-  const agentMsg: TestMessage = { id: uid + '-a', role: 'agent', text: targetRow.question };
+  const nextQuestion = resolved.row.question?.trim();
+  const agentText = nextQuestion
+    || `Ho individuato: ${resolved.path.replace(/\./g, ' ')}. Può essere più specifico?`;
+
+  const agentMsg: TestMessage = { id: uid + '-a', role: 'agent', text: agentText };
   return {
     ...state,
     messages: [...state.messages, userMsg, agentMsg],
-    currentPath: targetPath,
+    currentPath: resolved.path,
     noMatchCount: 0,
   };
 }

@@ -6,7 +6,7 @@ import {
 } from '../lib/tokenDictionary';
 import {
   FileText, FileSpreadsheet, File, Image, FileCode, FileJson, BookOpen, Sparkles, Loader2,
-  Bot, Save, RotateCcw, Wand2, FlaskConical, X,
+  Bot, Save, RotateCcw, Wand2, FlaskConical, X, MessageSquare, Braces, Filter,
 } from 'lucide-react';
 import type { KbDocument, KbFileFormat } from '../lib/supabase';
 import { formatLabel, formatColor, supportsDictionaryFormat } from '../lib/fileFormat';
@@ -42,6 +42,10 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
   const [dictState, setDictState] = useState<DictionaryPanelState | null>(null);
   const [affinaOpen, setAffinaOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [grammarModalOpen, setGrammarModalOpen] = useState(false);
+  const [grammarOverwrite, setGrammarOverwrite] = useState(false);
+  const [showOnlyMessageNodes, setShowOnlyMessageNodes] = useState(false);
 
   const dictionaryMode = supportsDictionaryFormat(doc.format);
   const content = useDocumentContent(doc, fileUrl);
@@ -49,9 +53,10 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
   const analysisApi = useAnalysis(doc.id);
   const {
     generating, generatingPhase, agentGenProgress, error, analysis, load,
-    generateFullAgentFromDictionary, generateFullAgentFromText, saveAnalysis, discardAnalysisChanges,
-    cancelGeneration,
-    saving, analysisDirty, agentReady,
+    generateMessagesFromDictionary, generateMessagesFromText, generateGrammars, generateGrammarsWithAi,
+    saveAnalysis, discardAnalysisChanges, cancelGeneration,
+    saving, analysisDirty, messagesReady, hasMessages, agentReady, hasTaxonomy, canGenerateGrammars,
+    missingGrammarCount, grammarsReady,
   } = analysisApi;
   const didAutoTokenTab = useRef(false);
 
@@ -61,6 +66,8 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
     setDictState(null);
     setAffinaOpen(false);
     setTestOpen(false);
+    setSelectedSlot(null);
+    setGrammarModalOpen(false);
   }, [doc.id]);
 
   useEffect(() => {
@@ -78,7 +85,7 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
     setDictState(state);
   }, []);
 
-  const handleGenerateFullAgent = async () => {
+  const handleGenerateMessages = async () => {
     setTab('agent');
     const contextText = documentText ?? '';
     if (dictionaryMode) {
@@ -86,29 +93,48 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
       const descriptions = dictState?.getDescriptions() ?? [];
       if (!dict || dictState!.activeTokenCount === 0) return;
       try {
-        await generateFullAgentFromDictionary(dict, descriptions, doc.name, contextText);
+        await generateMessagesFromDictionary(dict, descriptions, doc.name, contextText);
       } catch {
         return;
       }
     } else if (documentText) {
       try {
-        await generateFullAgentFromText(documentText, doc.name);
+        await generateMessagesFromText(documentText, doc.name);
       } catch {
         return;
       }
     }
   };
 
-  const canGenerateAgent = dictionaryMode
+  const handleGenerateGrammars = async () => {
+    setTab('agent');
+    if (!hasTaxonomy) return;
+    const overwrite = grammarOverwrite;
+    try {
+      await generateGrammars(documentText ?? '', doc.name, overwrite);
+      if (overwrite) setGrammarOverwrite(false);
+    } catch {
+      return;
+    }
+  };
+
+  /** Con ↻ attivo: sempre abilitato (sovrascrive tutto). Altrimenti solo se mancano/invalide. */
+  const canRunGrammarGeneration = hasTaxonomy && !generating
+    && (grammarOverwrite || missingGrammarCount > 0);
+
+  const canGenerateMessages = dictionaryMode
     ? (dictState?.activeTokenCount ?? 0) > 0 && !generating
     : !!documentText && !generating;
+
+  const selectedRow = analysis?.rows.find((r) => r.slot_filling === selectedSlot) ?? null;
+  const canShowGrammar = !!selectedRow?.grammar?.regex;
 
   const leafDescriptionMap = useMemo(() => {
     if (!content.tabular) return null;
     const dict = dictState?.getDictionary();
     const descriptions = dictState?.getDescriptions() ?? [];
     if (dict && descriptions.length > 0) {
-      const { rows } = segmentAllDescriptions(descriptions, dict.tokens);
+      const { rows } = segmentAllDescriptions(descriptions, dict.tokens, dict.categories ?? []);
       return buildLeafDescriptionMap(rows);
     }
     const saved = doc.token_dictionary;
@@ -122,22 +148,22 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
       .filter(Boolean);
     const tokens = loadSavedTokens(saved, descCol);
     if (tokens.length === 0 || corpus.length === 0) return null;
-    const { rows } = segmentAllDescriptions(corpus, tokens);
+    const { rows } = segmentAllDescriptions(corpus, tokens, saved?.categories ?? []);
     return buildLeafDescriptionMap(rows);
   }, [content.tabular, dictState, doc.token_dictionary, doc.column_roles]);
 
   const visibleTabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'document', label: 'Documento originale', icon: <FileText className="w-3.5 h-3.5" /> },
     ...(dictionaryMode
-      ? [{ id: 'tokenization' as TabId, label: 'Tokenizzazione', icon: <BookOpen className="w-3.5 h-3.5" /> }]
+      ? [{ id: 'tokenization' as TabId, label: 'Ontologia', icon: <BookOpen className="w-3.5 h-3.5" /> }]
       : []),
-    { id: 'agent', label: 'Messaggi agente', icon: <Sparkles className="w-3.5 h-3.5" /> },
+    { id: 'agent', label: 'Agente Virtuale', icon: <Sparkles className="w-3.5 h-3.5" /> },
   ];
 
   const tabLabel: Record<TabId, string> = {
     document: 'DOCUMENTO ORIGINALE',
-    tokenization: 'TOKENIZZAZIONE · 3 COLONNE',
-    agent: 'MESSAGGI AGENTE',
+    tokenization: 'ONTOLOGIA · 3 COLONNE',
+    agent: 'AGENTE VIRTUALE',
   };
 
   const renderToolbar = () => {
@@ -174,16 +200,87 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => void handleGenerateFullAgent()}
-              disabled={!canGenerateAgent}
+              onClick={() => void handleGenerateMessages()}
+              disabled={!canGenerateMessages}
               className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
             >
-              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
+              {generating && (generatingPhase === 'taxonomy' || generatingPhase === 'messages')
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <MessageSquare className="w-3.5 h-3.5" />}
               {generating
                 ? generatingPhase === 'taxonomy'
                   ? 'Costruisco albero…'
-                  : 'Genero messaggi…'
-                : 'Genera agente'}
+                  : generatingPhase === 'messages'
+                    ? 'Genero messaggi…'
+                    : 'Genera messaggi'
+                : 'Genera messaggi'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowOnlyMessageNodes((v) => !v)}
+              disabled={!hasTaxonomy}
+              title={showOnlyMessageNodes
+                ? 'Mostra tutti i nodi'
+                : 'Mostra solo nodi con messaggio (domanda)'}
+              className={`flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] rounded border transition-colors disabled:opacity-40 ${
+                showOnlyMessageNodes
+                  ? 'text-amber-300 border-amber-400/40 bg-amber-400/10'
+                  : 'text-emerald-400/50 border-[#1a3a2a] hover:border-emerald-400/30 hover:text-emerald-400/80'
+              }`}
+            >
+              <Filter className="w-3 h-3" />
+              Solo messaggi
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleGenerateGrammars()}
+              disabled={!canRunGrammarGeneration}
+              title={grammarOverwrite
+                ? 'Sovrascrive tutte le grammatiche con template dai path (istantaneo)'
+                : missingGrammarCount > 0
+                  ? `Genera grammatiche mancanti (${missingGrammarCount}) — istantaneo`
+                  : 'Tutte le grammatiche sono valide (attiva ↻ per sovrascrivere tutte)'}
+              className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
+            >
+              {generating && generatingPhase === 'grammars'
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Braces className="w-3.5 h-3.5" />}
+              {grammarOverwrite
+                ? 'Rigenera tutte'
+                : missingGrammarCount > 0
+                  ? `Genera mancanti (${missingGrammarCount})`
+                  : 'Genera grammatiche'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void (async () => {
+                const overwrite = grammarOverwrite;
+                try {
+                  await generateGrammarsWithAi(documentText ?? '', doc.name, overwrite);
+                  if (overwrite) setGrammarOverwrite(false);
+                } catch { /* error in hook */ }
+              })()}
+              disabled={!canRunGrammarGeneration}
+              title="Affina grammatiche con IA (lento, opzionale)"
+              className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] rounded border border-violet-400/30 text-violet-300/80 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
+            >
+              {generating && generatingPhase === 'grammars' ? 'IA…' : 'IA'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setGrammarOverwrite((v) => !v)}
+              disabled={!hasTaxonomy || generating}
+              aria-pressed={grammarOverwrite}
+              title={grammarOverwrite
+                ? 'Sovrascrivi tutte (attivo) — clicca per tornare a solo mancanti'
+                : 'Solo grammatiche mancanti/invalide — clicca per sovrascrivere tutte'}
+              className={`flex items-center justify-center w-7 h-7 rounded border transition-colors disabled:opacity-40 ${
+                grammarOverwrite
+                  ? 'border-amber-400/50 bg-amber-400/15 text-amber-300 ring-1 ring-amber-400/40'
+                  : 'border-[#1a3a2a] text-emerald-400/40 hover:border-emerald-400/30 hover:text-emerald-400/70'
+              }`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
             {generating && (
               <button
@@ -196,6 +293,21 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
               </button>
             )}
           </div>
+          {hasData && (
+            <button
+              type="button"
+              onClick={() => setGrammarModalOpen(true)}
+              disabled={!canShowGrammar}
+              title={selectedSlot
+                ? canShowGrammar
+                  ? `Grammatica di ${selectedSlot.split('.').pop()}`
+                  : 'Il nodo selezionato non ha grammatica'
+                : 'Seleziona un nodo nell\'albero'}
+              className="flex items-center justify-center w-8 h-8 rounded border border-sky-400/30 bg-sky-400/10 text-sky-300/80 hover:bg-sky-400/20 hover:text-sky-200 transition-colors disabled:opacity-30"
+            >
+              <Braces className="w-4 h-4" />
+            </button>
+          )}
           {hasData && (
             <>
               <button
@@ -227,14 +339,19 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
                 <Wand2 className="w-3 h-3" />
                 Affina
               </button>
-              {agentReady && (
+              {hasMessages && (
                 <button
                   type="button"
                   onClick={() => setTestOpen((v) => !v)}
+                  title={agentReady
+                    ? 'Apri chat di test'
+                    : 'Apri chat (genera le grammatiche per il riconoscimento risposte)'}
                   className={`flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] border rounded transition-colors ${
                     testOpen
                       ? 'text-emerald-300 border-emerald-400/50 bg-emerald-400/10'
-                      : 'text-emerald-400/60 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-400/90'
+                      : agentReady
+                        ? 'text-emerald-400/60 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-400/90'
+                        : 'text-amber-400/60 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-400/90'
                   }`}
                 >
                   <FlaskConical className="w-3 h-3" />
@@ -256,7 +373,7 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
           className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-amber-400 rounded hover:bg-amber-300 transition-colors disabled:opacity-40"
         >
           <BookOpen className="w-3 h-3" />
-          Tokenizzazione
+          Ontologia
         </button>
       );
     }
@@ -323,21 +440,39 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
         </span>
       </div>
 
-      {tab === 'agent' && generating && generatingPhase === 'agent' && agentGenProgress && (
+      {tab === 'agent' && generating && (generatingPhase === 'messages' || generatingPhase === 'grammars') && agentGenProgress && (
         <div className="flex-shrink-0 px-4 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
           <div className="flex items-center justify-between gap-2 mb-1.5 font-mono text-[10px] text-emerald-400/70">
             <span>
-              Generazione messaggi —{' '}
-              <span className="text-emerald-300">{agentGenProgress.rootSlot.split('.').pop()}</span>
+              {generatingPhase === 'grammars'
+                ? agentGenProgress.rootSlot === 'completato'
+                  ? 'Grammatiche generate'
+                  : agentGenProgress.rootSlot === 'preparazione'
+                    ? 'Generazione grammatiche (istantaneo)…'
+                    : `Generazione grammatiche — ${agentGenProgress.rootSlot.split('.').pop()}`
+                : 'Generazione messaggi'}{' '}
+              {generatingPhase === 'messages' && (
+                <span className="text-emerald-300">{agentGenProgress.rootSlot.split('.').pop()}</span>
+              )}
             </span>
             <span className="tabular-nums">
-              {agentGenProgress.current}/{agentGenProgress.total} rami
+              {generatingPhase === 'grammars' && agentGenProgress.rootSlot === 'preparazione'
+                ? '…'
+                : `${agentGenProgress.current}/${agentGenProgress.total}`}
+              {generatingPhase === 'messages' ? ' rami' : ' nodi'}
             </span>
           </div>
           <div className="h-1.5 rounded-full bg-[#1a3a2a] overflow-hidden">
             <div
-              className="h-full bg-emerald-400 transition-all duration-300"
-              style={{ width: `${(agentGenProgress.current / agentGenProgress.total) * 100}%` }}
+              className={`h-full transition-all duration-300 ${
+                generatingPhase === 'grammars' ? 'bg-sky-400' : 'bg-emerald-400'
+              }`}
+              style={{
+                width: `${Math.max(
+                  8,
+                  (agentGenProgress.current / Math.max(agentGenProgress.total, 1)) * 100,
+                )}%`,
+              }}
             />
           </div>
         </div>
@@ -380,6 +515,13 @@ export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
             testOpen={testOpen}
             onTestOpenChange={setTestOpen}
             leafDescriptionMap={leafDescriptionMap}
+            selectedSlot={selectedSlot}
+            onSelectedSlotChange={setSelectedSlot}
+            grammarModalOpen={grammarModalOpen}
+            onGrammarModalOpenChange={setGrammarModalOpen}
+            showOnlyMessageNodes={showOnlyMessageNodes}
+            grammarOverwrite={grammarOverwrite}
+            onGrammarOverwriteChange={setGrammarOverwrite}
           />
         </div>
       </div>
