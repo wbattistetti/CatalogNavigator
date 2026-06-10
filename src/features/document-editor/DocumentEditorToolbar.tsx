@@ -66,7 +66,7 @@ export function DocumentEditorToolbar() {
   if (activeTab === EDITOR_TAB_IDS.dictionaries && dictionaryMode) {
     const activeId = dicts.editingDictionaryId;
     const session = activeId ? dicts.getSession(activeId) : null;
-    const canSave = !!session?.dirty && !!activeId;
+    const canSave = !!session?.dirty && !!activeId && dicts.savingDictionaryId !== activeId;
 
     return (
       <div className="flex items-center gap-2">

@@ -3,7 +3,7 @@
  * plus brush drag on unselected rows (paint select) or Alt+drag (paint deselect).
  * Selected rows are left to HTML5 drag — no brush intercept.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
 const BRUSH_THRESHOLD_PX = 4;
 
@@ -14,6 +14,65 @@ interface BrushState {
   originX: number;
   originY: number;
   originId: string;
+  /** Last list index touched — range-fill selects every row between moves. */
+  lastIndex: number | null;
+  /** First flush after plain brush replaces the previous selection. */
+  replaceOnNextFlush: boolean;
+}
+
+/** Resolve the token row under the pointer, scoped to one list container. */
+function rowIdAtClientY(
+  root: HTMLElement,
+  clientX: number,
+  clientY: number,
+  itemSelector: string,
+  validIds: ReadonlySet<string>,
+): string | undefined {
+  for (const el of document.elementsFromPoint(clientX, clientY)) {
+    if (!root.contains(el)) continue;
+    const id = (el.closest(itemSelector) as HTMLElement | null)?.dataset.selectId;
+    if (id && validIds.has(id)) return id;
+  }
+
+  const rows = root.querySelectorAll<HTMLElement>(itemSelector);
+  for (const row of rows) {
+    const id = row.dataset.selectId;
+    if (!id || !validIds.has(id)) continue;
+    const rect = row.getBoundingClientRect();
+    if (
+      clientY >= rect.top
+      && clientY <= rect.bottom
+      && clientX >= rect.left
+      && clientX <= rect.right
+    ) {
+      return id;
+    }
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  if (
+    clientX < rootRect.left
+    || clientX > rootRect.right
+    || clientY < rootRect.top
+    || clientY > rootRect.bottom
+  ) {
+    return undefined;
+  }
+
+  let bestId: string | undefined;
+  let bestDist = Infinity;
+  for (const row of rows) {
+    const id = row.dataset.selectId;
+    if (!id || !validIds.has(id)) continue;
+    const rect = row.getBoundingClientRect();
+    const mid = (rect.top + rect.bottom) / 2;
+    const dist = Math.abs(clientY - mid);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestId = id;
+    }
+  }
+  return bestId;
 }
 
 export interface UseListSelectionResult {
@@ -25,7 +84,7 @@ export interface UseListSelectionResult {
   selectOnly: (id: string) => void;
   toggleItem: (id: string) => void;
   handleRowPointerDown: (e: React.PointerEvent, id: string) => void;
-  handleRowPointerEnter: (id: string) => void;
+  handleListPointerOver: (e: React.PointerEvent) => void;
   isBrushActive: boolean;
   endInteraction: () => void;
 }
@@ -33,15 +92,21 @@ export interface UseListSelectionResult {
 /**
  * @param items Ordered ids for Shift+click range selection.
  * @param itemSelector CSS selector to resolve row id from pointer target (default `[data-select-id]`).
+ * @param listRootRef Scroll container for the list — brush hit-testing stays inside it.
  */
 export function useListSelection(
   items: string[],
   itemSelector = '[data-select-id]',
+  listRootRef?: RefObject<HTMLElement | null>,
 ): UseListSelectionResult {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isBrushActive, setIsBrushActive] = useState(false);
   const anchorRef = useRef<number | null>(null);
   const brushRef = useRef<BrushState | null>(null);
+  const pendingBrushIdsRef = useRef<Set<string>>(new Set());
+  const flushBrushRafRef = useRef<number | null>(null);
+  const pointerMoveRafRef = useRef<number | null>(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
   const selectedRef = useRef(selected);
   const itemsRef = useRef(items);
   selectedRef.current = selected;
@@ -94,22 +159,92 @@ export function useListSelection(
     }
   }, []);
 
-  const applyBrush = useCallback((id: string) => {
+  const flushBrushSelection = useCallback(() => {
+    flushBrushRafRef.current = null;
     const brush = brushRef.current;
-    if (!brush || brush.visited.has(id)) return;
-    brush.visited.add(id);
+    const pending = pendingBrushIdsRef.current;
+    if (!brush || pending.size === 0) return;
+
+    const ids = [...pending];
+    pending.clear();
+    const mode = brush.mode;
+    const replace = brush.replaceOnNextFlush;
+    brush.replaceOnNextFlush = false;
+
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (brush.mode === 'select') next.add(id);
-      else next.delete(id);
+      const next = replace ? new Set<string>() : new Set(prev);
+      for (const id of ids) {
+        if (mode === 'select') next.add(id);
+        else next.delete(id);
+      }
       return next;
     });
   }, []);
 
+  const scheduleBrushFlush = useCallback(() => {
+    if (flushBrushRafRef.current !== null) return;
+    flushBrushRafRef.current = requestAnimationFrame(flushBrushSelection);
+  }, [flushBrushSelection]);
+
+  const applyBrushSpan = useCallback((id: string) => {
+    const brush = brushRef.current;
+    if (!brush) return;
+
+    const list = itemsRef.current;
+    const idx = list.indexOf(id);
+    if (idx < 0) return;
+
+    const lastIdx = brush.lastIndex ?? idx;
+    const lo = Math.min(lastIdx, idx);
+    const hi = Math.max(lastIdx, idx);
+    let changed = false;
+
+    for (let i = lo; i <= hi; i++) {
+      const itemId = list[i];
+      if (!itemId || brush.visited.has(itemId)) continue;
+      brush.visited.add(itemId);
+      pendingBrushIdsRef.current.add(itemId);
+      changed = true;
+    }
+    brush.lastIndex = idx;
+    if (changed) scheduleBrushFlush();
+  }, [scheduleBrushFlush]);
+
+  const cancelBrushRaf = useCallback(() => {
+    if (flushBrushRafRef.current !== null) {
+      cancelAnimationFrame(flushBrushRafRef.current);
+      flushBrushRafRef.current = null;
+    }
+    if (pointerMoveRafRef.current !== null) {
+      cancelAnimationFrame(pointerMoveRafRef.current);
+      pointerMoveRafRef.current = null;
+    }
+    pendingBrushIdsRef.current.clear();
+  }, []);
+
   const endInteraction = useCallback(() => {
+    flushBrushSelection();
+    cancelBrushRaf();
     brushRef.current = null;
     setIsBrushActive(false);
-  }, []);
+  }, [cancelBrushRaf, flushBrushSelection]);
+
+  const resolveRowIdAt = useCallback((clientX: number, clientY: number): string | undefined => {
+    const root = listRootRef?.current;
+    if (!root) return undefined;
+    return rowIdAtClientY(
+      root,
+      clientX,
+      clientY,
+      itemSelector,
+      new Set(itemsRef.current),
+    );
+  }, [itemSelector, listRootRef]);
+
+  const samplePointerTarget = useCallback((clientX: number, clientY: number) => {
+    const rowId = resolveRowIdAt(clientX, clientY);
+    if (rowId) applyBrushSpan(rowId);
+  }, [applyBrushSpan, resolveRowIdAt]);
 
   const handleRowPointerDown = useCallback((e: React.PointerEvent, id: string) => {
     if (e.button !== 0) return;
@@ -128,12 +263,10 @@ export function useListSelection(
 
     const wasSelected = selectedRef.current.has(id);
 
-    // Selected row: leave to HTML5 drag; plain click keeps selection (Explorer).
     if (wasSelected && !e.altKey) {
       return;
     }
 
-    // Brush: unselected → select; Alt+drag on selected → deselect.
     const mode: 'select' | 'deselect' = e.altKey && wasSelected ? 'deselect' : 'select';
 
     brushRef.current = {
@@ -143,11 +276,25 @@ export function useListSelection(
       originX: e.clientX,
       originY: e.clientY,
       originId: id,
+      lastIndex: itemsRef.current.indexOf(id),
+      replaceOnNextFlush: false,
     };
+    lastPointerRef.current = { x: e.clientX, y: e.clientY };
+
+    const captureTarget = listRootRef?.current ?? (e.currentTarget as HTMLElement | null) ?? e.target;
+    if (captureTarget instanceof HTMLElement && 'setPointerCapture' in captureTarget) {
+      try {
+        captureTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore — capture is best-effort */
+      }
+    }
 
     const onMove = (ev: PointerEvent) => {
       const brush = brushRef.current;
       if (!brush) return;
+
+      lastPointerRef.current = { x: ev.clientX, y: ev.clientY };
 
       const dx = ev.clientX - brush.originX;
       const dy = ev.clientY - brush.originY;
@@ -156,18 +303,23 @@ export function useListSelection(
       if (!brush.active && dist >= BRUSH_THRESHOLD_PX) {
         brush.active = true;
         setIsBrushActive(true);
-        applyBrush(brush.originId);
+        if (mode === 'select') {
+          brush.replaceOnNextFlush = true;
+          brush.visited.clear();
+        }
+        applyBrushSpan(brush.originId);
       }
 
-      if (brush.active) {
-        const el = document.elementFromPoint(ev.clientX, ev.clientY);
-        const row = el?.closest(itemSelector) as HTMLElement | null;
-        const rowId = row?.dataset.selectId;
-        if (rowId) applyBrush(rowId);
-      }
+      if (!brush.active || pointerMoveRafRef.current !== null) return;
+      pointerMoveRafRef.current = requestAnimationFrame(() => {
+        pointerMoveRafRef.current = null;
+        const b = brushRef.current;
+        if (!b?.active) return;
+        samplePointerTarget(lastPointerRef.current.x, lastPointerRef.current.y);
+      });
     };
 
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
       const brush = brushRef.current;
       if (brush && !brush.active && mode === 'select' && !wasSelected) {
         selectOnly(id);
@@ -175,16 +327,34 @@ export function useListSelection(
       endInteraction();
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
+      if (captureTarget instanceof HTMLElement && 'releasePointerCapture' in captureTarget) {
+        try {
+          if (captureTarget.hasPointerCapture(ev.pointerId)) {
+            captureTarget.releasePointerCapture(ev.pointerId);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
     };
 
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
-  }, [applyBrush, endInteraction, itemSelector, selectOnly, selectRange, toggleItem]);
+  }, [
+    applyBrushSpan,
+    endInteraction,
+    listRootRef,
+    samplePointerTarget,
+    selectOnly,
+    selectRange,
+    toggleItem,
+  ]);
 
-  const handleRowPointerEnter = useCallback((id: string) => {
-    const brush = brushRef.current;
-    if (brush?.active) applyBrush(id);
-  }, [applyBrush]);
+  const handleListPointerOver = useCallback((e: React.PointerEvent) => {
+    if (!brushRef.current?.active) return;
+    const rowId = resolveRowIdAt(e.clientX, e.clientY);
+    if (rowId) applyBrushSpan(rowId);
+  }, [applyBrushSpan, resolveRowIdAt]);
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
@@ -199,7 +369,7 @@ export function useListSelection(
     selectOnly,
     toggleItem,
     handleRowPointerDown,
-    handleRowPointerEnter,
+    handleListPointerOver,
     isBrushActive,
     endInteraction,
   };

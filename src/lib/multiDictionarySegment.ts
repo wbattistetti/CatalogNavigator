@@ -1,5 +1,5 @@
 /**
- * Multi-dictionary segmentation: greedy longest-match with dictionary provenance.
+ * Multi-dictionary segmentation: all matches after containment shadow (partial overlaps kept).
  */
 import type { TokenCategory } from './dictionaryTree';
 import {
@@ -8,9 +8,12 @@ import {
   type SegmentMatch,
 } from './dictionaryTree';
 import type { DictionaryScope, KbDictionary } from './dictionaryLibrary';
+import { collectWordSpanMatchesAfterShadow, type WordSpanMatch } from './phraseMatchEngine';
 import {
+  applySuppressionCascade,
   getActiveMatchPhrases,
   normalizeDescriptionText,
+  segmentWordsWithPositions,
   tokenizeToWords,
   type MatchPhrase,
   type TokenEntry,
@@ -44,6 +47,12 @@ interface TaggedPhrase extends MatchPhrase {
   categories: TokenCategory[];
 }
 
+type ScoredTaggedSpan = WordSpanMatch & {
+  score: number;
+  dictionaryId: string;
+  priority: number;
+};
+
 function wordsMatch(tokenWords: string[], start: number, phrase: string): boolean {
   const parts = tokenizeToWords(phrase);
   if (parts.length === 0 || start + parts.length > tokenWords.length) return false;
@@ -54,32 +63,38 @@ function segmentWordsMulti(
   words: string[],
   phrases: TaggedPhrase[],
 ): { matches: TaggedMatch[]; unmatched: string[] } {
-  const matches: TaggedMatch[] = [];
-  const unmatched: string[] = [];
-  let i = 0;
-
-  while (i < words.length) {
-    let matched: TaggedPhrase | null = null;
-    for (const rule of phrases) {
-      if (wordsMatch(words, i, rule.phrase)) {
-        matched = rule;
-        break;
-      }
-    }
-    if (matched) {
-      matches.push({
-        text: matched.canonical,
-        wordStartIndex: i,
-        dictionaryId: matched.dictionaryId,
-        priority: matched.priority,
+  const candidates: ScoredTaggedSpan[] = [];
+  for (const rule of phrases) {
+    const partCount = tokenizeToWords(rule.phrase).length;
+    if (partCount === 0) continue;
+    for (let i = 0; i <= words.length - partCount; i++) {
+      if (!wordsMatch(words, i, rule.phrase)) continue;
+      candidates.push({
+        wordStart: i,
+        wordEnd: i + partCount,
+        phrase: rule.phrase,
+        canonical: rule.canonical,
+        isAlias: rule.phrase !== rule.canonical,
+        dictionaryId: rule.dictionaryId,
+        priority: rule.priority,
+        score: rule.priority * 1_000_000 + partCount * 1000 + rule.phrase.length,
       });
-      i += tokenizeToWords(matched.phrase).length;
-    } else {
-      unmatched.push(words[i]!);
-      i += 1;
     }
   }
 
+  const selected = collectWordSpanMatchesAfterShadow(candidates);
+  const matchedWordIndices = new Set<number>();
+  for (const m of selected) {
+    for (let w = m.wordStart; w < m.wordEnd; w++) matchedWordIndices.add(w);
+  }
+
+  const matches: TaggedMatch[] = selected.map((m) => ({
+    text: m.canonical,
+    wordStartIndex: m.wordStart,
+    dictionaryId: m.dictionaryId,
+    priority: m.priority,
+  }));
+  const unmatched = words.filter((_, i) => !matchedWordIndices.has(i));
   return { matches, unmatched };
 }
 
@@ -162,6 +177,69 @@ export function mergeLoadedTokens(loaded: LoadedDictionaryRef[]): TokenEntry[] {
   return [...byText.values()];
 }
 
+/**
+ * Overlays unsaved edit-session tokens onto loaded refs so corpus chips match the live editor.
+ */
+export function mergeLiveEditingIntoLoadedRefs(
+  loadedRefs: LoadedDictionaryRef[],
+  editingDictionaryId: string | null | undefined,
+  editingTokens: TokenEntry[],
+  editingCategories: TokenCategory[],
+): LoadedDictionaryRef[] {
+  if (!editingDictionaryId) return loadedRefs;
+
+  const liveTokens = applySuppressionCascade(editingTokens);
+  let found = false;
+  const next = loadedRefs.map((ref) => {
+    if (ref.dictionary.id !== editingDictionaryId) return ref;
+    found = true;
+    return {
+      ...ref,
+      dictionary: {
+        ...ref.dictionary,
+        tokens: liveTokens,
+        categories: editingCategories,
+      },
+    };
+  });
+
+  if (!found && liveTokens.length > 0) {
+    const meta = loadedRefs[0]?.dictionary;
+    next.push({
+      priority: 0,
+      dictionary: {
+        id: editingDictionaryId,
+        name: meta?.name ?? 'Project',
+        industry: meta?.industry ?? 'general',
+        industry_custom: meta?.industry_custom ?? null,
+        description: meta?.description ?? null,
+        scope: 'project',
+        project_id: meta?.project_id ?? null,
+        icon_key: meta?.icon_key ?? 'folder',
+        icon_color: meta?.icon_color ?? '#34d399',
+        categories: editingCategories,
+        tokens: liveTokens,
+        created_at: meta?.created_at ?? new Date().toISOString(),
+        updated_at: meta?.updated_at ?? new Date().toISOString(),
+      },
+    });
+  }
+
+  return next;
+}
+
+/** Active tokens for corpus description chips (live edits + saved loaded dicts). */
+export function corpusHighlightTokens(
+  loadedRefs: LoadedDictionaryRef[],
+  editingDictionaryId: string | null | undefined,
+  editingTokens: TokenEntry[],
+  editingCategories: TokenCategory[],
+): TokenEntry[] {
+  return mergeLoadedTokens(
+    mergeLiveEditingIntoLoadedRefs(loadedRefs, editingDictionaryId, editingTokens, editingCategories),
+  );
+}
+
 /** Merges categories from loaded dictionaries (kept separate per dict in editor; flat for legacy helpers). */
 export function mergeLoadedCategories(loaded: LoadedDictionaryRef[]): TokenCategory[] {
   const out: TokenCategory[] = [];
@@ -216,23 +294,7 @@ export function segmentDescriptionSingleDict(
   if (!normalized) return [];
   const phrases = getActiveMatchPhrases(tokens);
   const words = tokenizeToWords(normalized);
-  const matches: SegmentMatch[] = [];
-  let i = 0;
-  while (i < words.length) {
-    let matched: MatchPhrase | null = null;
-    for (const rule of phrases) {
-      if (wordsMatch(words, i, rule.phrase)) {
-        matched = rule;
-        break;
-      }
-    }
-    if (matched) {
-      matches.push({ text: matched.canonical, wordStartIndex: i });
-      i += tokenizeToWords(matched.phrase).length;
-    } else {
-      i += 1;
-    }
-  }
+  const { matches } = segmentWordsWithPositions(words, phrases);
   const ordered = orderSegmentsByCategories(matches, categories);
   return ordered.map((text) => ({ text, dictionaryId: '' }));
 }

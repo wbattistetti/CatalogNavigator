@@ -30,6 +30,7 @@ export type DictionaryAfterSaveHandler = (
 export interface DictionaryPanelState {
   dirty: boolean;
   canSave: boolean;
+  saving?: boolean;
   activeTokenCount: number;
   descriptionColumn: string | null;
   save: () => Promise<void>;
@@ -52,7 +53,7 @@ interface DictionaryPanelProps {
   error: string | null;
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type SaveStatus = 'idle' | 'saved' | 'error';
 
 export function DictionaryPanel({
   doc,
@@ -66,6 +67,7 @@ export function DictionaryPanel({
   error,
 }: DictionaryPanelProps) {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const descriptions = useMemo(() => {
@@ -117,8 +119,8 @@ export function DictionaryPanel({
   }, [doc.column_roles, doc.id, tabular.headers, onDocUpdated]);
 
   const handleSave = useCallback(async () => {
-    if (!descriptionColumn) return;
-    setSaveStatus('saving');
+    if (!descriptionColumn || saving) return;
+    setSaving(true);
     setLocalError(null);
 
     try {
@@ -135,8 +137,10 @@ export function DictionaryPanel({
     } catch (err) {
       setSaveStatus('error');
       setLocalError(err instanceof Error ? err.message : 'Salvataggio fallito');
+    } finally {
+      setSaving(false);
     }
-  }, [descriptionColumn, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave]);
+  }, [descriptionColumn, saving, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave]);
 
   const handleDiscard = useCallback(() => {
     dicts.discardEditingDictionary();
@@ -157,7 +161,8 @@ export function DictionaryPanel({
   useEffect(() => {
     onStateChange({
       dirty: dicts.dirty,
-      canSave: dicts.canSave && saveStatus !== 'saving',
+      canSave: dicts.canSave && !saving,
+      saving,
       activeTokenCount: activeCount,
       descriptionColumn,
       save: handleSave,
@@ -186,6 +191,7 @@ export function DictionaryPanel({
     getMergedDictionary,
     dicts,
     saveStatus,
+    saving,
   ]);
 
   return (
@@ -212,11 +218,6 @@ export function DictionaryPanel({
           {saveStatus === 'saved' && (
             <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-400">
               <Check className="w-3 h-3" /> salvato
-            </span>
-          )}
-          {saveStatus === 'saving' && (
-            <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-400/60">
-              <Loader2 className="w-3 h-3 animate-spin" /> salvataggio…
             </span>
           )}
           {descriptionColumn ? (
@@ -270,6 +271,7 @@ export function DictionaryPanel({
             tokens={editingTokens}
             categories={editingCategories}
             loadedRefs={dicts.loadedRefs}
+            editingDictionaryId={dicts.editingDictionaryId}
             onTokensChange={handleTokensChange}
             onCategoriesChange={handleCategoriesChange}
           />

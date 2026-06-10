@@ -56,6 +56,7 @@ export interface UseProjectDictionariesResult {
   }) => Promise<KbDictionary>;
   saveEditingDictionary: () => Promise<KbDictionary>;
   saveDictionary: (dictionaryId: string) => Promise<KbDictionary>;
+  savingDictionaryId: string | null;
   discardEditingDictionary: () => void;
   discardDictionary: (dictionaryId: string) => void;
   setEditingTokens: ReturnType<typeof useDictionaryEditSessions>['setEditingTokens'];
@@ -77,6 +78,7 @@ export function useProjectDictionaries(
   const [available, setAvailable] = useState<KbDictionary[]>([]);
   const [projectDicts, setProjectDicts] = useState<KbDictionary[]>([]);
   const [linkedLibrary, setLinkedLibrary] = useState<Array<{ dictionary: KbDictionary; sortOrder: number }>>([]);
+  const [savingDictionaryId, setSavingDictionaryId] = useState<string | null>(null);
 
   const allLoadedDictionaries = useMemo(
     () => [...projectDicts, ...linkedLibrary.map((l) => l.dictionary)],
@@ -146,17 +148,42 @@ export function useProjectDictionaries(
     void reload();
   }, [localDoc.id, descriptionColumn]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Updates in-memory dictionary lists after save without a full reload. */
+  const applySavedDictionaryToState = useCallback((saved: KbDictionary) => {
+    setProjectDicts((prev) => {
+      const idx = prev.findIndex((d) => d.id === saved.id);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      next[idx] = saved;
+      return next;
+    });
+    setLinkedLibrary((prev) => {
+      let changed = false;
+      const next = prev.map((entry) => {
+        if (entry.dictionary.id !== saved.id) return entry;
+        changed = true;
+        return { ...entry, dictionary: saved };
+      });
+      return changed ? next : prev;
+    });
+    editSessions.markSessionSaved(saved);
+  }, [editSessions.markSessionSaved]);
+
   const saveDictionary = useCallback(async (dictionaryId: string) => {
     const session = editSessions.getSession(dictionaryId);
     if (!session) throw new Error('Nessuna sessione per questo dizionario');
-    const saved = await updateDictionary(dictionaryId, {
-      tokens: session.tokens,
-      categories: session.categories,
-    });
-    await reload();
-    editSessions.markSessionSaved(saved);
-    return saved;
-  }, [editSessions.getSession, editSessions.markSessionSaved, reload]);
+    setSavingDictionaryId(dictionaryId);
+    try {
+      const saved = await updateDictionary(dictionaryId, {
+        tokens: session.tokens,
+        categories: session.categories,
+      });
+      applySavedDictionaryToState(saved);
+      return saved;
+    } finally {
+      setSavingDictionaryId((current) => (current === dictionaryId ? null : current));
+    }
+  }, [editSessions.getSession, applySavedDictionaryToState]);
 
   const saveEditingDictionary = useCallback(async () => {
     if (!editSessions.activeDictionaryId) throw new Error('Nessun dizionario in modifica');
@@ -225,6 +252,7 @@ export function useProjectDictionaries(
     createNewDictionary,
     saveEditingDictionary,
     saveDictionary,
+    savingDictionaryId,
     discardEditingDictionary: editSessions.discardEditingDictionary,
     discardDictionary: editSessions.discardDictionary,
     setEditingTokens: editSessions.setEditingTokens,

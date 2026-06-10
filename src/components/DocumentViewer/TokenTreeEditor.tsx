@@ -2,7 +2,7 @@
  * Two-panel dictionary editor: categories (left) and tokens (right).
  * Supports brush + file-manager selection, token DnD to categories, category reorder DnD.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Folder, Circle, Trash2, FolderPlus, Braces, Plus, GripVertical,
 } from 'lucide-react';
@@ -45,6 +45,9 @@ export interface TokenTreeEditorProps {
   onGrammarEditTokenChange?: (text: string | null) => void;
   /** When false, hides the generic "Dizionario (N) · categorie" title bar. */
   showDictionaryHeader?: boolean;
+  /** After corpus token creation, select and scroll this token in the tree. */
+  focusTokenText?: string | null;
+  onFocusTokenHandled?: () => void;
 }
 
 const TOKEN_DRAG_MIME = 'application/x-dictionary-tokens';
@@ -77,31 +80,29 @@ function TokenRow({
   entry,
   selected,
   dragging,
+  brushActive,
   aliasPickActive,
   grammarEditActive,
   onRemove,
   onPickAsAliasTarget,
   onSelectForGrammar,
-  onPointerDown,
-  onPointerEnter,
   onDragStart,
   onDragEnd,
 }: {
   entry: TokenEntry;
   selected: boolean;
   dragging?: boolean;
+  brushActive?: boolean;
   aliasPickActive?: boolean;
   grammarEditActive?: boolean;
   onRemove: () => void;
   onPickAsAliasTarget?: () => void;
   onSelectForGrammar?: () => void;
-  onPointerDown: (e: React.PointerEvent) => void;
-  onPointerEnter: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
 }) {
   const pickable = Boolean(aliasPickActive && onPickAsAliasTarget);
-  const canDrag = selected && !pickable;
+  const canDrag = selected && !pickable && !brushActive;
 
   return (
     <div
@@ -109,17 +110,15 @@ function TokenRow({
       draggable={canDrag}
       onDragStart={canDrag ? onDragStart : undefined}
       onDragEnd={canDrag ? onDragEnd : undefined}
-      onPointerDown={pickable ? undefined : onPointerDown}
-      onPointerEnter={pickable ? undefined : onPointerEnter}
-      className={`group flex items-center gap-1.5 px-2 py-1 rounded transition-colors select-none ${
+      className={`group flex items-center gap-1.5 px-2 py-1 rounded select-none ${
         pickable
           ? 'cursor-pointer hover:bg-sky-400/15 hover:ring-1 hover:ring-sky-400/40'
           : grammarEditActive
             ? 'bg-sky-400/20 ring-1 ring-sky-400/50 cursor-pointer'
             : selected
               ? dragging
-                ? 'bg-sky-400/30 ring-1 ring-sky-300/70 opacity-90 cursor-grabbing'
-                : 'bg-sky-400/25 ring-1 ring-sky-400/55 cursor-grab'
+                ? 'bg-emerald-400/25 ring-1 ring-emerald-300/60 opacity-90 cursor-grab'
+                : 'bg-emerald-400/18 ring-1 ring-emerald-400/45 cursor-grab'
               : 'hover:bg-[#0f1a12] cursor-default'
       }`}
       onClick={(e) => {
@@ -135,17 +134,12 @@ function TokenRow({
       <Circle className={`w-2 h-2 flex-shrink-0 ${entry.enabled ? 'text-amber-400/80 fill-amber-400/40' : 'text-emerald-400/25'}`} />
       <span
         className={`flex-1 min-w-0 font-mono text-[10px] truncate ${
-          entry.enabled ? 'text-emerald-200/90' : 'text-emerald-400/35'
+          entry.enabled ? 'text-emerald-200/90' : 'text-emerald-400/65'
         }`}
         title={entry.text}
       >
         {entry.text}
       </span>
-      {entry.suppressedBy && (
-        <span className="font-mono text-[8px] text-emerald-400/30 truncate max-w-[4rem]" title={`Soppresso da ${entry.suppressedBy}`}>
-          ↳
-        </span>
-      )}
       {!pickable && (
         <button
           type="button"
@@ -162,6 +156,16 @@ function TokenRow({
     </div>
   );
 }
+
+const MemoTokenRow = memo(TokenRow, (prev, next) =>
+  prev.entry.text === next.entry.text
+  && prev.entry.enabled === next.entry.enabled
+  && prev.selected === next.selected
+  && prev.dragging === next.dragging
+  && prev.brushActive === next.brushActive
+  && prev.aliasPickActive === next.aliasPickActive
+  && prev.grammarEditActive === next.grammarEditActive
+);
 
 function CategoryRow({
   id,
@@ -217,10 +221,9 @@ function CategoryRow({
       )}
       <Folder className={`w-3 h-3 flex-shrink-0 ${isNoCategory ? 'text-emerald-400/50' : 'text-amber-400/70'}`} />
       <span
-        className={`flex-1 min-w-0 font-mono text-[10px] truncate ${
+        className={`font-mono text-[10px] whitespace-nowrap ${
           isNoCategory ? 'text-emerald-300/80 italic' : 'font-semibold text-amber-200/90'
         }`}
-        title={name}
       >
         {name}
       </span>
@@ -258,6 +261,8 @@ export function TokenTreeEditor({
   grammarEditToken = null,
   onGrammarEditTokenChange,
   showDictionaryHeader = true,
+  focusTokenText = null,
+  onFocusTokenHandled,
 }: TokenTreeEditorProps) {
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>(NO_CATEGORY_SENTINEL);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -266,6 +271,7 @@ export function TokenTreeEditor({
   const [categoryDropIndex, setCategoryDropIndex] = useState<number | null>(null);
   const [tokenDragActive, setTokenDragActive] = useState(false);
   const dragGhostRef = useRef<HTMLDivElement>(null);
+  const tokenListRef = useRef<HTMLDivElement>(null);
 
   const sortedCategories = useMemo(
     () => normalizeCategoryOrders(categories),
@@ -288,6 +294,12 @@ export function TokenTreeEditor({
     [activeCategoryKey, tokens, categories],
   );
 
+  /** Only rows actually rendered — keeps brush index range aligned with the list. */
+  const selectableTokenTexts = useMemo(
+    () => visibleTokenTexts.filter((text) => entryByText.has(text)),
+    [visibleTokenTexts, entryByText],
+  );
+
   const {
     selected,
     selectedList,
@@ -295,12 +307,25 @@ export function TokenTreeEditor({
     clearSelection,
     selectAll,
     handleRowPointerDown,
-    handleRowPointerEnter,
+    handleListPointerOver,
+    isBrushActive,
     endInteraction,
-  } = useListSelection(visibleTokenTexts);
+  } = useListSelection(selectableTokenTexts, '[data-select-id]', tokenListRef);
 
-  const allVisibleSelected = visibleTokenTexts.length > 0
-    && visibleTokenTexts.every((text) => selected.has(text));
+  useEffect(() => {
+    if (!focusTokenText) return;
+    if (!entryByText.has(focusTokenText)) return;
+    setSelected(new Set([focusTokenText]));
+    requestAnimationFrame(() => {
+      const escaped = focusTokenText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const el = document.querySelector(`[data-select-id="${escaped}"]`);
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      onFocusTokenHandled?.();
+    });
+  }, [focusTokenText, entryByText, setSelected, onFocusTokenHandled]);
+
+  const allVisibleSelected = selectableTokenTexts.length > 0
+    && selectableTokenTexts.every((text) => selected.has(text));
 
   const handleToggleAllTokens = useCallback(() => {
     if (allVisibleSelected) clearSelection();
@@ -494,6 +519,13 @@ export function TokenTreeEditor({
       : undefined,
   });
 
+  const handleTokenListPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (aliasPickActive) return;
+    const row = (e.target as HTMLElement).closest('[data-select-id]');
+    const id = row?.getAttribute('data-select-id');
+    if (id) handleRowPointerDown(e, id);
+  }, [aliasPickActive, handleRowPointerDown]);
+
   const activeCategoryLabel = activeCategoryKey === NO_CATEGORY_SENTINEL
     ? 'no category'
     : sortedCategories.find((c) => c.id === activeCategoryKey)?.name ?? '—';
@@ -547,8 +579,8 @@ export function TokenTreeEditor({
       )}
 
       <div className="flex-1 min-h-0 flex border-b border-[#1a3a2a]">
-        {/* Categories panel */}
-        <div className="w-[42%] min-w-0 flex flex-col border-r border-[#1a3a2a]">
+        {/* Categories panel — width follows longest category name */}
+        <div className="flex-shrink-0 w-max flex flex-col border-r border-[#1a3a2a]">
           <div className="flex-shrink-0 p-1.5 border-b border-[#1a3a2a] bg-[#0a1510]">
             <div className="flex items-center gap-1">
               <input
@@ -640,19 +672,19 @@ export function TokenTreeEditor({
               />
               <label
                 className={`flex items-center gap-1.5 flex-shrink-0 cursor-pointer select-none ${
-                  visibleTokenTexts.length === 0 ? 'cursor-not-allowed' : ''
+                  selectableTokenTexts.length === 0 ? 'cursor-not-allowed' : ''
                 }`}
               >
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
-                  disabled={visibleTokenTexts.length === 0}
+                  disabled={selectableTokenTexts.length === 0}
                   onChange={handleToggleAllTokens}
                   className="w-3.5 h-3.5 rounded border-[#1a3a2a] bg-[#080e0a] accent-emerald-400 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                   title={allVisibleSelected ? 'Deseleziona tutti i token' : 'Seleziona tutti i token'}
                 />
                 <span className={`font-mono text-[9px] uppercase tracking-wide ${
-                  visibleTokenTexts.length === 0 ? 'text-emerald-400/55' : 'text-emerald-200'
+                  selectableTokenTexts.length === 0 ? 'text-emerald-400/55' : 'text-emerald-200'
                 }`}>
                   tutti
                 </span>
@@ -670,38 +702,41 @@ export function TokenTreeEditor({
           </div>
           <div className="flex-shrink-0 px-2 py-1 flex items-center gap-2 border-b border-[#1a3a2a]/60">
             <span
-              className="font-mono text-[9px] text-amber-300/95 uppercase tracking-wider truncate min-w-0 flex-1"
-              title={activeCategoryLabel}
+              className="font-mono text-[9px] text-amber-300/95 uppercase tracking-wider whitespace-nowrap min-w-0 flex-1"
             >
               {activeCategoryLabel}
             </span>
             {selectedList.length > 0 && (
-              <span className="font-mono text-[9px] text-sky-300/85 flex-shrink-0">
+              <span className="font-mono text-[9px] text-emerald-300/85 flex-shrink-0">
                 {selectedList.length} sel.
               </span>
             )}
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5">
-            {visibleTokenTexts.length === 0 ? (
+          <div
+            ref={tokenListRef}
+            className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5"
+            onPointerDown={handleTokenListPointerDown}
+            onPointerOver={handleListPointerOver}
+          >
+            {selectableTokenTexts.length === 0 ? (
               <p className="font-mono text-[10px] text-emerald-300/90 px-2 py-4 text-center leading-relaxed">
                 Nessun token in questa categoria.
               </p>
             ) : (
-              visibleTokenTexts.map((text) => {
+              selectableTokenTexts.map((text) => {
                 const entry = entryByText.get(text);
                 if (!entry) return null;
                 const isSelected = selected.has(text);
                 return (
-                  <TokenRow
+                  <MemoTokenRow
                     key={text}
                     entry={entry}
                     selected={isSelected}
                     dragging={tokenDragActive && isSelected}
+                    brushActive={isBrushActive}
                     aliasPickActive={aliasPickActive}
                     {...grammarRowProps(text)}
                     onRemove={() => onRemoveCanonical(text)}
-                    onPointerDown={(e) => handleRowPointerDown(e, text)}
-                    onPointerEnter={() => handleRowPointerEnter(text)}
                     onDragStart={(e) => handleTokenDragStart(e, text)}
                     onDragEnd={handleTokenDragEnd}
                     onPickAsAliasTarget={
@@ -715,7 +750,7 @@ export function TokenTreeEditor({
             )}
           </div>
           <div className="flex-shrink-0 px-2 py-0.5 border-t border-[#1a3a2a]/60 font-mono text-[8px] text-emerald-400/75">
-            Click · Ctrl+click · Shift+click · trascina per selezionare · Alt+trascina per deselezionare
+            Click · Ctrl+click · Shift+click · trascina per selezionare (sostituisce) · Alt+trascina per deselezionare
           </div>
         </div>
       </div>
