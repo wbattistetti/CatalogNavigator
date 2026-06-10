@@ -245,8 +245,10 @@ export async function updateDictionary(
     payload.tokens = normalized.tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
       text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
     }));
-    payload.categories = normalized.categories.map(({ id: catId, name, order, tokenTexts }) => ({
-      id: catId, name, order, tokenTexts,
+    payload.categories = normalized.categories.map(({
+      id: catId, name, order, tokenTexts, iconKey, iconColor,
+    }) => ({
+      id: catId, name, order, tokenTexts, iconKey, iconColor,
     }));
   }
 

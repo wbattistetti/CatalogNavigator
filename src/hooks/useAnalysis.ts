@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   chunkArray,
@@ -33,6 +33,12 @@ import {
   mergeTaxonomyWithExistingNlu,
 } from '../lib/nluQuestionRules';
 import { reconcileItemPaths, resolveItemPaths } from '../lib/itemPaths';
+import {
+  buildRowFieldEditUpdate,
+  stampAiMessageSubtree,
+  stampDeterministicMessageLayer,
+  type MessageReviewField,
+} from '../lib/messageReview';
 import { runGenerateConfirmations } from '../lib/runGenerateConfirmations';
 import {
   runGenerateTaxonomy,
@@ -62,55 +68,34 @@ import {
   syncRowGrammarsFromTokens,
 } from '../lib/tokenGrammar';
 import { syncTaxonomyFromLeafPaths, type TaxonomySyncResult } from '../lib/taxonomyPathSync';
+import type {
+  AgentGenProgress,
+  Analysis,
+  AnalysisRow,
+  GeneratingPhase,
+  GrammarEditMode,
+  GrammarEditTarget,
+  GrammarEntry,
+  RowStatus,
+} from '../lib/analysisTypes';
 
-export interface GrammarEntry {
-  regex: string;
-  mappings: Record<string, string>;
-}
+export type {
+  AgentGenProgress,
+  Analysis,
+  AnalysisRow,
+  GeneratingPhase,
+  GrammarEditMode,
+  GrammarEditTarget,
+  GrammarEntry,
+  RowStatus,
+} from '../lib/analysisTypes';
 
-/** Which inline grammar editor is open: node recognition vs question-answer routing. */
-export type GrammarEditMode = 'node' | 'answer';
+import type { MessageReviewField } from '../lib/analysisTypes';
+import { yieldToUi } from '../lib/yieldToUi';
 
-export interface GrammarEditTarget {
-  slot: string;
-  mode: GrammarEditMode;
-}
-
-export type RowStatus = 'approved' | 'rejected' | 'uncertain' | null;
-
-export type GeneratingPhase = 'taxonomy' | 'messages' | 'grammars' | null;
-
-export interface AgentGenProgress {
-  current: number;
-  total: number;
-  rootSlot: string;
-}
-
-export interface AnalysisRow {
-  slot_filling: string;
-  question: string | null;
-  /** Recognition grammar — derived from the token for this path segment (shared across nodes). */
-  grammar: GrammarEntry | null;
-  /** Answer grammar for disambiguation questions — maps to children (and parent-item when needed). */
-  answer_grammar: GrammarEntry | null;
-  no_match_1: string | null;
-  no_match_2: string | null;
-  no_match_3: string | null;
-  confirmation_text: string | null;
-  status?: RowStatus;
-}
-
-export interface Analysis {
-  id: string;
-  document_id: string;
-  rows: AnalysisRow[];
-  /** Corpus item paths (bookable prestations); may be internal nodes, not only tree leaves. */
-  item_paths: string[] | null;
-  start_question: string | null;
-  confirmation_preamble: string | null;
-  created_at: string;
-  updated_at: string;
-}
+const MESSAGE_EDIT_FIELDS: MessageReviewField[] = [
+  'question', 'no_match_1', 'no_match_2', 'no_match_3', 'confirmation_text',
+];
 
 function findDirtyRoot(deletedSlot: string, remainingRows: AnalysisRow[]): string | null {
   const parts = deletedSlot.split('.');
@@ -206,7 +191,8 @@ function draftWithStart(documentId: string, rows: AnalysisRow[], existing?: Anal
 
 export function useAnalysis(documentId: string) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analysisDirty, setAnalysisDirty] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -240,19 +226,38 @@ export function useAnalysis(documentId: string) {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase
-      .from('kb_analyses')
-      .select('*')
-      .eq('document_id', documentId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    setLoading(false);
-    if (err) { setError(err.message); return; }
-    setAnalysis(data ? normalizeLoadedAnalysis(data as Analysis) : null);
-    setAnalysisDirty(false);
-    setDirtyRoots([]);
-    setSyncNotice(null);
+    try {
+      const { data, error: err } = await supabase
+        .from('kb_analyses')
+        .select('*')
+        .eq('document_id', documentId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (err) {
+        setError(err.message);
+        return;
+      }
+      setError(null);
+      const loaded = data ? normalizeLoadedAnalysis(data as Analysis) : null;
+      setAnalysis((prev) => {
+        if (loaded?.rows.length) return loaded;
+        if (prev?.rows.length && prev.document_id === documentId) return prev;
+        return loaded;
+      });
+      setAnalysisDirty(false);
+      setDirtyRoots([]);
+      setSyncNotice(null);
+    } finally {
+      setLoading(false);
+      setInitialLoadDone(true);
+    }
+  }, [documentId]);
+
+  useEffect(() => {
+    setAnalysis(null);
+    setInitialLoadDone(false);
+    setLoading(true);
   }, [documentId]);
 
   const saveAnalysis = useCallback(async () => {
@@ -325,20 +330,29 @@ export function useAnalysis(documentId: string) {
     documentText: string,
     existing: Analysis | null,
     signal?: AbortSignal,
+    options?: { forceAiReview?: boolean },
   ): Promise<AnalysisRow[]> => {
     const allSlots = taxonomyRows.map((r) => r.slot_filling);
     const roots = getAgentGenerationRoots(allSlots);
     if (roots.length === 0) throw new Error('Nessuna radice nell\'albero');
 
     const itemPaths = existing?.item_paths ?? null;
+    setAgentGenProgress({ current: 0, total: roots.length, rootSlot: 'preparazione' });
+    await yieldToUi();
+
     let currentRows = applyDeterministicMessagesLayer(taxonomyRows, itemPaths);
+    await yieldToUi();
     const allSlotsAfterDet = currentRows.map((r) => r.slot_filling);
     currentRows = applyNluQuestionRules(allSlotsAfterDet, currentRows, itemPaths);
+    await yieldToUi();
+    currentRows = stampDeterministicMessageLayer(currentRows, itemPaths);
     setAnalysis(draftWithStart(documentId, currentRows, existing));
     setAnalysisDirty(true);
+    await yieldToUi();
 
     const isComplete = (slot: string, row: AnalysisRow) =>
       isMessagesNodeComplete(allSlots, slot, row, itemPaths);
+    const forceAiReview = options?.forceAiReview ?? false;
 
     for (let i = 0; i < roots.length; i++) {
       throwIfAborted(signal);
@@ -348,7 +362,10 @@ export function useAnalysis(documentId: string) {
       const subtreeSlots = collectSubtreeSlots(currentRows, rootSlot);
       const interactiveSlots = getInteractiveMessageSlots(subtreeSlots, itemPaths);
 
-      if (interactiveSlots.length === 0 || isSubtreeMessagesComplete(currentRows, rootSlot, itemPaths)) {
+      if (
+        interactiveSlots.length === 0
+        || (!forceAiReview && isSubtreeMessagesComplete(currentRows, rootSlot, itemPaths))
+      ) {
         setRegeningRoots([]);
         setAnalysis(draftWithStart(documentId, currentRows, existing));
         continue;
@@ -379,6 +396,7 @@ export function useAnalysis(documentId: string) {
         currentRows,
         itemPaths,
       );
+      currentRows = stampAiMessageSubtree(currentRows, rootSlot, itemPaths);
       setAnalysis(draftWithStart(documentId, currentRows, existing));
     }
 
@@ -534,28 +552,51 @@ export function useAnalysis(documentId: string) {
 
   const clearSyncNotice = useCallback(() => setSyncNotice(null), []);
 
-  const createAgentFromDictionary = useCallback(async (
+  const createAgentFromDictionary = useCallback((
     dictionary: TokenDictionary,
     descriptions: string[],
     _documentName: string,
     _documentText?: string,
   ) => {
-    setGenerating(true);
-    setGeneratingPhase('taxonomy');
-    setError(null);
-    try {
-      const result = syncTaxonomyFromDictionary(dictionary, descriptions);
-      if (!result) {
-        throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      throw e;
-    } finally {
-      setGenerating(false);
-      setGeneratingPhase(null);
+    const { leafPaths } = segmentAllDescriptions(
+      descriptions,
+      dictionary.tokens,
+      dictionary.categories ?? [],
+    );
+    if (leafPaths.length === 0) {
+      const msg = 'Nessuna descrizione segmentata con il dizionario corrente';
+      setError(msg);
+      throw new Error(msg);
     }
-  }, [syncTaxonomyFromDictionary]);
+
+    let outcome: 'existing' | 'mounted' | 'failed' = 'failed';
+    let nextDirtyRoots: string[] = [];
+
+    setAnalysis((current) => {
+      if ((current?.rows.length ?? 0) > 0) {
+        outcome = 'existing';
+        return current;
+      }
+      const result = syncTaxonomyFromLeafPaths(leafPaths, null, null);
+      if (result.rows.length === 0) return current;
+      outcome = 'mounted';
+      nextDirtyRoots = result.dirtyRoots;
+      return draftAnalysis(documentId, result.rows, current, result.item_paths);
+    });
+
+    if (outcome === 'existing' || outcome === 'mounted') {
+      setError(null);
+      if (outcome === 'mounted') {
+        setDirtyRoots(nextDirtyRoots);
+        setAnalysisDirty(true);
+      }
+      return;
+    }
+
+    const msg = 'Impossibile costruire l\'albero dal dizionario';
+    setError(msg);
+    throw new Error(msg);
+  }, [documentId]);
 
   /** Deterministic tree from dictionary, then IA messages. */
   const generateMessagesFromDictionary = useCallback(async (
@@ -635,6 +676,8 @@ export function useAnalysis(documentId: string) {
   const syncGrammarsFromTokens = useCallback((tokens: TokenEntry[]) => {
     if (!analysis) return tokens;
     const newRows = syncRowGrammarsFromTokens(analysis.rows, tokens);
+    const changed = newRows.some((row, index) => row.grammar !== analysis.rows[index]?.grammar);
+    if (!changed) return tokens;
     setAnalysis({ ...analysis, rows: newRows });
     setAnalysisDirty(true);
     return tokens;
@@ -829,6 +872,73 @@ export function useAnalysis(documentId: string) {
     }
   }, [analysis, generateMessagesByRootChunks, beginGenerationAbort, clearGenerationAbort]);
 
+  /** IA messages only — tree must already exist (deterministic mount). */
+  const generateMessagesOnly = useCallback(async (documentName: string, documentText?: string) => {
+    if (!analysis?.rows.length) {
+      throw new Error('Albero non presente — monta prima la tassonomia');
+    }
+    const signal = beginGenerationAbort();
+    setGenerating(true);
+    setGeneratingPhase('messages');
+    setError(null);
+    setAgentGenProgress({ current: 0, total: 1, rootSlot: 'preparazione' });
+    await yieldToUi();
+    try {
+      throwIfAborted(signal);
+      await generateMessagesByRootChunks(
+        analysis.rows,
+        documentName,
+        documentText ?? '',
+        analysis,
+        signal,
+      );
+      setAnalysisDirty(true);
+      setDirtyRoots([]);
+    } catch (e) {
+      if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setRegeningRoots([]);
+      setAgentGenProgress(null);
+      setGenerating(false);
+      setGeneratingPhase(null);
+      clearGenerationAbort();
+    }
+  }, [analysis, generateMessagesByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+
+  /** Re-runs IA message review on every forest root (resets field validation). */
+  const reviewMessagesWithAi = useCallback(async (documentName: string, documentText?: string) => {
+    if (!analysis?.rows.length) {
+      throw new Error('Albero non presente — monta prima la tassonomia');
+    }
+    const signal = beginGenerationAbort();
+    setGenerating(true);
+    setGeneratingPhase('messages');
+    setError(null);
+    try {
+      throwIfAborted(signal);
+      await generateMessagesByRootChunks(
+        analysis.rows,
+        documentName,
+        documentText ?? '',
+        analysis,
+        signal,
+        { forceAiReview: true },
+      );
+      setAnalysisDirty(true);
+      setDirtyRoots([]);
+    } catch (e) {
+      if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setRegeningRoots([]);
+      setAgentGenProgress(null);
+      setGenerating(false);
+      setGeneratingPhase(null);
+      clearGenerationAbort();
+    }
+  }, [analysis, generateMessagesByRootChunks, beginGenerationAbort, clearGenerationAbort]);
+
   const refineTaxonomy = useCallback(async (refinementNotes: string) => {
     if (!analysis) return;
     setGenerating(true);
@@ -850,7 +960,18 @@ export function useAnalysis(documentId: string) {
 
   const updateRow = useCallback(async (rowIndex: number, updates: Partial<AnalysisRow>) => {
     if (!analysis) return;
-    const newRows = analysis.rows.map((r, i) => i === rowIndex ? { ...r, ...updates } : r);
+    const row = analysis.rows[rowIndex];
+    if (!row) return;
+    let working = row;
+    let merged: Partial<AnalysisRow> = { ...updates };
+    for (const field of MESSAGE_EDIT_FIELDS) {
+      if (field in updates) {
+        const patch = buildRowFieldEditUpdate(working, field, (updates[field] ?? null) as string | null);
+        working = { ...working, ...patch };
+        merged = { ...merged, ...patch };
+      }
+    }
+    const newRows = analysis.rows.map((r, i) => i === rowIndex ? { ...r, ...merged } : r);
     if ('question' in updates) {
       const slot = analysis.rows[rowIndex]?.slot_filling;
       if (slot) setDirtyRoots((prev) => prev.includes(slot) ? prev : [...prev, slot]);
@@ -1070,13 +1191,13 @@ export function useAnalysis(documentId: string) {
     : 0;
 
   return {
-    analysis, loading, saving, analysisDirty, generating, generatingPhase, agentGenProgress,
+    analysis, loading, initialLoadDone, saving, analysisDirty, generating, generatingPhase, agentGenProgress,
     generatingConfirmations, error, regenError,
     messagesReady, grammarsReady, hasMessages, agentReady, hasTaxonomy, canGenerateGrammars,
     missingGrammarCount,
     load, saveAnalysis, discardAnalysisChanges, updateAgentConfig, generateConfirmations, cancelGeneration,
     generateTaxonomy, generateMessagesFromText, createAgentFromDictionary,
-    generateMessagesFromDictionary, generateGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
+    generateMessagesFromDictionary, generateMessagesOnly, reviewMessagesWithAi, generateGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
     updateRow, deleteRow, addRow, restructurePath,
     dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree, regenSubtreeFull,
     syncTaxonomyFromDictionary, syncNotice, clearSyncNotice,

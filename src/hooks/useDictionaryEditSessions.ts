@@ -22,7 +22,11 @@ export interface UseDictionaryEditSessionsResult {
   getSession: (dictionaryId: string) => DictionaryEditSession | null;
   getDictionaryMeta: (dictionaryId: string) => KbDictionary | null;
   syncSessionsFromLoaded: (dictionaries: KbDictionary[], preserveDirty: boolean) => void;
-  syncOpenEditorsAfterReload: (validIds: Set<string>, defaultDictionaryId: string | null) => void;
+  syncOpenEditorsAfterReload: (
+    validIds: Set<string>,
+    defaultDictionaryId: string | null,
+    dictionaries?: KbDictionary[],
+  ) => void;
   openDictionaryEditor: (dictionaryId: string) => void;
   closeDictionaryEditor: (dictionaryId: string, options?: { force?: boolean }) => boolean;
   isEditorOpen: (dictionaryId: string) => boolean;
@@ -98,8 +102,10 @@ export function useDictionaryEditSessions(
   const syncOpenEditorsAfterReload = useCallback((
     validIds: Set<string>,
     defaultDictionaryId: string | null,
+    dictionaries?: KbDictionary[],
   ) => {
-    const orderedIds = orderDictionaryIds(allLoadedDictionaries, validIds);
+    const pool = dictionaries ?? allLoadedDictionaries;
+    const orderedIds = orderDictionaryIds(pool, validIds);
     setOpenEditorIds(orderedIds);
     setActiveDictionaryId((prev) => {
       if (prev && validIds.has(prev)) return prev;

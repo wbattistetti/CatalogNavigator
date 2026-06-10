@@ -130,7 +130,7 @@ export function useProjectDictionaries(
 
       const allLoadedIds = new Set(loaded.map((d) => d.id));
       const defaultId = defaultDictionaryEditorId(loaded);
-      editSessions.syncOpenEditorsAfterReload(allLoadedIds, defaultId);
+      editSessions.syncOpenEditorsAfterReload(allLoadedIds, defaultId, loaded);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Errore caricamento dizionari');
     } finally {

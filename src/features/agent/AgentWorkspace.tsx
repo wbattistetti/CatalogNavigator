@@ -8,7 +8,9 @@ export function AgentWorkspace() {
   const {
     doc,
     documentText,
+    dictionaryMode,
     analysisApi,
+    agentDictionaryContext,
     affinaOpen,
     setAffinaOpen,
     testOpen,
@@ -18,12 +20,16 @@ export function AgentWorkspace() {
     setSelectedSlot,
     grammarEditTarget,
     setGrammarEditTarget,
-    showOnlyMessageNodes,
     grammarOverwrite,
     setGrammarOverwrite,
     grammarTokens,
     handleTokenGrammarSaved,
   } = useDocumentEditor();
+
+  const { generateMessagesOnly } = analysisApi;
+
+  const handleGenerateDialogueMessages = () =>
+    generateMessagesOnly(doc.name, documentText ?? '').catch(() => {});
 
   return (
     <AnalysisView
@@ -31,6 +37,9 @@ export function AgentWorkspace() {
       documentText={documentText}
       analysisApi={analysisApi}
       externalToolbar
+      dictionaryMode={dictionaryMode}
+      agentDictionaryContext={agentDictionaryContext}
+      onGenerateDialogueMessages={handleGenerateDialogueMessages}
       affinaOpen={affinaOpen}
       onAffinaOpenChange={setAffinaOpen}
       testOpen={testOpen}
@@ -40,7 +49,6 @@ export function AgentWorkspace() {
       onSelectedSlotChange={setSelectedSlot}
       grammarEditTarget={grammarEditTarget}
       onGrammarEditTargetChange={setGrammarEditTarget}
-      showOnlyMessageNodes={showOnlyMessageNodes}
       grammarOverwrite={grammarOverwrite}
       onGrammarOverwriteChange={setGrammarOverwrite}
       grammarTokens={grammarTokens}

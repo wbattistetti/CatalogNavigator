@@ -2,8 +2,8 @@
  * Single contextual toolbar for the active editor tab.
  */
 import {
-  BookOpen, Braces, Filter, FlaskConical, Loader2, MessageSquare,
-  RotateCcw, Save, Wand2, X,
+  BookOpen, Braces, FlaskConical, Loader2, MessageSquare,
+  RefreshCw, RotateCcw, Save, Wand2, X,
 } from 'lucide-react';
 import { useDocumentEditor } from './DocumentEditorContext';
 import { EDITOR_TAB_IDS } from './editorTabIds';
@@ -23,15 +23,16 @@ export function DocumentEditorToolbar() {
     setTestOpen,
     grammarOverwrite,
     setGrammarOverwrite,
-    showOnlyMessageNodes,
-    setShowOnlyMessageNodes,
     grammarTokens,
     dicts,
+    agentDictionaryContext,
+    agentNeedsUpdate,
   } = useDocumentEditor();
 
   const {
     generating, generatingPhase, analysis,
-    generateMessagesFromDictionary, generateMessagesFromText, generateGrammars, generateGrammarsWithAi,
+    generateMessagesFromDictionary, generateMessagesFromText, generateMessagesOnly,
+    generateGrammars, generateGrammarsWithAi, syncTaxonomyFromDictionary,
     saveAnalysis, discardAnalysisChanges, cancelGeneration,
     saving, analysisDirty, hasMessages, agentReady, hasTaxonomy,
     missingGrammarCount,
@@ -98,28 +99,73 @@ export function DocumentEditorToolbar() {
 
   if (activeTab === EDITOR_TAB_IDS.agent) {
     const hasData = (analysis?.rows.length ?? 0) > 0;
+    const taxonomyOnly = hasData && !hasMessages;
+    const resolveDictionary = () => {
+      if (agentDictionaryContext) {
+        return {
+          dictionary: agentDictionaryContext.dictionary,
+          descriptions: agentDictionaryContext.descriptions,
+          activeTokenCount: agentDictionaryContext.activeTokenCount,
+        };
+      }
+      const d = dictState?.getMergedDictionary?.() ?? dictState?.getDictionary();
+      const descriptions = dictState?.getDescriptions() ?? [];
+      return {
+        dictionary: d,
+        descriptions,
+        activeTokenCount: dictState?.activeTokenCount ?? 0,
+      };
+    };
     const canGenerateMessages = dictionaryMode
-      ? (dictState?.activeTokenCount ?? 0) > 0 && !generating
+      ? (resolveDictionary().activeTokenCount > 0 && hasTaxonomy && !generating)
       : !!documentText && !generating;
     const canRunGrammarGeneration = hasTaxonomy && !generating
       && (grammarOverwrite || missingGrammarCount > 0);
+    const canUpdateAgent = dictionaryMode && agentNeedsUpdate && !generating && !!agentDictionaryContext;
+
+    const runGenerateMessages = () => {
+      const contextText = documentText ?? '';
+      if (dictionaryMode) {
+        const { dictionary, descriptions, activeTokenCount } = resolveDictionary();
+        if (!dictionary || activeTokenCount === 0) return;
+        if (taxonomyOnly) {
+          void generateMessagesOnly(doc.name, contextText).catch(() => {});
+          return;
+        }
+        void generateMessagesFromDictionary(dictionary, descriptions, doc.name, contextText).catch(() => {});
+      } else if (documentText) {
+        void generateMessagesFromText(documentText, doc.name).catch(() => {});
+      }
+    };
+
+    const runUpdateAgent = () => {
+      if (!agentDictionaryContext) return;
+      try {
+        syncTaxonomyFromDictionary(
+          agentDictionaryContext.dictionary,
+          agentDictionaryContext.descriptions,
+        );
+      } catch {
+        /* error surfaced via analysisApi.error */
+      }
+    };
 
     return (
       <div className="flex items-center gap-2">
+        {canUpdateAgent && (
+          <button
+            type="button"
+            onClick={runUpdateAgent}
+            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-amber-400 rounded hover:bg-amber-300 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Aggiorna agente
+          </button>
+        )}
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => {
-              const contextText = documentText ?? '';
-              if (dictionaryMode) {
-                const d = dictState?.getMergedDictionary?.() ?? dictState?.getDictionary();
-                const descriptions = dictState?.getDescriptions() ?? [];
-                if (!d || dictState!.activeTokenCount === 0) return;
-                void generateMessagesFromDictionary(d, descriptions, doc.name, contextText).catch(() => {});
-              } else if (documentText) {
-                void generateMessagesFromText(documentText, doc.name).catch(() => {});
-              }
-            }}
+            onClick={runGenerateMessages}
             disabled={!canGenerateMessages}
             className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
           >
@@ -133,19 +179,6 @@ export function DocumentEditorToolbar() {
                   ? 'Genero messaggi…'
                   : 'Genera messaggi'
               : 'Genera messaggi'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowOnlyMessageNodes((v) => !v)}
-            disabled={!hasTaxonomy}
-            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] rounded border transition-colors disabled:opacity-40 ${
-              showOnlyMessageNodes
-                ? 'text-amber-300 border-amber-400/40 bg-amber-400/10'
-                : 'text-emerald-400/50 border-[#1a3a2a] hover:border-emerald-400/30 hover:text-emerald-400/80'
-            }`}
-          >
-            <Filter className="w-3 h-3" />
-            Solo messaggi
           </button>
           <button
             type="button"

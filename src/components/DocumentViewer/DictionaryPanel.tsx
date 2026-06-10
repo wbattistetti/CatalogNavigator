@@ -1,7 +1,7 @@
 /**
- * Tokenization workflow: corpus editor with dictionary tree on the right.
+ * Tokenization workflow: corpus editor (dictionary tree is in the Dizionari tab).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Loader2, AlertCircle, Check } from 'lucide-react';
 import type { KbDocument } from '../../lib/supabase';
 import type { ParsedTabular } from '../../lib/parseTabular';
@@ -77,8 +77,13 @@ export function DictionaryPanel({
     return tabular.rows.map((r) => r[idx] ?? '');
   }, [tabular, descriptionColumn]);
 
-  const editingTokens = dicts.editingDictionary?.tokens ?? [];
-  const editingCategories = dicts.editingDictionary?.categories ?? [];
+  const projectDictId = dicts.projectDicts[0]?.id ?? null;
+  const projectSession = projectDictId ? dicts.getSession(projectDictId) : null;
+  const projectMeta = projectDictId ? dicts.getDictionaryMeta(projectDictId) : null;
+
+  const editingTokens = projectSession?.tokens ?? [];
+  const editingCategories = projectSession?.categories ?? [];
+  const projectDirty = projectSession?.dirty ?? false;
 
   const mergedTokens = useMemo(
     () => mergeLoadedTokens(dicts.loadedRefs),
@@ -89,13 +94,13 @@ export function DictionaryPanel({
   const rowCount = descriptions.filter((d) => d.trim()).length;
 
   const getEditingDictionary = useCallback((): TokenDictionary | null => {
-    if (!descriptionColumn || !dicts.editingDictionary) return null;
+    if (!descriptionColumn || !projectMeta) return null;
     return {
       descriptionColumn,
       tokens: editingTokens,
       categories: editingCategories,
     };
-  }, [descriptionColumn, dicts.editingDictionary, editingTokens, editingCategories]);
+  }, [descriptionColumn, projectMeta, editingTokens, editingCategories]);
 
   const getMergedDictionary = useCallback((): TokenDictionary | null => {
     if (!descriptionColumn || dicts.loadedRefs.length === 0) return null;
@@ -124,7 +129,8 @@ export function DictionaryPanel({
     setLocalError(null);
 
     try {
-      await dicts.saveEditingDictionary();
+      if (!projectDictId) throw new Error('Nessun dizionario di progetto');
+      await dicts.saveDictionary(projectDictId);
 
       const newRoles = setDescriptionColumnRole(doc.column_roles ?? {}, tabular.headers, descriptionColumn);
       const fresh = await persistDocumentColumnRoles(doc.id, newRoles);
@@ -140,59 +146,93 @@ export function DictionaryPanel({
     } finally {
       setSaving(false);
     }
-  }, [descriptionColumn, saving, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave]);
+  }, [descriptionColumn, saving, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave, projectDictId]);
 
   const handleDiscard = useCallback(() => {
-    dicts.discardEditingDictionary();
+    if (projectDictId) dicts.discardDictionary(projectDictId);
     setSaveStatus('idle');
     setLocalError(null);
-  }, [dicts]);
+  }, [dicts, projectDictId]);
 
   const handleTokensChange = useCallback((next: TokenEntry[]) => {
+    if (!projectDictId) return;
     const synced = syncCategoriesWithTokens(editingCategories, next);
-    dicts.setEditingTokens(next);
-    dicts.setEditingCategories(synced);
-  }, [dicts, editingCategories]);
+    dicts.setSessionTokens(projectDictId, next);
+    dicts.setSessionCategories(projectDictId, synced);
+  }, [dicts, editingCategories, projectDictId]);
 
   const handleCategoriesChange = useCallback((next: TokenCategory[]) => {
-    dicts.setEditingCategories(next);
-  }, [dicts]);
+    if (!projectDictId) return;
+    dicts.setSessionCategories(projectDictId, next);
+  }, [dicts, projectDictId]);
 
-  useEffect(() => {
-    onStateChange({
-      dirty: dicts.dirty,
-      canSave: dicts.canSave && !saving,
-      saving,
-      activeTokenCount: activeCount,
-      descriptionColumn,
-      save: handleSave,
-      discard: handleDiscard,
-      getDictionary: getEditingDictionary,
-      getMergedDictionary,
-      getDescriptions: () => descriptions,
-      replaceTokens: (tokens) => {
-        if (!dicts.editingDictionaryId) return;
-        dicts.setEditingTokens(tokens);
-      },
-    });
-  }, [
-    dicts.dirty,
-    dicts.canSave,
-    dicts.editingDictionaryId,
+  const descriptionsRef = useRef(descriptions);
+  descriptionsRef.current = descriptions;
+
+  const projectDictIdRef = useRef(projectDictId);
+  projectDictIdRef.current = projectDictId;
+
+  const setSessionTokensRef = useRef(dicts.setSessionTokens);
+  setSessionTokensRef.current = dicts.setSessionTokens;
+
+  const getDescriptions = useCallback(() => descriptionsRef.current, []);
+
+  const replaceTokens = useCallback((tokens: TokenEntry[]) => {
+    const id = projectDictIdRef.current;
+    if (!id) return;
+    setSessionTokensRef.current(id, tokens);
+  }, []);
+
+  const panelState = useMemo((): DictionaryPanelState => ({
+    dirty: projectDirty,
+    canSave: projectDirty && !saving && !!projectDictId,
+    saving,
+    activeTokenCount: activeCount,
+    descriptionColumn,
+    save: handleSave,
+    discard: handleDiscard,
+    getDictionary: getEditingDictionary,
+    getMergedDictionary,
+    getDescriptions,
+    replaceTokens,
+  }), [
+    projectDirty,
+    saving,
+    projectDictId,
     activeCount,
     descriptionColumn,
-    editingTokens,
-    editingCategories,
-    descriptions,
-    onStateChange,
     handleSave,
     handleDiscard,
     getEditingDictionary,
     getMergedDictionary,
-    dicts,
-    saveStatus,
-    saving,
+    getDescriptions,
+    replaceTokens,
   ]);
+
+  const panelRevision = useMemo(
+    () => [
+      projectDirty,
+      projectDictId,
+      activeCount,
+      saving,
+      descriptionColumn,
+      editingTokens.length,
+      editingCategories.length,
+    ].join('\0'),
+    [
+      projectDirty,
+      projectDictId,
+      activeCount,
+      saving,
+      descriptionColumn,
+      editingTokens.length,
+      editingCategories.length,
+    ],
+  );
+
+  useEffect(() => {
+    onStateChange(panelState);
+  }, [panelRevision, panelState, onStateChange]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -200,17 +240,17 @@ export function DictionaryPanel({
         <div className="flex items-center gap-2 flex-wrap">
           <BookOpen className="w-4 h-4 text-amber-400/70" />
           <span className="font-mono text-sm font-semibold text-emerald-300">Ontologia</span>
-          {dicts.editingDictionary && (
+          {projectMeta && (
             <span className="flex items-center gap-1 font-mono text-[9px] text-sky-400/60">
               <DictionaryIcon
-                iconKey={dicts.editingDictionary.icon_key}
-                iconColor={dicts.editingDictionary.icon_color}
+                iconKey={projectMeta.icon_key}
+                iconColor={projectMeta.icon_color}
                 size="xs"
               />
-              {dicts.editingDictionary.name}
+              {projectMeta.name}
             </span>
           )}
-          {dicts.dirty && (
+          {projectDirty && (
             <span className="font-mono text-[10px] text-amber-400/90 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10">
               modifiche non salvate
             </span>
@@ -271,7 +311,7 @@ export function DictionaryPanel({
             tokens={editingTokens}
             categories={editingCategories}
             loadedRefs={dicts.loadedRefs}
-            editingDictionaryId={dicts.editingDictionaryId}
+            editingDictionaryId={projectDictId}
             onTokensChange={handleTokensChange}
             onCategoriesChange={handleCategoriesChange}
           />

@@ -1,9 +1,9 @@
 /**
- * Corpus editor: paired description/segmentation rows plus hierarchical token tree.
+ * Corpus editor: paired description/segmentation rows (dictionary tree lives in Dizionari tab).
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Key, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import { removeTokenFromLayout } from '../../lib/dictionaryTree';
 import type { HighlightSpan, SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
@@ -11,7 +11,6 @@ import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
 import { mergeLiveEditingIntoLoadedRefs, corpusHighlightTokens, segmentDescriptionMulti } from '../../lib/multiDictionarySegment';
 import { DictionaryIcon } from './DictionaryIcon';
 import {
-  addAlias,
   addToken,
   aliasCanonicalHint,
   findHighlightSpans,
@@ -24,11 +23,30 @@ import {
   suggestLongerTokenInSource,
   tokenizeToWords,
 } from '../../lib/tokenDictionary';
-import { TokenTreeEditor } from './TokenTreeEditor';
-import { TokenGrammarSidePanel } from './TokenGrammarSidePanel';
-import type { GrammarEditorHandle } from './InlineGrammarEditor';
-import type { GrammarEntry } from '../../hooks/useAnalysis';
-import { getStoredTokenGrammar, setTokenGrammar } from '../../lib/tokenGrammar';
+import { chipSurfaceStyleFromColor, resolveChipAppearance } from '../../lib/categoryIconCatalog';
+import { useDocumentEditor } from '../../features/document-editor/DocumentEditorContext';
+import {
+  clearDictionaryTokenSelection,
+  getDictionarySelectionSnapshot,
+  selectSingleDictionaryToken,
+  setDictionaryCategoryDropTarget,
+  setDictionaryTokenDragActive,
+  toggleDictionaryToken,
+  useDictionaryChipDragging,
+  useDictionaryChipSelected,
+  useDictionarySelectionCount,
+} from '../../features/document-editor/dictionarySelectionStore';
+import {
+  CorpusChipActionsProvider,
+  useCorpusChipActions,
+  type CorpusChipActions,
+} from './CorpusChipActionsContext';
+import {
+  DRAG_THRESHOLD_PX,
+  assignTokensToCategory,
+  categoryIdAtPoint,
+  formatDragGhostLabel,
+} from '../../lib/dictionaryTokenDrag';
 
 interface CorpusTokenEditorProps {
   descriptions: string[];
@@ -58,17 +76,13 @@ interface LongerTokenPromptState {
   longerToken: string;
 }
 
-interface AliasPickState {
-  phrase: string;
-  range: SelectionRange | null;
-  normalizedPhrase: string;
-}
-
 /** Shared grid: row index | descriptions | segmentation (ratio 5:3). */
 const CORPUS_ROW_GRID = 'grid grid-cols-[2rem_minmax(0,5fr)_minmax(0,3fr)]';
 
-/** Rounded chip for a matched token phrase; optional delete control on hover. */
-function TokenChip({
+/** Chip that subscribes to selection store — only re-renders when its own selection changes. */
+const SelectableCorpusChip = memo(function SelectableCorpusChip({
+  canonical,
+  categorizable,
   label,
   muted = false,
   variant = 'token',
@@ -76,9 +90,13 @@ function TokenChip({
   className = '',
   iconKey,
   iconColor,
+  categoryColor,
   iconTitle,
+  dictScope = 'project',
   onRemove,
 }: {
+  canonical: string;
+  categorizable: boolean;
   label: string;
   muted?: boolean;
   variant?: 'token' | 'alias';
@@ -86,20 +104,52 @@ function TokenChip({
   className?: string;
   iconKey?: string;
   iconColor?: string;
+  categoryColor?: string;
   iconTitle?: string;
+  dictScope?: 'project' | 'library';
   onRemove?: () => void;
 }) {
+  const selected = useDictionaryChipSelected(canonical);
+  const dragging = useDictionaryChipDragging(canonical);
+  const { onChipClick, onChipMouseDown } = useCorpusChipActions();
   const isAlias = variant === 'alias';
+  const accent = categoryColor ?? iconColor;
+  const tinted = accent && !muted && !isAlias
+    ? chipSurfaceStyleFromColor(accent)
+    : null;
+  const selectionClass = categorizable && selected
+    ? dragging
+      ? 'border-2 border-emerald-300 opacity-90 cursor-grabbing shadow-[0_0_6px_rgba(52,211,153,0.45)]'
+      : 'border-2 border-emerald-400 cursor-grab shadow-[0_0_6px_rgba(52,211,153,0.35)]'
+    : categorizable
+      ? 'cursor-pointer'
+      : '';
 
   return (
     <span
-      className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip ${
+      role={categorizable ? 'option' : undefined}
+      aria-selected={categorizable ? selected : undefined}
+      data-corpus-chip={categorizable ? 'true' : undefined}
+      onClick={categorizable ? (e) => onChipClick(e, canonical) : undefined}
+      onMouseDown={categorizable ? (e) => onChipMouseDown(e, canonical) : undefined}
+      className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip select-none ${
         muted
           ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-300/75'
           : isAlias
-            ? 'bg-sky-400/20 border-sky-400/40 text-sky-100'
-            : 'bg-amber-400/20 border-amber-400/40 text-amber-100'
-      } ${className}`}
+            ? dictScope === 'project'
+              ? 'bg-amber-400/15 border-amber-400/35 text-amber-100'
+              : 'bg-sky-400/20 border-sky-400/40 text-sky-100'
+            : tinted
+              ? ''
+              : dictScope === 'library'
+                ? 'bg-sky-400/20 border-sky-400/40 text-sky-100'
+                : 'bg-amber-400/20 border-amber-400/40 text-amber-100'
+      } ${selectionClass} ${className}`}
+      style={tinted ? {
+        backgroundColor: tinted.backgroundColor,
+        borderColor: tinted.borderColor,
+        color: tinted.color,
+      } : undefined}
       title={iconTitle ?? (isAlias && aliasOf ? `alias of: ${aliasOf}` : undefined)}
     >
       {iconKey && iconColor && (
@@ -126,16 +176,34 @@ function TokenChip({
       )}
     </span>
   );
+});
+
+function CorpusSelectionBanner() {
+  const count = useDictionarySelectionCount();
+  if (count === 0) return null;
+  return (
+    <div className="px-3 py-1 border-b border-[#1a3a2a]/60 bg-[#0a1510] font-mono text-[9px] text-emerald-300/80">
+      {count} chip sel. · Ctrl+click multiselezione · trascina su una categoria in Dizionari
+    </div>
+  );
 }
 
 function HighlightedDescription({
   text,
   tokens,
+  loadedRefs,
+  editingDictionaryId,
+  editingCategories,
   onRemoveSpan,
+  editableCanonicalSet,
 }: {
   text: string;
   tokens: TokenEntry[];
+  loadedRefs: LoadedDictionaryRef[];
+  editingDictionaryId: string | null;
+  editingCategories: TokenCategory[];
   onRemoveSpan: (span: HighlightSpan) => void;
+  editableCanonicalSet: ReadonlySet<string>;
 }) {
   const spans = useMemo(() => findHighlightSpans(text, tokens), [text, tokens]);
 
@@ -149,12 +217,27 @@ function HighlightedDescription({
     if (span.start > cursor) {
       parts.push(<span key={`t-${i}`}>{text.slice(cursor, span.start)}</span>);
     }
+    const canonical = span.canonical;
+    const categorizable = editableCanonicalSet.has(canonical);
+    const appearance = resolveChipAppearance(
+      canonical,
+      loadedRefs,
+      editingDictionaryId,
+      editingCategories,
+    );
     parts.push(
       <span key={`h-${i}`} className="inline-block mx-0.5 my-0.5 align-baseline">
-        <TokenChip
+        <SelectableCorpusChip
+          canonical={canonical}
+          categorizable={categorizable}
           label={text.slice(span.start, span.end)}
           variant={span.isAlias ? 'alias' : 'token'}
           aliasOf={span.isAlias ? span.canonical : undefined}
+          iconKey={appearance.iconKey}
+          iconColor={appearance.iconColor}
+          categoryColor={appearance.categoryColor}
+          iconTitle={appearance.title}
+          dictScope={appearance.scope}
           onRemove={() => onRemoveSpan(span)}
         />
       </span>,
@@ -168,26 +251,37 @@ function HighlightedDescription({
   return <span className="text-emerald-300/80 leading-relaxed">{parts}</span>;
 }
 
-const MemoHighlightedDescription = memo(HighlightedDescription);
+const MemoHighlightedDescription = memo(
+  HighlightedDescription,
+  (prev, next) =>
+    prev.text === next.text
+    && prev.tokens === next.tokens
+    && prev.loadedRefs === next.loadedRefs
+    && prev.editingDictionaryId === next.editingDictionaryId
+    && prev.editingCategories === next.editingCategories
+    && prev.onRemoveSpan === next.onRemoveSpan
+    && prev.editableCanonicalSet === next.editableCanonicalSet,
+);
 
 function SegmentationChips({
   text,
   loadedRefs,
+  editingDictionaryId,
+  editingCategories,
   fallbackTokens,
   fallbackCategories,
   onRemoveCanonical,
+  editableCanonicalSet,
 }: {
   text: string;
   loadedRefs: LoadedDictionaryRef[];
+  editingDictionaryId: string | null;
+  editingCategories: TokenCategory[];
   fallbackTokens: TokenEntry[];
   fallbackCategories: TokenCategory[];
   onRemoveCanonical: (token: string) => void;
+  editableCanonicalSet: ReadonlySet<string>;
 }) {
-  const dictById = useMemo(
-    () => new Map(loadedRefs.map((r) => [r.dictionary.id, r.dictionary])),
-    [loadedRefs],
-  );
-
   const { segments, unmatched } = useMemo(() => {
     if (loadedRefs.length > 0) {
       const result = segmentDescriptionMulti(text, loadedRefs);
@@ -213,15 +307,25 @@ function SegmentationChips({
   return (
     <div className="flex flex-wrap items-center gap-1">
       {segments.map((seg, i) => {
-        const dict = seg.dictionaryId ? dictById.get(seg.dictionaryId) : undefined;
+        const categorizable = editableCanonicalSet.has(seg.text);
+        const appearance = resolveChipAppearance(
+          seg.text,
+          loadedRefs,
+          editingDictionaryId,
+          editingCategories.length > 0 ? editingCategories : fallbackCategories,
+        );
         return (
           <span key={`${seg.text}-${i}`} className="inline-flex items-center">
-            <TokenChip
+            <SelectableCorpusChip
+              canonical={seg.text}
+              categorizable={categorizable}
               label={seg.text}
-              iconKey={dict?.icon_key}
-              iconColor={dict?.icon_color}
-              iconTitle={dict ? `${seg.text} · ${dict.name}` : seg.text}
-              onRemove={() => onRemoveCanonical(seg.text)}
+              iconKey={appearance.iconKey}
+              iconColor={appearance.iconColor}
+              categoryColor={appearance.categoryColor}
+              iconTitle={appearance.title}
+              dictScope={appearance.scope}
+              onRemove={categorizable ? () => onRemoveCanonical(seg.text) : undefined}
             />
             {i < segments.length - 1 && (
               <span className="text-emerald-400/60 font-mono text-xs mx-0.5">·</span>
@@ -233,7 +337,18 @@ function SegmentationChips({
   );
 }
 
-const MemoSegmentationChips = memo(SegmentationChips);
+const MemoSegmentationChips = memo(
+  SegmentationChips,
+  (prev, next) =>
+    prev.text === next.text
+    && prev.loadedRefs === next.loadedRefs
+    && prev.editingDictionaryId === next.editingDictionaryId
+    && prev.editingCategories === next.editingCategories
+    && prev.fallbackTokens === next.fallbackTokens
+    && prev.fallbackCategories === next.fallbackCategories
+    && prev.onRemoveCanonical === next.onRemoveCanonical
+    && prev.editableCanonicalSet === next.editableCanonicalSet,
+);
 
 export function CorpusTokenEditor({
   descriptions,
@@ -244,18 +359,21 @@ export function CorpusTokenEditor({
   onTokensChange,
   onCategoriesChange,
 }: CorpusTokenEditorProps) {
+  const {
+    openDictionaryTree,
+    startDictionaryAliasPick,
+    cancelDictionaryAliasPick,
+    dictionaryAliasPick,
+  } = useDocumentEditor();
+  const projectDictionaryId = editingDictionaryId;
+
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const dragGhostRef = useRef<HTMLDivElement>(null);
   const [longerTokenPrompt, setLongerTokenPrompt] = useState<LongerTokenPromptState | null>(null);
-  const [aliasPick, setAliasPick] = useState<AliasPickState | null>(null);
-  const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
-  const [grammarPanelOpen, setGrammarPanelOpen] = useState(false);
-  const [grammarEditToken, setGrammarEditToken] = useState<string | null>(null);
-  const [focusTokenText, setFocusTokenText] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const longerPromptRef = useRef<HTMLDivElement>(null);
   const pendingMenuFrameRef = useRef<number | null>(null);
   const lastMouseUpAtRef = useRef(0);
-  const grammarEditorRef = useRef<GrammarEditorHandle>(null);
 
   const DOUBLE_CLICK_GAP_MS = 450;
 
@@ -285,6 +403,104 @@ export function CorpusTokenEditor({
     [loadedRefs, editingDictionaryId, tokens, categories],
   );
 
+  const editableCanonicalSet = useMemo(
+    () => new Set(tokens.filter(isCanonicalToken).map((t) => t.text)),
+    [tokens],
+  );
+
+  const hideDragGhost = useCallback(() => {
+    const ghost = dragGhostRef.current;
+    if (!ghost) return;
+    ghost.style.left = '-9999px';
+    ghost.style.top = '0';
+    ghost.style.visibility = 'hidden';
+  }, []);
+
+  const showDragGhost = useCallback((label: string, clientX: number, clientY: number) => {
+    const ghost = dragGhostRef.current;
+    if (!ghost) return;
+    ghost.textContent = label;
+    ghost.style.left = `${clientX + 12}px`;
+    ghost.style.top = `${clientY + 16}px`;
+    ghost.style.visibility = 'visible';
+  }, []);
+
+  const moveChipsToCategory = useCallback((targetKey: string, tokenTexts: string[]) => {
+    const valid = tokenTexts.filter((t) => editableCanonicalSet.has(t));
+    if (valid.length === 0) return;
+    try {
+      onCategoriesChange(assignTokensToCategory(categories, targetKey, valid));
+    } catch {
+      /* invalid */
+    }
+  }, [categories, editableCanonicalSet, onCategoriesChange]);
+
+  const handleChipClick = useCallback((e: React.MouseEvent, canonical: string) => {
+    if (!editableCanonicalSet.has(canonical)) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      toggleDictionaryToken(canonical);
+      return;
+    }
+    selectSingleDictionaryToken(canonical);
+  }, [editableCanonicalSet]);
+
+  const startChipPointerDrag = useCallback((e: React.MouseEvent, canonical: string) => {
+    if (!editableCanonicalSet.has(canonical)) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.stopPropagation();
+    const currentSelected = getDictionarySelectionSnapshot().selected;
+    if (!currentSelected.has(canonical)) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+
+    const texts = [...currentSelected].filter((t) => editableCanonicalSet.has(t));
+    if (texts.length === 0) return;
+
+    const originX = e.clientX;
+    const originY = e.clientY;
+    let active = false;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - originX, ev.clientY - originY) < DRAG_THRESHOLD_PX) return;
+        active = true;
+        setDictionaryTokenDragActive(true);
+        showDragGhost(formatDragGhostLabel(texts), ev.clientX, ev.clientY);
+      } else {
+        showDragGhost(formatDragGhostLabel(texts), ev.clientX, ev.clientY);
+        setDictionaryCategoryDropTarget(categoryIdAtPoint(ev.clientX, ev.clientY));
+      }
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      if (active) {
+        const catId = categoryIdAtPoint(ev.clientX, ev.clientY);
+        if (catId) moveChipsToCategory(catId, texts);
+      }
+      setDictionaryTokenDragActive(false);
+      setDictionaryCategoryDropTarget(null);
+      hideDragGhost();
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [
+    editableCanonicalSet,
+    hideDragGhost,
+    moveChipsToCategory,
+    showDragGhost,
+  ]);
+
+  const chipActions = useMemo((): CorpusChipActions => ({
+    editableCanonicalSet,
+    onChipClick: handleChipClick,
+    onChipMouseDown: startChipPointerDrag,
+  }), [editableCanonicalSet, handleChipClick, startChipPointerDrag]);
+
   const rows = useMemo(
     () =>
       descriptions
@@ -294,7 +510,7 @@ export function CorpusTokenEditor({
     [descriptions],
   );
 
-  const cancelAliasPick = useCallback(() => setAliasPick(null), []);
+  const cancelAliasPick = cancelDictionaryAliasPick;
 
   useEffect(() => () => cancelPendingMenuOpen(), [cancelPendingMenuOpen]);
 
@@ -364,29 +580,26 @@ export function CorpusTokenEditor({
   }, [menu]);
 
   useEffect(() => {
-    if (!aliasPick) return;
-    const onMove = (e: MouseEvent) => setCursorPos({ x: e.clientX, y: e.clientY });
+    if (!dictionaryAliasPick) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') cancelAliasPick();
     };
-    document.addEventListener('mousemove', onMove);
     document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [aliasPick, cancelAliasPick]);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [dictionaryAliasPick, cancelAliasPick]);
 
   const commitNewToken = useCallback((raw: string, range: SelectionRange | null) => {
     try {
       const phrase = selectionToTokenPhrase(raw, range);
       onTokensChange(addToken(tokens, raw, range));
-      if (phrase) setFocusTokenText(phrase);
+      if (phrase && projectDictionaryId) {
+        openDictionaryTree({ dictionaryId: projectDictionaryId, focusToken: phrase });
+      }
     } catch {
       /* invalid */
     }
     window.getSelection()?.removeAllRanges();
-  }, [onTokensChange, tokens]);
+  }, [onTokensChange, openDictionaryTree, projectDictionaryId, tokens]);
 
   const openLongerTokenPrompt = useCallback((
     clientX: number,
@@ -469,7 +682,7 @@ export function CorpusTokenEditor({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (aliasPick || e.button !== 0) return;
+    if (dictionaryAliasPick || e.button !== 0) return;
     if (Date.now() - lastMouseUpAtRef.current < DOUBLE_CLICK_GAP_MS) {
       cancelPendingMenuOpen();
       setMenu(null);
@@ -478,8 +691,8 @@ export function CorpusTokenEditor({
   };
 
   const handleMouseUp = (e: React.MouseEvent, sourceText: string) => {
-    if (aliasPick || e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('button')) return;
+    if (dictionaryAliasPick || e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('button, [data-corpus-chip]')) return;
 
     cancelPendingMenuOpen();
     if (e.detail >= 2) return;
@@ -492,7 +705,7 @@ export function CorpusTokenEditor({
 
   const handleContextMenu = (e: React.MouseEvent, sourceText: string) => {
     e.preventDefault();
-    if (aliasPick) return;
+    if (dictionaryAliasPick) return;
     const container = e.currentTarget as HTMLElement;
     openContextMenuFromSelection(e.clientX, e.clientY, sourceText, container);
   };
@@ -507,24 +720,12 @@ export function CorpusTokenEditor({
     if (!menu) return;
     const normalizedPhrase = selectionToTokenPhrase(menu.phrase, menu.range);
     if (!normalizedPhrase) return;
-    setAliasPick({
+    startDictionaryAliasPick({
       phrase: menu.phrase,
       range: menu.range,
       normalizedPhrase,
     });
-    setCursorPos({ x: menu.x, y: menu.y });
     setMenu(null);
-  };
-
-  const handleAliasTargetPick = (canonicalText: string) => {
-    if (!aliasPick) return;
-    try {
-      onTokensChange(addAlias(tokens, aliasPick.phrase, canonicalText, aliasPick.range));
-    } catch {
-      /* invalid */
-    }
-    setAliasPick(null);
-    window.getSelection()?.removeAllRanges();
   };
 
   const handleRemoveCanonical = (text: string) => {
@@ -553,40 +754,20 @@ export function CorpusTokenEditor({
   const canCreateToken = Boolean(menuPhrase && !menuIsCanonical && menuWordCount >= 1);
   const canStartAliasPick = Boolean(menuPhrase && !menuIsCanonical);
 
-  const flushGrammarEditor = useCallback(() => {
-    grammarEditorRef.current?.flushSave();
-  }, []);
-
-  const toggleGrammarPanel = () => {
-    if (grammarPanelOpen) {
-      flushGrammarEditor();
-      setGrammarEditToken(null);
-      setGrammarPanelOpen(false);
-      return;
-    }
-    setGrammarPanelOpen(true);
-  };
-
-  const handleGrammarEditTokenChange = useCallback((newToken: string) => {
-    if (newToken === grammarEditToken) return;
-    flushGrammarEditor();
-    setGrammarEditToken(newToken);
-  }, [grammarEditToken, flushGrammarEditor]);
-
-  const handleTokenGrammarSave = (grammar: GrammarEntry) => {
-    if (!grammarEditToken) return;
-    onTokensChange(setTokenGrammar(tokens, grammarEditToken, grammar));
-  };
-
-  const grammarForPanel = grammarEditToken
-    ? getStoredTokenGrammar(grammarEditToken, tokens)
-    : null;
-
   return (
-    <div className={`flex flex-col h-full min-h-0 ${aliasPick ? 'cursor-crosshair' : ''}`}>
+    <CorpusChipActionsProvider value={chipActions}>
+    <div className="flex flex-col h-full min-h-0">
       <div className="flex-1 min-h-0 flex border border-[#1a3a2a] rounded overflow-hidden bg-[#080e0a]">
-        <div className="flex-[1] min-w-0 flex flex-col border-r border-[#1a3a2a] min-h-0">
-          <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex-1 min-w-0 flex flex-col min-h-0">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto"
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest('[role="option"]')) return;
+              if (getDictionarySelectionSnapshot().selected.size > 0) {
+                clearDictionaryTokenSelection();
+              }
+            }}
+          >
             <div
               className={`sticky top-0 z-10 ${CORPUS_ROW_GRID} border-b border-[#1a3a2a] bg-[#0a1510]`}
             >
@@ -600,6 +781,7 @@ export function CorpusTokenEditor({
                 Segmentazione
               </div>
             </div>
+            <CorpusSelectionBanner />
             {rows.map(({ rowIndex, text }) => (
               <div
                 key={rowIndex}
@@ -619,7 +801,11 @@ export function CorpusTokenEditor({
                     <MemoHighlightedDescription
                       text={text}
                       tokens={highlightTokens}
+                      loadedRefs={effectiveLoadedRefs}
+                      editingDictionaryId={projectDictionaryId}
+                      editingCategories={categories}
                       onRemoveSpan={handleRemoveSpan}
+                      editableCanonicalSet={editableCanonicalSet}
                     />
                   </p>
                 </div>
@@ -627,51 +813,18 @@ export function CorpusTokenEditor({
                   <MemoSegmentationChips
                     text={text}
                     loadedRefs={effectiveLoadedRefs}
+                    editingDictionaryId={projectDictionaryId}
+                    editingCategories={categories}
                     fallbackTokens={tokens}
                     fallbackCategories={categories}
                     onRemoveCanonical={handleRemoveCanonical}
+                    editableCanonicalSet={editableCanonicalSet}
                   />
                 </div>
               </div>
             ))}
           </div>
         </div>
-
-        <div className="flex-shrink-0 min-w-[20rem] max-w-[min(50%,28rem)] flex flex-col border-l border-[#1a3a2a]">
-          <TokenTreeEditor
-            tokens={tokens}
-            categories={categories}
-            onTokensChange={onTokensChange}
-            onCategoriesChange={onCategoriesChange}
-            onRemoveCanonical={handleRemoveCanonical}
-            onRemoveAlias={handleRemoveAlias}
-            aliasPickActive={aliasPick !== null}
-            aliasPickPhrase={aliasPick?.normalizedPhrase ?? null}
-            onAliasTargetPick={handleAliasTargetPick}
-            onCancelAliasPick={cancelAliasPick}
-            grammarPanelOpen={grammarPanelOpen}
-            onToggleGrammarPanel={toggleGrammarPanel}
-            grammarEditToken={grammarEditToken}
-            onGrammarEditTokenChange={handleGrammarEditTokenChange}
-            focusTokenText={focusTokenText}
-            onFocusTokenHandled={() => setFocusTokenText(null)}
-          />
-        </div>
-
-        {grammarPanelOpen && (
-          <div className="w-52 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
-            <TokenGrammarSidePanel
-              ref={grammarEditorRef}
-              tokenText={grammarEditToken}
-              grammar={grammarForPanel}
-              onSave={handleTokenGrammarSave}
-              onClose={() => {
-                flushGrammarEditor();
-                setGrammarEditToken(null);
-              }}
-            />
-          </div>
-        )}
       </div>
 
       {menu && createPortal(
@@ -780,17 +933,16 @@ export function CorpusTokenEditor({
         document.body,
       )}
 
-      {aliasPick && (
+      {typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed z-[300] pointer-events-none"
-          style={{ left: cursorPos.x + 14, top: cursorPos.y + 14 }}
-        >
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-mono text-[11px] bg-sky-400/25 border-sky-400/50 text-sky-100 shadow-lg">
-            <Key className="w-3 h-3 text-amber-400" />
-            alias of…
-          </span>
-        </div>
+          ref={dragGhostRef}
+          aria-hidden
+          className="fixed z-[10000] pointer-events-none px-3 py-2 rounded-md border border-sky-400/50 bg-[#0a1510] shadow-xl font-mono text-[11px] text-sky-100 max-w-[220px] truncate whitespace-nowrap"
+          style={{ left: -9999, top: 0, visibility: 'hidden' }}
+        />,
+        document.body,
       )}
     </div>
+    </CorpusChipActionsProvider>
   );
 }

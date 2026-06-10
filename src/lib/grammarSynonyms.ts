@@ -46,6 +46,18 @@ export function normalizeSynonymList(raw: string[]): string[] {
   return out;
 }
 
+/** Sorts synonyms alphabetically (Italian locale, case-insensitive). */
+export function sortSynonymsAlphabetically(synonyms: string[]): string[] {
+  return [...synonyms].sort((a, b) =>
+    a.localeCompare(b, 'it', { sensitivity: 'base' }),
+  );
+}
+
+/** Normalizes, deduplicates, and sorts synonym lines. */
+export function normalizeSortedSynonymList(raw: string[]): string[] {
+  return sortSynonymsAlphabetically(normalizeSynonymList(raw));
+}
+
 /** Parses textarea content: one non-empty line = one synonym; spaces inside a line are kept. */
 export function parseSynonymText(text: string): string[] {
   return normalizeSynonymList(text.split(/\r?\n/));
@@ -95,9 +107,33 @@ export function defaultSynonymsForSlot(slot: string): string[] {
   return [...synonyms];
 }
 
-/** Default answer synonyms for a parent-item panel (prefix ambiguity). */
-function defaultParentAnswerSynonyms(): string[] {
-  return ['semplice', 'solo', 'senza', 'no', 'base', 'solamente'];
+/** Default negative/simple answer tokens for a parent-item panel (prefix ambiguity). */
+export function defaultParentAnswerSynonyms(): string[] {
+  return ['semplice', 'solo', 'senza', 'no', 'base', 'solamente', 'normale', 'standard'];
+}
+
+/** Affirmative / extended-choice tokens when a parent-item panel is present. */
+export function defaultAffirmativeAnswerSynonyms(): string[] {
+  return ['sì', 'si', 'anche', 'con', 'incluso', 'compreso', 'entrambi', 'voglio anche'];
+}
+
+/** Contextual answer synonyms for the parent column (not full path recognition). */
+export function defaultParentContextualSynonyms(parentSlot: string): string[] {
+  return normalizeSortedSynonymList([
+    lastSegment(parentSlot),
+    ...defaultParentAnswerSynonyms(),
+  ]);
+}
+
+/** Contextual answer synonyms for a child column (segment + optional affirmatives). */
+export function defaultChildContextualSynonyms(
+  childPath: string,
+  prefixDisambiguation: boolean,
+): string[] {
+  const segment = lastSegment(childPath);
+  const base = expandSegmentVariants(segment);
+  const extra = prefixDisambiguation ? defaultAffirmativeAnswerSynonyms() : [];
+  return normalizeSortedSynonymList([...base, ...extra]);
 }
 
 function extractGroupBody(regex: string, groupName: string): string | null {
@@ -212,27 +248,38 @@ export function hydratePanelsFromGrammar(
   if (!grammar?.regex?.trim()) return panels;
   return panels.map((panel) => {
     const extracted = extractSynonymsForTarget(grammar, panel.targetPath);
+    const synonyms = extracted.length > 0 ? extracted : panel.synonyms;
     return {
       ...panel,
-      synonyms: extracted.length > 0 ? extracted : panel.synonyms,
+      synonyms: sortSynonymsAlphabetically(synonyms),
     };
   });
 }
 
-/** Seeds default synonyms when grammar is missing or empty. */
+/** Seeds contextual answer synonyms when grammar is missing or empty. */
 export function seedDefaultPanels(
   panels: GrammarEditorPanel[],
   slot: string,
 ): GrammarEditorPanel[] {
+  const hasParentPanel = panels.some((p) => p.isParent);
   return panels.map((panel) => {
-    if (panel.synonyms.length > 0) return panel;
-    if (panel.isParent) {
-      const base = defaultSynonymsForSlot(slot);
-      const answers = defaultParentAnswerSynonyms();
-      return { ...panel, synonyms: normalizeSynonymList([...base, ...answers]) };
+    if (panel.synonyms.length > 0) {
+      return { ...panel, synonyms: sortSynonymsAlphabetically(panel.synonyms) };
     }
-    return { ...panel, synonyms: defaultSynonymsForSlot(panel.targetPath) };
+    if (panel.isParent) {
+      return { ...panel, synonyms: defaultParentContextualSynonyms(slot) };
+    }
+    return {
+      ...panel,
+      synonyms: defaultChildContextualSynonyms(panel.targetPath, hasParentPanel),
+    };
   });
+}
+
+/** Max rows for tabular synonym display (tooltip + modal grid padding). */
+export function synonymTableRowCount(panels: GrammarEditorPanel[]): number {
+  if (panels.length === 0) return 0;
+  return Math.max(...panels.map((p) => p.synonyms.length), 1);
 }
 
 export function seedDefaultSimpleSynonyms(slot: string): string[] {
@@ -327,6 +374,10 @@ export function buildGrammarEditorState(
     let panels = buildInteractivePanels(slot, slots, itemPathsInput);
     panels = hydratePanelsFromGrammar(panels, grammar);
     panels = seedDefaultPanels(panels, slot);
+    panels = panels.map((p) => ({
+      ...p,
+      synonyms: sortSynonymsAlphabetically(p.synonyms),
+    }));
     return { interactive: true, panels, simpleSynonyms: [] };
   }
 

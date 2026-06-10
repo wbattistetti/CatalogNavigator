@@ -53,11 +53,19 @@ export function Sidebar({ documents, loading, selectedId, onSelect, onDelete, ch
         {documents.map((doc) => {
           const isSelected = doc.id === selectedId;
           return (
-            <button
+            <div
               key={doc.id}
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(doc)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(doc);
+                }
+              }}
               className={`
-                group w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors
+                group w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer
                 border-b border-[#111]
                 ${isSelected
                   ? 'bg-[#0a1e10] border-l-2 border-l-emerald-400'
@@ -82,7 +90,7 @@ export function Sidebar({ documents, loading, selectedId, onSelect, onDelete, ch
               >
                 <Trash2 className="w-3 h-3" />
               </button>
-            </button>
+            </div>
           );
         })}
       </div>

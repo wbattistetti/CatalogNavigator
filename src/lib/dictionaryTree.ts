@@ -2,6 +2,7 @@
  * Hierarchical dictionary layout: categories order token mounting in the segmentation motor.
  * Categories are UI/ordering metadata only — they do not prefix paths.
  */
+import { enrichCategoryIcons } from './categoryIconCatalog';
 import type { TokenEntry } from './tokenDictionary';
 
 export interface TokenCategory {
@@ -11,6 +12,10 @@ export interface TokenCategory {
   order: number;
   /** Token phrases assigned to this category (display order within category). */
   tokenTexts: string[];
+  /** Lucide icon key (assigned once at category creation). */
+  iconKey?: string;
+  /** Glossy-console accent color (hex). */
+  iconColor?: string;
 }
 
 export interface DictionaryLayout {
@@ -189,7 +194,8 @@ export function createCategoryWithTokens(
   const order = next.length;
   const id = newCategoryId();
   const unique = [...new Set(tokenTexts)];
-  next = [...next, { id, name: trimmed, order, tokenTexts: unique }];
+  const withIcon = enrichCategoryIcons({ id, name: trimmed, order, tokenTexts: unique });
+  next = [...next, withIcon];
   return normalizeCategoryOrders(next);
 }
 
@@ -287,11 +293,13 @@ export function loadSavedCategories(
 ): TokenCategory[] {
   if (!saved?.categories?.length) return [];
   return normalizeCategoryOrders(
-    saved.categories.map((cat) => ({
+    saved.categories.map((cat) => enrichCategoryIcons({
       id: cat.id || newCategoryId(),
       name: cat.name?.trim() || 'Categoria',
       order: typeof cat.order === 'number' ? cat.order : 0,
       tokenTexts: Array.isArray(cat.tokenTexts) ? [...cat.tokenTexts] : [],
+      iconKey: cat.iconKey,
+      iconColor: cat.iconColor,
     })),
   );
 }

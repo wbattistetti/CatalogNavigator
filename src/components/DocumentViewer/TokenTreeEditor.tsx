@@ -1,11 +1,14 @@
 /**
  * Two-panel dictionary editor: categories (left) and tokens (right).
- * Supports brush + file-manager selection, token DnD to categories, category reorder DnD.
+ * Explorer-style token selection and pointer drag to categories; category reorder DnD.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  Folder, Circle, Trash2, FolderPlus, Braces, Plus, GripVertical,
+  Circle, Trash2, FolderPlus, Braces, Plus, GripVertical,
 } from 'lucide-react';
+import { DictionaryIcon } from './DictionaryIcon';
+import { iconForCategory, NO_CATEGORY_ICON } from '../../lib/categoryIconCatalog';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import {
   NO_CATEGORY_SENTINEL,
@@ -27,6 +30,22 @@ import {
   type TokenEntry,
 } from '../../lib/tokenDictionary';
 import { useListSelection } from '../../hooks/useListSelection';
+import {
+  TOKEN_DRAG_MIME,
+  CATEGORY_DRAG_MIME,
+  DRAG_THRESHOLD_PX,
+  assignTokensToCategory,
+  categoryIdAtPoint,
+  formatDragGhostLabel,
+  isTokenDragEvent,
+  parseTokenDragPayload,
+} from '../../lib/dictionaryTokenDrag';
+import {
+  useDictionaryDragActive,
+  useDictionaryDropTarget,
+  useDictionarySelectedSet,
+  useDictionarySelectionActions,
+} from '../../features/document-editor/dictionarySelectionStore';
 
 export interface TokenTreeEditorProps {
   tokens: TokenEntry[];
@@ -50,86 +69,49 @@ export interface TokenTreeEditorProps {
   onFocusTokenHandled?: () => void;
 }
 
-const TOKEN_DRAG_MIME = 'application/x-dictionary-tokens';
-const TOKEN_DRAG_PLAIN_PREFIX = 'dict-tokens:';
-const CATEGORY_DRAG_MIME = 'application/x-dictionary-category';
-
-function isTokenDragEvent(e: React.DragEvent): boolean {
-  const types = [...e.dataTransfer.types];
-  return types.includes(TOKEN_DRAG_MIME)
-    || types.some((t) => t === 'text/plain' && !types.includes(CATEGORY_DRAG_MIME));
-}
-
-function parseTokenDragPayload(e: React.DragEvent): string[] | null {
-  const raw = e.dataTransfer.getData(TOKEN_DRAG_MIME)
-    || e.dataTransfer.getData('text/plain');
-  if (!raw) return null;
-  const json = raw.startsWith(TOKEN_DRAG_PLAIN_PREFIX)
-    ? raw.slice(TOKEN_DRAG_PLAIN_PREFIX.length)
-    : raw;
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === 'string')) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
 function TokenRow({
   entry,
   selected,
   dragging,
-  brushActive,
   aliasPickActive,
   grammarEditActive,
   onRemove,
-  onPickAsAliasTarget,
-  onSelectForGrammar,
-  onDragStart,
-  onDragEnd,
+  onRowClick,
+  onRowMouseDown,
+  onRowDoubleClick,
 }: {
   entry: TokenEntry;
   selected: boolean;
   dragging?: boolean;
-  brushActive?: boolean;
   aliasPickActive?: boolean;
   grammarEditActive?: boolean;
   onRemove: () => void;
-  onPickAsAliasTarget?: () => void;
-  onSelectForGrammar?: () => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragEnd: () => void;
+  onRowClick: (e: React.MouseEvent) => void;
+  onRowMouseDown: (e: React.MouseEvent) => void;
+  onRowDoubleClick?: () => void;
 }) {
-  const pickable = Boolean(aliasPickActive && onPickAsAliasTarget);
-  const canDrag = selected && !pickable && !brushActive;
+  const pickable = Boolean(aliasPickActive);
 
   return (
     <div
+      role="option"
+      aria-selected={selected}
       data-select-id={entry.text}
-      draggable={canDrag}
-      onDragStart={canDrag ? onDragStart : undefined}
-      onDragEnd={canDrag ? onDragEnd : undefined}
+      data-selected={selected ? 'true' : 'false'}
+      onClick={onRowClick}
+      onMouseDown={onRowMouseDown}
+      onDoubleClick={onRowDoubleClick}
       className={`group flex items-center gap-1.5 px-2 py-1 rounded select-none ${
         pickable
           ? 'cursor-pointer hover:bg-sky-400/15 hover:ring-1 hover:ring-sky-400/40'
-          : grammarEditActive
-            ? 'bg-sky-400/20 ring-1 ring-sky-400/50 cursor-pointer'
-            : selected
-              ? dragging
-                ? 'bg-emerald-400/25 ring-1 ring-emerald-300/60 opacity-90 cursor-grab'
-                : 'bg-emerald-400/18 ring-1 ring-emerald-400/45 cursor-grab'
+          : selected
+            ? dragging
+              ? 'bg-emerald-500/35 ring-2 ring-emerald-300/80 opacity-90 cursor-grabbing'
+              : 'bg-emerald-500/30 ring-2 ring-emerald-400/70 cursor-grab'
+            : grammarEditActive
+              ? 'bg-sky-400/20 ring-1 ring-sky-400/50 cursor-pointer'
               : 'hover:bg-[#0f1a12] cursor-default'
       }`}
-      onClick={(e) => {
-        if (pickable) {
-          onPickAsAliasTarget?.();
-          return;
-        }
-        if (onSelectForGrammar && !(e.target as HTMLElement).closest('button')) {
-          onSelectForGrammar();
-        }
-      }}
     >
       <Circle className={`w-2 h-2 flex-shrink-0 ${entry.enabled ? 'text-amber-400/80 fill-amber-400/40' : 'text-emerald-400/25'}`} />
       <span
@@ -143,6 +125,7 @@ function TokenRow({
       {!pickable && (
         <button
           type="button"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             onRemove();
@@ -157,20 +140,14 @@ function TokenRow({
   );
 }
 
-const MemoTokenRow = memo(TokenRow, (prev, next) =>
-  prev.entry.text === next.entry.text
-  && prev.entry.enabled === next.entry.enabled
-  && prev.selected === next.selected
-  && prev.dragging === next.dragging
-  && prev.brushActive === next.brushActive
-  && prev.aliasPickActive === next.aliasPickActive
-  && prev.grammarEditActive === next.grammarEditActive
-);
+const MemoTokenRow = memo(TokenRow);
 
 function CategoryRow({
   id,
   name,
   count,
+  iconKey,
+  iconColor,
   active,
   dropHighlight,
   draggable,
@@ -185,6 +162,8 @@ function CategoryRow({
   id: string;
   name: string;
   count: number;
+  iconKey: string;
+  iconColor: string;
   active: boolean;
   dropHighlight: boolean;
   draggable: boolean;
@@ -210,20 +189,30 @@ function CategoryRow({
       onClick={onSelect}
       className={`group flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer transition-colors ${
         active
-          ? 'bg-amber-400/15 ring-1 ring-amber-400/40'
+          ? 'ring-1'
           : dropHighlight
             ? 'bg-sky-400/20 ring-1 ring-sky-400/50'
             : 'hover:bg-[#0f1a12]'
       }`}
+      style={active ? {
+        backgroundColor: `${iconColor}24`,
+        boxShadow: `inset 0 0 0 1px ${iconColor}66`,
+      } : undefined}
     >
       {draggable && (
         <GripVertical className="w-2.5 h-2.5 flex-shrink-0 text-emerald-400/30 opacity-0 group-hover:opacity-100" />
       )}
-      <Folder className={`w-3 h-3 flex-shrink-0 ${isNoCategory ? 'text-emerald-400/50' : 'text-amber-400/70'}`} />
+      <DictionaryIcon
+        iconKey={iconKey}
+        iconColor={iconColor}
+        size="sm"
+        title={name}
+      />
       <span
         className={`font-mono text-[10px] whitespace-nowrap ${
-          isNoCategory ? 'text-emerald-300/80 italic' : 'font-semibold text-amber-200/90'
+          isNoCategory ? 'text-emerald-300/80 italic' : 'font-semibold'
         }`}
+        style={isNoCategory ? undefined : { color: iconColor }}
       >
         {name}
       </span>
@@ -264,6 +253,11 @@ export function TokenTreeEditor({
   focusTokenText = null,
   onFocusTokenHandled,
 }: TokenTreeEditorProps) {
+  const selected = useDictionarySelectedSet();
+  const dictionaryCategoryDropTarget = useDictionaryDropTarget();
+  const dictionaryTokenDragActive = useDictionaryDragActive();
+  const { setSelected, setDropTarget, setDragActive } = useDictionarySelectionActions();
+
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>(NO_CATEGORY_SENTINEL);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newTokenName, setNewTokenName] = useState('');
@@ -294,23 +288,30 @@ export function TokenTreeEditor({
     [activeCategoryKey, tokens, categories],
   );
 
-  /** Only rows actually rendered — keeps brush index range aligned with the list. */
+  /** Only rows actually rendered — keeps selection index range aligned with the list. */
   const selectableTokenTexts = useMemo(
     () => visibleTokenTexts.filter((text) => entryByText.has(text)),
     [visibleTokenTexts, entryByText],
   );
 
+  const allCanonicalTexts = useMemo(
+    () => tokens.filter((t) => isCanonicalToken(t)).map((t) => t.text),
+    [tokens],
+  );
+
   const {
-    selected,
     selectedList,
-    setSelected,
     clearSelection,
     selectAll,
-    handleRowPointerDown,
-    handleListPointerOver,
-    isBrushActive,
-    endInteraction,
-  } = useListSelection(selectableTokenTexts, '[data-select-id]', tokenListRef);
+    handleRowClick,
+  } = useListSelection(selectableTokenTexts, {
+    selected: selected as Set<string>,
+    setSelected,
+    validIds: allCanonicalTexts,
+  });
+
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   useEffect(() => {
     if (!focusTokenText) return;
@@ -426,52 +427,114 @@ export function TokenTreeEditor({
   const moveTokensToTarget = useCallback((targetKey: string, tokenTexts: string[]) => {
     if (tokenTexts.length === 0) return;
     try {
-      if (targetKey === NO_CATEGORY_SENTINEL) {
-        onCategoriesChange(moveTokensToRoot(categories, tokenTexts));
-      } else {
-        let next = categories;
-        for (const text of tokenTexts) {
-          next = addTokenToCategorySorted(next, targetKey, text);
-        }
-        onCategoriesChange(next);
-      }
-      setSelected(new Set(tokenTexts));
-      setActiveCategoryKey(targetKey);
+      onCategoriesChange(assignTokensToCategory(categories, targetKey, tokenTexts));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const text of tokenTexts) next.delete(text);
+        return next;
+      });
     } catch {
       /* invalid */
     }
   }, [categories, onCategoriesChange, setSelected]);
 
-  const handleTokenDragStart = useCallback((e: React.DragEvent, tokenText: string) => {
-    const texts = selected.has(tokenText) ? selectedList : [tokenText];
-    const payload = JSON.stringify(texts);
-    e.dataTransfer.setData(TOKEN_DRAG_MIME, payload);
-    e.dataTransfer.setData('text/plain', `${TOKEN_DRAG_PLAIN_PREFIX}${payload}`);
-    e.dataTransfer.effectAllowed = 'move';
-
+  const hideDragGhost = useCallback(() => {
     const ghost = dragGhostRef.current;
-    if (ghost) {
-      if (texts.length === 1) {
-        ghost.textContent = texts[0]!;
+    if (!ghost) return;
+    ghost.style.left = '-9999px';
+    ghost.style.top = '0';
+    ghost.style.visibility = 'hidden';
+  }, []);
+
+  const showDragGhost = useCallback((label: string, clientX: number, clientY: number) => {
+    const ghost = dragGhostRef.current;
+    if (!ghost) return;
+    ghost.textContent = label;
+    ghost.style.left = `${clientX + 12}px`;
+    ghost.style.top = `${clientY + 16}px`;
+    ghost.style.visibility = 'visible';
+  }, []);
+
+  /** Off-screen element for HTML5 setDragImage and pointer-drag preview (portaled to body). */
+  const prepareDragImage = useCallback((label: string): HTMLDivElement | null => {
+    const ghost = dragGhostRef.current;
+    if (!ghost) return null;
+    ghost.textContent = label;
+    ghost.style.left = '-9999px';
+    ghost.style.top = '0';
+    ghost.style.visibility = 'visible';
+    return ghost;
+  }, []);
+
+  const startTokenPointerDrag = useCallback((e: React.MouseEvent, tokenText: string) => {
+    if (!selectedRef.current.has(tokenText)) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    if ((e.target as HTMLElement).closest('button, input, a')) return;
+
+    const texts = [...selectedRef.current];
+    const originX = e.clientX;
+    const originY = e.clientY;
+    let active = false;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - originX, ev.clientY - originY) < DRAG_THRESHOLD_PX) return;
+        active = true;
+        setTokenDragActive(true);
+        setDragActive(true);
+        showDragGhost(formatDragGhostLabel(texts), ev.clientX, ev.clientY);
       } else {
-        const preview = texts.slice(0, 3).join(', ');
-        const extra = texts.length > 3 ? `… +${texts.length - 3}` : '';
-        ghost.textContent = `${texts.length} token · ${preview}${extra}`;
+        showDragGhost(formatDragGhostLabel(texts), ev.clientX, ev.clientY);
+        const catId = categoryIdAtPoint(ev.clientX, ev.clientY);
+        setDropTargetCategory(catId);
+        setDropTarget(catId);
       }
-      e.dataTransfer.setDragImage(ghost, 12, 16);
-    }
-    setTokenDragActive(true);
-  }, [selected, selectedList]);
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      if (active) {
+        const catId = categoryIdAtPoint(ev.clientX, ev.clientY);
+        if (catId) moveTokensToTarget(catId, texts);
+      }
+      setTokenDragActive(false);
+      setDragActive(false);
+      setDropTargetCategory(null);
+      setDropTarget(null);
+      hideDragGhost();
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [
+    hideDragGhost,
+    moveTokensToTarget,
+    setDropTarget,
+    setDragActive,
+    showDragGhost,
+  ]);
 
   const handleTokenDragEnd = useCallback(() => {
     setTokenDragActive(false);
-    endInteraction();
-  }, [endInteraction]);
+    setDragActive(false);
+    setDropTargetCategory(null);
+    setDropTarget(null);
+    hideDragGhost();
+  }, [hideDragGhost, setDragActive, setDropTarget]);
 
-  const handleCategoryDragStart = useCallback((e: React.DragEvent, categoryId: string) => {
+  const handleCategoryDragStart = useCallback((
+    e: React.DragEvent,
+    categoryId: string,
+    categoryName: string,
+  ) => {
     e.dataTransfer.setData(CATEGORY_DRAG_MIME, categoryId);
     e.dataTransfer.effectAllowed = 'move';
-  }, []);
+    const ghost = prepareDragImage(categoryName);
+    if (ghost) {
+      e.dataTransfer.setDragImage(ghost, 12, 16);
+    }
+  }, [prepareDragImage]);
 
   const handleCategoryDragOver = useCallback((
     e: React.DragEvent,
@@ -487,16 +550,18 @@ export function TokenTreeEditor({
 
     if (isToken) {
       setDropTargetCategory(categoryKey);
+      setDropTarget(categoryKey);
       setCategoryDropIndex(null);
     } else if (isCategory && typeof index === 'number') {
       setCategoryDropIndex(index);
       setDropTargetCategory(null);
     }
-  }, []);
+  }, [setDropTarget]);
 
   const handleCategoryDrop = useCallback((e: React.DragEvent, categoryKey: string, index?: number) => {
     e.preventDefault();
     setDropTargetCategory(null);
+    setDropTarget(null);
     setCategoryDropIndex(null);
 
     const texts = parseTokenDragPayload(e);
@@ -510,21 +575,40 @@ export function TokenTreeEditor({
     if (draggedCategoryId && typeof index === 'number') {
       onCategoriesChange(reorderCategoryToIndex(categories, draggedCategoryId, index));
     }
-  }, [categories, handleTokenDragEnd, moveTokensToTarget, onCategoriesChange]);
+  }, [categories, handleTokenDragEnd, moveTokensToTarget, onCategoriesChange, setDropTarget]);
+
+  const effectiveDropTarget = dropTargetCategory ?? dictionaryCategoryDropTarget;
+  const anyTokenDragActive = tokenDragActive || dictionaryTokenDragActive;
 
   const grammarRowProps = (text: string) => ({
     grammarEditActive: grammarPanelOpen && grammarEditToken === text,
-    onSelectForGrammar: grammarPanelOpen && onGrammarEditTokenChange
-      ? () => onGrammarEditTokenChange(text)
-      : undefined,
   });
 
-  const handleTokenListPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  /** Single mousedown entry point — event delegation, no per-row handlers. */
+  const handleTokenRowClick = useCallback((e: React.MouseEvent, text: string) => {
+    if (aliasPickActive) {
+      onAliasTargetPick?.(text);
+      return;
+    }
+    e.stopPropagation();
+    handleRowClick(e, text);
+  }, [aliasPickActive, handleRowClick, onAliasTargetPick]);
+
+  /** Drag only: mousedown on an already-selected row (selection happens on click). */
+  const handleTokenRowMouseDown = useCallback((e: React.MouseEvent, text: string) => {
     if (aliasPickActive) return;
-    const row = (e.target as HTMLElement).closest('[data-select-id]');
-    const id = row?.getAttribute('data-select-id');
-    if (id) handleRowPointerDown(e, id);
-  }, [aliasPickActive, handleRowPointerDown]);
+    if (e.button !== 0) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    if ((e.target as HTMLElement).closest('button, input, a, label')) return;
+    if (!selectedRef.current.has(text)) return;
+    e.stopPropagation();
+    startTokenPointerDrag(e, text);
+  }, [aliasPickActive, startTokenPointerDrag]);
+
+  const handleTokenListBackgroundClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('[data-select-id]')) return;
+    clearSelection();
+  }, [clearSelection]);
 
   const activeCategoryLabel = activeCategoryKey === NO_CATEGORY_SENTINEL
     ? 'no category'
@@ -610,8 +694,10 @@ export function TokenTreeEditor({
               id={NO_CATEGORY_SENTINEL}
               name="no category"
               count={rootTexts.length}
+              iconKey={NO_CATEGORY_ICON.iconKey}
+              iconColor={NO_CATEGORY_ICON.iconColor}
               active={activeCategoryKey === NO_CATEGORY_SENTINEL}
-              dropHighlight={dropTargetCategory === NO_CATEGORY_SENTINEL}
+              dropHighlight={effectiveDropTarget === NO_CATEGORY_SENTINEL}
               draggable={false}
               onSelect={() => setActiveCategoryKey(NO_CATEGORY_SENTINEL)}
               onDragOver={(e) => handleCategoryDragOver(e, NO_CATEGORY_SENTINEL)}
@@ -629,8 +715,10 @@ export function TokenTreeEditor({
                   id={cat.id}
                   name={cat.name}
                   count={cat.tokenTexts.length}
+                  iconKey={iconForCategory(cat).iconKey}
+                  iconColor={iconForCategory(cat).iconColor}
                   active={activeCategoryKey === cat.id}
-                  dropHighlight={dropTargetCategory === cat.id}
+                  dropHighlight={effectiveDropTarget === cat.id}
                   draggable
                   onSelect={() => setActiveCategoryKey(cat.id)}
                   onDelete={
@@ -638,7 +726,7 @@ export function TokenTreeEditor({
                       ? () => handleDeleteCategory(cat.id)
                       : undefined
                   }
-                  onDragStart={(e) => handleCategoryDragStart(e, cat.id)}
+                  onDragStart={(e) => handleCategoryDragStart(e, cat.id, cat.name)}
                   onDragOver={(e) => handleCategoryDragOver(e, cat.id, index)}
                   onDragLeave={() => {
                     setDropTargetCategory(null);
@@ -646,6 +734,7 @@ export function TokenTreeEditor({
                   }}
                   onDrop={(e) => handleCategoryDrop(e, cat.id, index)}
                   onDragEnd={() => {
+                    hideDragGhost();
                     setDropTargetCategory(null);
                     setCategoryDropIndex(null);
                   }}
@@ -714,9 +803,10 @@ export function TokenTreeEditor({
           </div>
           <div
             ref={tokenListRef}
+            role="listbox"
+            aria-multiselectable
             className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5"
-            onPointerDown={handleTokenListPointerDown}
-            onPointerOver={handleListPointerOver}
+            onClick={handleTokenListBackgroundClick}
           >
             {selectableTokenTexts.length === 0 ? (
               <p className="font-mono text-[10px] text-emerald-300/90 px-2 py-4 text-center leading-relaxed">
@@ -732,16 +822,15 @@ export function TokenTreeEditor({
                     key={text}
                     entry={entry}
                     selected={isSelected}
-                    dragging={tokenDragActive && isSelected}
-                    brushActive={isBrushActive}
+                    dragging={anyTokenDragActive && isSelected}
                     aliasPickActive={aliasPickActive}
                     {...grammarRowProps(text)}
                     onRemove={() => onRemoveCanonical(text)}
-                    onDragStart={(e) => handleTokenDragStart(e, text)}
-                    onDragEnd={handleTokenDragEnd}
-                    onPickAsAliasTarget={
-                      aliasPickActive && onAliasTargetPick
-                        ? () => onAliasTargetPick(text)
+                    onRowClick={(e) => handleTokenRowClick(e, text)}
+                    onRowMouseDown={(e) => handleTokenRowMouseDown(e, text)}
+                    onRowDoubleClick={
+                      grammarPanelOpen && onGrammarEditTokenChange
+                        ? () => onGrammarEditTokenChange(text)
                         : undefined
                     }
                   />
@@ -750,16 +839,20 @@ export function TokenTreeEditor({
             )}
           </div>
           <div className="flex-shrink-0 px-2 py-0.5 border-t border-[#1a3a2a]/60 font-mono text-[8px] text-emerald-400/75">
-            Click · Ctrl+click · Shift+click · trascina per selezionare (sostituisce) · Alt+trascina per deselezionare
+            Click seleziona · Ctrl+click aggiunge/toglie · Shift+click intervallo · trascina selezionati per spostare
           </div>
         </div>
       </div>
 
-      <div
-        ref={dragGhostRef}
-        aria-hidden
-        className="fixed -left-[9999px] top-0 z-[500] pointer-events-none px-3 py-2 rounded-md border border-sky-400/50 bg-[#0a1510] shadow-xl font-mono text-[11px] text-sky-100 max-w-[220px] truncate"
-      />
+      {typeof document !== 'undefined' && createPortal(
+        <div
+          ref={dragGhostRef}
+          aria-hidden
+          className="fixed z-[10000] pointer-events-none px-3 py-2 rounded-md border border-sky-400/50 bg-[#0a1510] shadow-xl font-mono text-[11px] text-sky-100 max-w-[220px] truncate whitespace-nowrap"
+          style={{ left: -9999, top: 0, visibility: 'hidden' }}
+        />,
+        document.body,
+      )}
 
       {aliasEntries.length > 0 && (
         <div className="flex-shrink-0 max-h-[28%] overflow-y-auto border-t border-[#1a3a2a]/60 bg-[#080e0a]">

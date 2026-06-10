@@ -1,21 +1,7 @@
 /**
- * Renders a dictionary's Lucide icon with glossy console accent styling.
+ * Renders a Lucide icon with glossy console accent styling.
  */
-import {
-  BookOpen, Stethoscope, Landmark, ShoppingCart, Factory, Building2, Cpu, GraduationCap,
-  type LucideIcon,
-} from 'lucide-react';
-
-const ICON_MAP: Record<string, LucideIcon> = {
-  BookOpen,
-  Stethoscope,
-  Landmark,
-  ShoppingCart,
-  Factory,
-  Building2,
-  Cpu,
-  GraduationCap,
-};
+import { DEFAULT_LUCIDE_ICON_KEY, resolveLucideIcon } from '../../lib/lucideIconRegistry';
 
 export interface DictionaryIconProps {
   iconKey: string;
@@ -38,7 +24,7 @@ export function DictionaryIcon({
   className = '',
   title,
 }: DictionaryIconProps) {
-  const Icon = ICON_MAP[iconKey] ?? BookOpen;
+  const Icon = resolveLucideIcon(iconKey || DEFAULT_LUCIDE_ICON_KEY);
   const dim = SIZE_CLASS[size];
 
   return (
