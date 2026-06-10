@@ -12,9 +12,10 @@ interface DocumentReaderProps {
   doc: KbDocument;
   fileUrl: string;
   content: DocumentContent;
+  onDocUpdated?: (doc: KbDocument) => void;
 }
 
-export function DocumentReader({ doc, fileUrl, content }: DocumentReaderProps) {
+export function DocumentReader({ doc, fileUrl, content, onDocUpdated }: DocumentReaderProps) {
   const { tabular, textContent, loading, error } = content;
 
   if (loading) {
@@ -38,7 +39,16 @@ export function DocumentReader({ doc, fileUrl, content }: DocumentReaderProps) {
   if (doc.format === 'pdf') return <PdfViewer fileUrl={fileUrl} />;
   if (doc.format === 'docx') return <WordViewer fileUrl={fileUrl} />;
   if (doc.format === 'image') return <ImageViewer fileUrl={fileUrl} fileName={doc.name} />;
-  if (tabular) return <TabularPreview tabular={tabular} docId={doc.id} initialRoles={doc.column_roles ?? {}} />;
+  if (tabular) {
+    return (
+      <TabularPreview
+        tabular={tabular}
+        docId={doc.id}
+        initialRoles={doc.column_roles ?? {}}
+        onDocUpdated={onDocUpdated}
+      />
+    );
+  }
   if (textContent !== null) return <TextViewer text={textContent} format={doc.format} />;
 
   return null;

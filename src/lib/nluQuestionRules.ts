@@ -4,6 +4,7 @@
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import {
   collectSubtreeSlots,
+  getAgentGenerationRoots,
   getDirectChildSlots,
   getRowBySlot,
   indexRowsBySlot,
@@ -117,6 +118,7 @@ export function applyNluQuestionRules(
     const children = getDirectChildSlots(slots, slot);
 
     if (isPrefixAmbiguityNode(slots, slot, itemPaths)) {
+      if (row.question?.trim()) return row;
       const directChildItems = getDirectChildItemSlots(slot, itemPaths);
       const targets = directChildItems.length > 0
         ? directChildItems
@@ -133,6 +135,7 @@ export function applyNluQuestionRules(
     }
 
     if (children.length >= 2 && children.length <= 3) {
+      if (row.question?.trim() && questionListsOptions(row.question, children)) return row;
       return {
         ...row,
         question: buildOptionsQuestion(slot, children, row.question),
@@ -272,9 +275,13 @@ function isSubtreeLayerComplete(
 }
 
 /** True when every slot in a subtree has complete messages. */
-export function isSubtreeMessagesComplete(rows: AnalysisRow[], rootSlot: string): boolean {
+export function isSubtreeMessagesComplete(
+  rows: AnalysisRow[],
+  rootSlot: string,
+  itemPathsInput?: string[] | null,
+): boolean {
   return isSubtreeLayerComplete(rows, rootSlot, (slots, slot, row) =>
-    isMessagesNodeComplete(slots, slot, row));
+    isMessagesNodeComplete(slots, slot, row, itemPathsInput));
 }
 
 /** True when every slot in a subtree has complete grammars. */
@@ -320,10 +327,13 @@ export function isGrammarsLayerReady(
 export function isMessagesLayerReady(
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  startQuestion?: string | null,
 ): boolean {
   const slots = rows.map((r) => r.slot_filling);
   const interactive = slots.filter((s) => requiresInteractiveNode(slots, s, itemPathsInput));
-  if (interactive.length === 0) return false;
+  if (interactive.length === 0) {
+    return getAgentGenerationRoots(slots).length > 1 && !!startQuestion?.trim();
+  }
   const bySlot = indexRowsBySlot(rows);
   return interactive.every((slot) => {
     const row = getRowBySlot(bySlot, slot);
@@ -349,6 +359,29 @@ export function mergeTaxonomyWithExistingNlu(
       no_match_1: saved.no_match_1,
       no_match_2: saved.no_match_2,
       no_match_3: saved.no_match_3,
+      confirmation_text: saved.confirmation_text ?? null,
+      status: saved.status ?? null,
+    };
+  });
+}
+
+/**
+ * Rebuilds taxonomy for message regeneration: keeps grammars/confirmations,
+ * clears questions so new disambiguation copy is always written.
+ */
+export function mergeTaxonomyForMessageRegen(
+  taxonomyRows: AnalysisRow[],
+  existingRows?: AnalysisRow[] | null,
+): AnalysisRow[] {
+  if (!existingRows?.length) return taxonomyRows;
+  const bySlot = indexRowsBySlot(existingRows);
+  return taxonomyRows.map((row) => {
+    const saved = getRowBySlot(bySlot, row.slot_filling);
+    if (!saved) return row;
+    return {
+      ...row,
+      grammar: saved.grammar,
+      answer_grammar: saved.answer_grammar ?? null,
       confirmation_text: saved.confirmation_text ?? null,
       status: saved.status ?? null,
     };

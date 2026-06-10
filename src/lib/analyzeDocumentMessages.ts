@@ -141,8 +141,9 @@ export function buildRegenGrammarsSubtreeUserMessage(
 export function buildMessagesCorrectionMessage(lastError: string): string {
   return (
     `\n\nCORREZIONE OBBLIGATORIA: tentativo precedente fallito (${lastError}). ` +
-    `Rigenera TUTTI i nodi interni con question e no_match_1/2/3 completi. grammar deve essere null. ` +
-    `Formato JSON: { "rows": [ { "slot_filling": "path.esatto", ... } ] } — NON usare { "tac": { ... } }.`
+    `Rigenera UNA riga per OGNI path elencato in "GENERA UNA RIGA" con question e no_match_1/2/3. ` +
+    `grammar=null. NON includere nodi trasparenti o item terminali. ` +
+    `Formato: { "rows": [ { "slot_filling": "path.esatto", ... } ] } — NON usare { "tac": { ... } }.`
   );
 }
 

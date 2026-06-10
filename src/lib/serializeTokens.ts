@@ -6,7 +6,9 @@ import type { TokenEntry } from './tokenDictionary';
 
 export function serializeTokenEntries(tokens: TokenEntry[]): string {
   return JSON.stringify(
-    tokens.map(({ text, enabled, suppressedBy, aliasOf }) => ({ text, enabled, suppressedBy, aliasOf })),
+    tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
+      text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
+    })),
   );
 }
 
@@ -15,7 +17,9 @@ export function serializeDictionarySnapshot(
   categories: TokenCategory[],
 ): string {
   return JSON.stringify({
-    tokens: tokens.map(({ text, enabled, suppressedBy, aliasOf }) => ({ text, enabled, suppressedBy, aliasOf })),
+    tokens: tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
+      text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
+    })),
     categories: categories.map(({ id, name, order, tokenTexts }) => ({
       id, name, order, tokenTexts,
     })),

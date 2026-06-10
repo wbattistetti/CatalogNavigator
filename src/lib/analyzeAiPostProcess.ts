@@ -4,6 +4,8 @@
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import {
   expandLeafPathsToTree,
+  getRowBySlot,
+  indexRowsBySlot,
   normalizeSlotKey,
   normalizeSlotPathFromAi,
   orderSlotsDepthFirst,
@@ -13,6 +15,12 @@ import {
   normalizeGrammarEntry,
   normalizeGrammarRegex,
 } from './grammarNormalize';
+import {
+  buildMessageFreeRow,
+  buildInteractiveMessageFallback,
+  ensureInteractiveNoMatch,
+  isMessageFreeSlot,
+} from './messageAssembly';
 import {
   applyNluQuestionRules,
   isPassthroughNode,
@@ -57,19 +65,6 @@ function validateInternalNode(
   if (!row.grammar.mappings || Object.keys(row.grammar.mappings).length === 0) {
     throw new Error(`Mappings mancanti per nodo interno: ${slot}`);
   }
-  if (!row.no_match_1?.trim() || !row.no_match_2?.trim() || !row.no_match_3?.trim()) {
-    throw new Error(`Re-prompt mancanti per nodo interno: ${slot}`);
-  }
-}
-
-function validateMessagesInternalNode(
-  slots: string[],
-  slot: string,
-  row: AnalysisRow,
-  itemPathsInput?: string[] | null,
-): void {
-  if (!requiresInteractiveNode(slots, slot, itemPathsInput)) return;
-  if (!row.question?.trim()) throw new Error(`Domanda mancante per nodo interno: ${slot}`);
   if (!row.no_match_1?.trim() || !row.no_match_2?.trim() || !row.no_match_3?.trim()) {
     throw new Error(`Re-prompt mancanti per nodo interno: ${slot}`);
   }
@@ -236,7 +231,10 @@ export function processTaxonomyAiResponse(rawRows: unknown[]): TaxonomyBuildResu
   return buildTaxonomyFromItemPaths(leafPaths);
 }
 
-/** Maps AI rows onto input slots for messages-only generation. */
+/**
+ * Builds one row per slot deterministically.
+ * AI rows (optional) enrich interactive paths only; missing slots never throw.
+ */
 export function assembleMessagesRows(
   slots: string[],
   aiRows: AnalysisRow[],
@@ -245,35 +243,26 @@ export function assembleMessagesRows(
   const { byExact, byNormalized } = indexAiRows(aiRows);
 
   return slots.map((slot) => {
-    const matched = matchAiRow(slot, byExact, byNormalized);
-    if (!matched) throw new Error(`Slot mancante nella risposta AI: ${slot}`);
-
-    if (isMessageFreeNode(slots, slot, itemPathsInput)) {
-      return {
-        slot_filling: slot,
-        question: null,
-        grammar: null,
-        answer_grammar: null,
-        no_match_1: null,
-        no_match_2: null,
-        no_match_3: null,
-        confirmation_text: matched.confirmation_text ?? null,
-        status: null,
-      };
+    if (isMessageFreeSlot(slots, slot, itemPathsInput)) {
+      return buildMessageFreeRow(slot);
     }
 
-    validateMessagesInternalNode(slots, slot, matched, itemPathsInput);
-    return {
+    const matched = matchAiRow(slot, byExact, byNormalized);
+    const fallback = buildInteractiveMessageFallback(slots, slot, itemPathsInput);
+
+    const row = ensureInteractiveNoMatch({
       slot_filling: slot,
-      question: matched.question,
+      question: matched?.question?.trim() || fallback.question,
       grammar: null,
       answer_grammar: null,
-      no_match_1: matched.no_match_1,
-      no_match_2: matched.no_match_2,
-      no_match_3: matched.no_match_3,
-      confirmation_text: matched.confirmation_text ?? null,
+      no_match_1: matched?.no_match_1?.trim() || fallback.no_match_1,
+      no_match_2: matched?.no_match_2?.trim() || fallback.no_match_2,
+      no_match_3: matched?.no_match_3?.trim() || fallback.no_match_3,
+      confirmation_text: matched?.confirmation_text ?? null,
       status: null,
-    };
+    });
+
+    return row;
   });
 }
 
@@ -312,6 +301,30 @@ export function processNluAiResponse(
 
   const assembled = normalizeGrammarRows(assembleRegenRows(slots, aiRows, itemPathsInput));
   return applyNluQuestionRules(slots, assembled, itemPathsInput);
+}
+
+/**
+ * Applies algorithmic questions/no_match to existing rows (preserves grammars).
+ * Always runs before optional AI enrichment so every interactive slot is linked.
+ */
+export function applyDeterministicMessagesLayer(
+  rows: AnalysisRow[],
+  itemPathsInput?: string[] | null,
+): AnalysisRow[] {
+  const slots = rows.map((r) => r.slot_filling);
+  const messages = processMessagesAiResponse(slots, [], itemPathsInput);
+  const bySlot = indexRowsBySlot(messages);
+  return rows.map((row) => {
+    const msg = getRowBySlot(bySlot, row.slot_filling);
+    if (!msg) return row;
+    return {
+      ...row,
+      question: msg.question,
+      no_match_1: msg.no_match_1,
+      no_match_2: msg.no_match_2,
+      no_match_3: msg.no_match_3,
+    };
+  });
 }
 
 /** Processes messages-only AI response. */

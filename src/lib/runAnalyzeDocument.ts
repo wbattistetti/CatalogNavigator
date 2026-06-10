@@ -2,6 +2,7 @@
  * Orchestrates OpenAI analysis: builds prompts client-side, calls edge proxy, post-processes.
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
+import { getInteractiveMessageSlots } from './analysisTree';
 import { coerceAiResponseToRows, parseOpenAiContent } from './coerceAiRows';
 import { invokeFunction } from './invokeFunction';
 import type { TaxonomyBuildResult } from './analyzeAiPostProcess';
@@ -176,6 +177,11 @@ export async function runRegenMessagesSubtree(
   signal?: AbortSignal,
   itemPaths?: string[] | null,
 ): Promise<AnalysisRow[]> {
+  const interactiveSlots = getInteractiveMessageSlots(slots, itemPaths);
+  if (interactiveSlots.length === 0) {
+    return processMessagesAiResponse(slots, [], itemPaths);
+  }
+
   return callLayerWithRetry(
     REGEN_MESSAGES_PROMPT,
     (correction) => buildRegenMessagesSubtreeUserMessage(slots, rootSlot, documentName, documentText, correction, itemPaths),

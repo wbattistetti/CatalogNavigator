@@ -2,8 +2,12 @@
  * Loads document text and tabular data once per file — shared by reader and dictionary.
  */
 import { useEffect, useState } from 'react';
-import { isTabularFormat, supportsDictionaryFormat } from '../lib/fileFormat';
-import { parseTabularText, parseTextForDictionary, xlsxToTabular } from '../lib/parseTabular';
+import { supportsDictionaryFormat } from '../lib/fileFormat';
+import {
+  loadTabularFromBuffer,
+  parseTextForDictionary,
+  serializeTabular,
+} from '../lib/parseTabular';
 import type { ParsedTabular } from '../lib/parseTabular';
 import type { KbDocument } from '../lib/supabase';
 
@@ -60,6 +64,17 @@ async function extractDocxText(ab: ArrayBuffer): Promise<string> {
   return result.value;
 }
 
+function loadTabularContent(ab: ArrayBuffer, doc: KbDocument): DocumentContent {
+  const tabular = loadTabularFromBuffer(ab, doc.name, doc.format);
+  return {
+    text: serializeTabular(tabular),
+    tabular,
+    textContent: null,
+    loading: false,
+    error: null,
+  };
+}
+
 /** Fetches and parses document content; survives tab switches. */
 export function useDocumentContent(doc: KbDocument, fileUrl: string): DocumentContent {
   const [content, setContent] = useState<DocumentContent>(IDLE);
@@ -94,51 +109,33 @@ export function useDocumentContent(doc: KbDocument, fileUrl: string): DocumentCo
       try {
         const res = await fetch(fileUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        if (doc.format === 'xlsx') {
-          const blob = await res.blob();
-          const file = new File([blob], doc.name, { type: blob.type });
-          const { tabular } = await xlsxToTabular(file);
-          const serialized = [tabular.headers.join('\t'), ...tabular.rows.map((r) => r.join('\t'))].join('\n');
-          if (!cancelled) {
-            setContent({
-              text: serialized,
-              tabular,
-              textContent: null,
-              loading: false,
-              error: null,
-            });
-          }
-          return;
-        }
-
-        const text = await res.text();
+        const ab = await res.arrayBuffer();
         if (cancelled) return;
 
-        if (isTabularFormat(doc.format)) {
-          const parsed = parseTabularText(text);
-          setContent({
-            text,
-            tabular: parsed,
-            textContent: parsed ? null : text,
-            loading: false,
-            error: null,
-          });
+        if (doc.format === 'xlsx' || doc.format === 'csv') {
+          setContent(loadTabularContent(ab, doc));
           return;
         }
 
         if (supportsDictionaryFormat(doc.format)) {
-          const parsed = parseTextForDictionary(text);
-          setContent({
-            text,
-            tabular: parsed,
-            textContent: parsed ? null : text,
-            loading: false,
-            error: null,
-          });
-          return;
+          try {
+            setContent(loadTabularContent(ab, doc));
+            return;
+          } catch {
+            const text = new TextDecoder('utf-8').decode(ab);
+            const parsed = parseTextForDictionary(text);
+            setContent({
+              text,
+              tabular: parsed,
+              textContent: parsed ? null : text,
+              loading: false,
+              error: parsed ? null : null,
+            });
+            return;
+          }
         }
 
+        const text = new TextDecoder('utf-8').decode(ab);
         setContent({
           text,
           tabular: null,

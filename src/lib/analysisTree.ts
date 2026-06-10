@@ -319,10 +319,10 @@ export function mergeSubtreeMessageRows(
 ): AnalysisRow[] {
   return mergeSubtreeLayerRows(allRows, regenedBySlot, rootSlot, preserveComplete, isNodeComplete, (existing, regened) => ({
     ...existing,
-    question: regened.question,
-    no_match_1: regened.no_match_1,
-    no_match_2: regened.no_match_2,
-    no_match_3: regened.no_match_3,
+    question: regened.question?.trim() || existing.question,
+    no_match_1: regened.no_match_1?.trim() || existing.no_match_1,
+    no_match_2: regened.no_match_2?.trim() || existing.no_match_2,
+    no_match_3: regened.no_match_3?.trim() || existing.no_match_3,
     status: preserveComplete ? (existing.status ?? null) : null,
   }));
 }
@@ -343,7 +343,12 @@ export function mergeSubtreeGrammarRows(
   }));
 }
 
-function isInteractiveSlot(slots: string[], slot: string, itemPathsInput?: string[] | null): boolean {
+/** True when a path needs a disambiguation question (unique per slot_filling). */
+export function isInteractiveMessageSlot(
+  slots: string[],
+  slot: string,
+  itemPathsInput?: string[] | null,
+): boolean {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
   if (isTerminalItemSlot(slot, itemPaths)) return false;
   const children = getDirectChildSlots(slots, slot);
@@ -352,17 +357,37 @@ function isInteractiveSlot(slots: string[], slot: string, itemPathsInput?: strin
   return false;
 }
 
+/** Paths that require an AI (or fallback) disambiguation question. */
+export function getInteractiveMessageSlots(
+  slots: string[],
+  itemPathsInput?: string[] | null,
+): string[] {
+  return slots.filter((s) => isInteractiveMessageSlot(slots, s, itemPathsInput));
+}
+
+function isInteractiveSlot(slots: string[], slot: string, itemPathsInput?: string[] | null): boolean {
+  return isInteractiveMessageSlot(slots, slot, itemPathsInput);
+}
+
 /** Returns internal nodes that are missing required NLU fields. */
-export function findInvalidInternalNodes(slots: string[], rows: AnalysisRow[]): string[] {
-  return findInvalidMessagesNodes(slots, rows);
+export function findInvalidInternalNodes(
+  slots: string[],
+  rows: AnalysisRow[],
+  itemPathsInput?: string[] | null,
+): string[] {
+  return findInvalidMessagesNodes(slots, rows, itemPathsInput);
 }
 
 /** Returns interactive nodes missing questions or re-prompts. */
-export function findInvalidMessagesNodes(slots: string[], rows: AnalysisRow[]): string[] {
+export function findInvalidMessagesNodes(
+  slots: string[],
+  rows: AnalysisRow[],
+  itemPathsInput?: string[] | null,
+): string[] {
   const bySlot = indexRowsBySlot(rows);
   const invalid: string[] = [];
   for (const slot of slots) {
-    if (!isInteractiveSlot(slots, slot)) continue;
+    if (!isInteractiveSlot(slots, slot, itemPathsInput)) continue;
     const row = getRowBySlot(bySlot, slot);
     if (!row?.question?.trim()
       || !row.no_match_1?.trim()
@@ -422,10 +447,17 @@ export function findInvalidGrammarNodes(
   return invalid;
 }
 
-/** True when at least one interactive node has a question. */
-export function hasMessagesContent(rows: AnalysisRow[]): boolean {
+/** True when at least one interactive node has a question (or multi-root start question). */
+export function hasMessagesContent(
+  rows: AnalysisRow[],
+  itemPathsInput?: string[] | null,
+  startQuestion?: string | null,
+): boolean {
   const slots = rows.map((r) => r.slot_filling);
-  return rows.some((r) => isInteractiveSlot(slots, r.slot_filling) && !!r.question?.trim());
+  if (getAgentGenerationRoots(slots).length > 1 && startQuestion?.trim()) return true;
+  return rows.some(
+    (r) => isInteractiveSlot(slots, r.slot_filling, itemPathsInput) && !!r.question?.trim(),
+  );
 }
 
 /** True when all nodes have grammars and interactive nodes have messages (ready for test). */
@@ -529,14 +561,19 @@ export function orderAnalysisRowsDepthFirst(rows: AnalysisRow[]): AnalysisRow[] 
   });
 }
 
-/** Describes which nodes require messages (questions + re-prompts). */
-export function formatMessagesNodesSection(slots: string[], itemPathsInput?: string[] | null): string {
+/** Prompt section: only interactive paths — AI generates one row per listed path. */
+export function formatInteractiveMessagesPrompt(
+  slots: string[],
+  itemPathsInput?: string[] | null,
+): string {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const internal = slots.filter((s) => isInteractiveSlot(slots, s, itemPaths));
-  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths));
-  const terminalItems = slots.filter((s) => isTerminalItemSlot(s, itemPaths));
+  const interactive = getInteractiveMessageSlots(slots, itemPathsInput);
 
-  const internalLines = internal.map((slot) => {
+  if (interactive.length === 0) {
+    return 'Nessun nodo richiede domanda di disambiguazione in questo sottoalbero.\n';
+  }
+
+  const lines = interactive.map((slot) => {
     const children = getDirectChildSlots(slots, slot);
     const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
       ? ' (disambiguazione: semplice vs estensione figlio-item)'
@@ -547,11 +584,24 @@ export function formatMessagesNodesSection(slots: string[], itemPathsInput?: str
   });
 
   return (
-    `NODI CON DOMANDA (${internal.length}) — question + no_match_1/2/3 OBBLIGATORI, grammar=null:\n` +
-    `${internalLines.join('\n')}\n\n` +
-    `NODI TRASPARENTI (${passthrough.length}) — question=null, grammar=null, no_match=null:\n` +
+    `GENERA UNA RIGA PER OGNI PATH SOTTO (${interactive.length}) — slot_filling IDENTICO al path elencato.\n` +
+    `Campi: slot_filling, question, grammar=null, no_match_1, no_match_2, no_match_3, status=null.\n` +
+    `NON generare righe per altri slot: nodi trasparenti e item terminali sono compilati dal sistema.\n\n` +
+    lines.join('\n')
+  );
+}
+
+/** Describes which nodes require messages (questions + re-prompts). */
+export function formatMessagesNodesSection(slots: string[], itemPathsInput?: string[] | null): string {
+  const itemPaths = resolveItemPaths(slots, itemPathsInput);
+  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths));
+  const terminalItems = slots.filter((s) => isTerminalItemSlot(s, itemPaths));
+
+  return (
+    formatInteractiveMessagesPrompt(slots, itemPathsInput) +
+    `\nNODI TRASPARENTI (${passthrough.length}) — compilati automaticamente, NON inviare all'AI:\n` +
     `${passthrough.map((s) => `- ${s}`).join('\n')}\n\n` +
-    `ITEM TERMINALI (${terminalItems.length}) — question=null, grammar=null, no_match=null:\n` +
+    `ITEM TERMINALI (${terminalItems.length}) — compilati automaticamente, NON inviare all'AI:\n` +
     `${terminalItems.map((s) => `- ${s}`).join('\n')}`
   );
 }

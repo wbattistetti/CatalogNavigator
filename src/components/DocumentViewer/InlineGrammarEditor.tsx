@@ -1,7 +1,7 @@
 /**
  * Inline synonym editor for node grammars — compiles to regex without exposing JSON.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import type { GrammarEditMode, GrammarEntry } from '../../hooks/useAnalysis';
 import {
@@ -15,7 +15,7 @@ import {
 const ANSWER_PANEL_GUIDE =
   'Parole che, rispondendo alla domanda sopra, specificano questo nodo.';
 const NODE_GUIDE =
-  'Parole che identificano questo nodo nel testo dell\'utente.';
+  'Sinonimi del token (condivisi da tutti i nodi con questo segmento).';
 
 function SynonymTextarea({
   value,
@@ -30,6 +30,7 @@ function SynonymTextarea({
 }) {
   const [draft, setDraft] = useState(() => formatSynonymText(value));
 
+  // Reset draft only when switching token/grammar — not on every parent re-render.
   useEffect(() => {
     setDraft(formatSynonymText(value));
   }, [syncKey]);
@@ -53,7 +54,12 @@ function SynonymTextarea({
   );
 }
 
-export function InlineGrammarEditor({
+export interface GrammarEditorHandle {
+  /** Persists the current draft (same as Salva). Returns false on compile error. */
+  flushSave: () => boolean;
+}
+
+export const InlineGrammarEditor = forwardRef(function InlineGrammarEditor({
   slot,
   slots,
   itemPaths,
@@ -69,32 +75,50 @@ export function InlineGrammarEditor({
   mode: GrammarEditMode;
   onSave: (grammar: GrammarEntry) => void;
   onCancel: () => void;
-}) {
+}, ref) {
   const initial = useMemo(
     () => buildGrammarEditorState(slot, slots, itemPaths, grammar, mode),
     [slot, slots, itemPaths, grammar, mode],
   );
+
+  const grammarSync = grammar?.regex ?? '';
 
   const [interactive] = useState(initial.interactive);
   const [panels, setPanels] = useState<GrammarEditorPanel[]>(initial.panels);
   const [simpleSynonyms, setSimpleSynonyms] = useState<string[]>(initial.simpleSynonyms);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const next = buildGrammarEditorState(slot, slots, itemPaths, grammar, mode);
+    setPanels(next.panels);
+    setSimpleSynonyms(next.simpleSynonyms);
+    setError(null);
+  }, [slot, mode, grammarSync, slots, itemPaths, grammar]);
+
   const updatePanelSynonyms = (index: number, synonyms: string[]) => {
     setPanels((prev) => prev.map((p, i) => (i === index ? { ...p, synonyms } : p)));
     setError(null);
   };
 
-  const handleSave = () => {
+  const persistDraft = (): boolean => {
     try {
       const compiled = compileGrammarFromEditorState(slot, mode, panels, simpleSynonyms);
       onSave(compiled);
+      setError(null);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     }
   };
 
-  const title = mode === 'node' ? 'Sinonimi nodo' : 'Sinonimi risposta';
+  useImperativeHandle(ref, () => ({ flushSave: persistDraft }), [slot, mode, panels, simpleSynonyms, onSave]);
+
+  const handleSave = () => {
+    persistDraft();
+  };
+
+  const title = mode === 'node' ? 'Sinonimi token' : 'Sinonimi risposta';
 
   return (
     <div
@@ -115,7 +139,7 @@ export function InlineGrammarEditor({
               {ANSWER_PANEL_GUIDE}
             </p>
             <SynonymTextarea
-              syncKey={`${mode}:${slot}:${panel.targetPath}`}
+              syncKey={`${mode}:${slot}:${panel.targetPath}:${grammarSync}`}
               value={panel.synonyms}
               onChange={(syns) => updatePanelSynonyms(index, syns)}
               placeholder={`Sinonimi per ${panel.label}…`}
@@ -131,7 +155,7 @@ export function InlineGrammarEditor({
             {NODE_GUIDE}
           </p>
           <SynonymTextarea
-            syncKey={`${mode}:${slot}`}
+            syncKey={`${mode}:${slot}:${grammarSync}`}
             value={simpleSynonyms}
             onChange={(syns) => {
               setSimpleSynonyms(syns);
@@ -166,4 +190,4 @@ export function InlineGrammarEditor({
       </div>
     </div>
   );
-}
+});

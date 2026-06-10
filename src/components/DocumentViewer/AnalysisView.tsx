@@ -52,6 +52,10 @@ interface AnalysisViewProps {
   /** When true, grammar generation overwrites existing regex. */
   grammarOverwrite?: boolean;
   onGrammarOverwriteChange?: (overwrite: boolean) => void;
+  /** Dictionary tokens — source of truth for recognition grammars. */
+  grammarTokens?: import('../../lib/tokenDictionary').TokenEntry[];
+  /** Called after a token grammar is saved from the agent tree. */
+  onTokenGrammarSaved?: (tokens: import('../../lib/tokenDictionary').TokenEntry[]) => void;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -432,7 +436,6 @@ const TreeNode = memo(function TreeNode({
   isRegening: boolean;
   onRegenRoot: (root: string) => void;
 }) {
-  const isNodeGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'node');
   const isAnswerGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'answer');
   const depth = row.slot_filling.split('.').length - 1;
   const parentSlot = row.slot_filling.split('.').slice(0, -1).join('.');
@@ -540,7 +543,6 @@ const TreeNode = memo(function TreeNode({
           <CellActions
             status={row.status}
             canEdit={true}
-            grammarOpen={isNodeGrammarOpen}
             isDirty={isDirty}
             isRegening={isRegening}
             onApprove={() => handleValidation('approved')}
@@ -548,7 +550,6 @@ const TreeNode = memo(function TreeNode({
             onUncertain={() => handleValidation('uncertain')}
             onEdit={() => { setPathDraft(row.slot_filling); setEditingPath(true); }}
             onDelete={() => onDeleteRow(originalIndex)}
-            onToggleGrammar={() => onToggleGrammarEdit(row.slot_filling, 'node')}
             onAddChild={() => { setAddMode('child'); setAddDraft(''); }}
             onAddSibling={depth > 0 ? () => { setAddMode('sibling'); setAddDraft(''); } : undefined}
             onRegen={() => onRegenRoot(row.slot_filling)}
@@ -575,17 +576,6 @@ const TreeNode = memo(function TreeNode({
               <X className="w-3 h-3" />
             </button>
           </div>
-        )}
-        {isNodeGrammarOpen && (
-          <InlineGrammarEditor
-            slot={row.slot_filling}
-            slots={allSlots}
-            itemPaths={itemPaths}
-            grammar={row.grammar}
-            mode="node"
-            onSave={(grammar) => onGrammarSave(row.slot_filling, 'node', grammar)}
-            onCancel={onGrammarEditCancel}
-          />
         )}
       </td>
 
@@ -892,7 +882,6 @@ const SplitMessageRow = memo(function SplitMessageRow({
   isRegening: boolean;
   onRegenRoot: (root: string) => void;
 }) {
-  const isNodeGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'node');
   const isAnswerGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'answer');
   const parentSlot = row.slot_filling.split('.').slice(0, -1).join('.');
   const [editingField, setEditingField] = useState<EditField | null>(null);
@@ -1001,7 +990,6 @@ const SplitMessageRow = memo(function SplitMessageRow({
           <CellActions
             status={row.status}
             canEdit={true}
-            grammarOpen={isNodeGrammarOpen}
             isDirty={isDirty}
             isRegening={isRegening}
             onApprove={() => handleValidation('approved')}
@@ -1009,7 +997,6 @@ const SplitMessageRow = memo(function SplitMessageRow({
             onUncertain={() => handleValidation('uncertain')}
             onEdit={() => { setPathDraft(row.slot_filling); setEditingPath(true); }}
             onDelete={() => onDeleteRow(originalIndex)}
-            onToggleGrammar={() => onToggleGrammarEdit(row.slot_filling, 'node')}
             onAddChild={() => { setAddMode('child'); setAddDraft(''); }}
             onAddSibling={depth > 0 ? () => { setAddMode('sibling'); setAddDraft(''); } : undefined}
             onRegen={() => onRegenRoot(row.slot_filling)}
@@ -1036,17 +1023,6 @@ const SplitMessageRow = memo(function SplitMessageRow({
               <X className="w-3 h-3" />
             </button>
           </div>
-        )}
-        {isNodeGrammarOpen && (
-          <InlineGrammarEditor
-            slot={row.slot_filling}
-            slots={allSlots}
-            itemPaths={itemPaths}
-            grammar={row.grammar}
-            mode="node"
-            onSave={(grammar) => onGrammarSave(row.slot_filling, 'node', grammar)}
-            onCancel={onGrammarEditCancel}
-          />
         )}
       </td>
       <td className="group relative overflow-visible px-3 py-1.5 border-r border-[#1a3a2a] align-top min-w-[200px]">
@@ -1345,7 +1321,6 @@ function FlatRow({
   onGrammarSave: (slot: string, mode: GrammarEditMode, grammar: GrammarEntry) => void;
   onGrammarEditCancel: () => void;
 }) {
-  const isNodeGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'node');
   const depth = row.slot_filling.split('.').length - 1;
   const parentSlot = row.slot_filling.split('.').slice(0, -1).join('.');
   const [editingField, setEditingField] = useState<EditField | null>(null);
@@ -1431,7 +1406,6 @@ function FlatRow({
             <CellActions
               status={row.status}
               canEdit={true}
-              grammarOpen={isNodeGrammarOpen}
               isDirty={isDirty}
               isRegening={isRegening}
               onApprove={() => handleValidation('approved')}
@@ -1439,7 +1413,6 @@ function FlatRow({
               onUncertain={() => handleValidation('uncertain')}
               onEdit={() => { setPathDraft(row.slot_filling); setEditingPath(true); }}
               onDelete={onDelete}
-              onToggleGrammar={() => onToggleGrammarEdit(row.slot_filling, 'node')}
               onAddChild={() => { setAddMode('child'); setAddDraft(''); }}
               onAddSibling={depth > 0 ? () => { setAddMode('sibling'); setAddDraft(''); } : undefined}
               onRegen={onRegen}
@@ -1466,17 +1439,6 @@ function FlatRow({
                 <X className="w-3 h-3" />
               </button>
             </div>
-          )}
-          {isNodeGrammarOpen && (
-            <InlineGrammarEditor
-              slot={row.slot_filling}
-              slots={allSlots}
-              itemPaths={itemPaths}
-              grammar={row.grammar}
-              mode="node"
-              onSave={(grammar) => onGrammarSave(row.slot_filling, 'node', grammar)}
-              onCancel={onGrammarEditCancel}
-            />
           )}
         </td>
         <DataCell
@@ -1719,6 +1681,8 @@ export function AnalysisView({
   showOnlyMessageNodes: showOnlyMessageNodesProp = false,
   grammarOverwrite: grammarOverwriteProp = false,
   onGrammarOverwriteChange,
+  grammarTokens = [],
+  onTokenGrammarSaved,
 }: AnalysisViewProps) {
   const {
     analysis, loading, saving, analysisDirty, generating, generatingPhase, agentGenProgress,
@@ -1822,8 +1786,7 @@ export function AnalysisView({
   ) => {
     const idx = rows.findIndex((r) => r.slot_filling === slot);
     if (idx < 0) return;
-    const field = mode === 'node' ? 'grammar' : 'answer_grammar';
-    updateRow(idx, { [field]: grammar, status: null });
+    updateRow(idx, { answer_grammar: grammar, status: null });
     setGrammarEditTarget(null);
   }, [rows, updateRow, setGrammarEditTarget]);
 
@@ -1964,7 +1927,8 @@ export function AnalysisView({
                   onClick={() => void (async () => {
                     const overwrite = grammarOverwrite;
                     try {
-                      await generateGrammars(documentText ?? '', doc.name, overwrite);
+                      const next = await generateGrammars(grammarTokens, documentText ?? '', doc.name, overwrite);
+                      if (next) onTokenGrammarSaved?.(next);
                       if (overwrite) setGrammarOverwriteMode(false);
                     } catch { /* error in hook */ }
                   })()}
@@ -2188,6 +2152,7 @@ export function AnalysisView({
                 start_question: analysis?.start_question ?? null,
                 confirmation_preamble: analysis?.confirmation_preamble ?? null,
                 item_paths: analysis?.item_paths ?? null,
+                tokens: grammarTokens,
               }}
               onClose={() => setTestOpen(false)}
             />

@@ -1,0 +1,236 @@
+/**
+ * Loads and manages project dictionaries: library links, CRUD, and edit sessions.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { KbDocument } from '../lib/supabase';
+import type { KbDictionary } from '../lib/dictionaryLibrary';
+import {
+  createDictionary,
+  ensureDefaultProjectDictionary,
+  ensureProjectForDocument,
+  linkLibraryDictionary,
+  listAvailableDictionaries,
+  listLinkedLibraryDictionaries,
+  listProjectDictionaries,
+  migrateLegacyDocumentDictionary,
+  unlinkLibraryDictionary,
+  updateDictionary,
+} from '../lib/dictionaryLibrary';
+import { buildLoadedRefs, type LoadedDictionaryRef } from '../lib/multiDictionarySegment';
+import { defaultDictionaryEditorId } from '../lib/dictionaryTabOrder';
+import { useDictionaryEditSessions } from './useDictionaryEditSessions';
+
+export type { DictionaryEditSession } from '../lib/dictionaryEditSession';
+
+export interface UseProjectDictionariesResult {
+  loading: boolean;
+  error: string | null;
+  projectId: string | null;
+  available: KbDictionary[];
+  projectDicts: KbDictionary[];
+  linkedLibrary: Array<{ dictionary: KbDictionary; sortOrder: number }>;
+  loadedRefs: LoadedDictionaryRef[];
+  allLoadedDictionaries: KbDictionary[];
+  openEditorIds: string[];
+  editingDictionary: KbDictionary | null;
+  editingDictionaryId: string | null;
+  focusDictionaryEditor: ReturnType<typeof useDictionaryEditSessions>['focusDictionaryEditor'];
+  setEditingDictionaryId: (id: string) => void;
+  dirty: boolean;
+  canSave: boolean;
+  anyEditorDirty: boolean;
+  getSession: ReturnType<typeof useDictionaryEditSessions>['getSession'];
+  getDictionaryMeta: ReturnType<typeof useDictionaryEditSessions>['getDictionaryMeta'];
+  openDictionaryEditor: (dictionaryId: string) => void;
+  closeDictionaryEditor: (dictionaryId: string, options?: { force?: boolean }) => boolean;
+  isEditorOpen: (dictionaryId: string) => boolean;
+  reload: () => Promise<void>;
+  loadLibraryDictionary: (dictionaryId: string) => Promise<void>;
+  unloadLibraryDictionary: (dictionaryId: string) => Promise<void>;
+  createNewDictionary: (input: {
+    name: string;
+    industry: string;
+    industryCustom?: string | null;
+    description?: string | null;
+    scope: 'library' | 'project';
+  }) => Promise<KbDictionary>;
+  saveEditingDictionary: () => Promise<KbDictionary>;
+  saveDictionary: (dictionaryId: string) => Promise<KbDictionary>;
+  discardEditingDictionary: () => void;
+  discardDictionary: (dictionaryId: string) => void;
+  setEditingTokens: ReturnType<typeof useDictionaryEditSessions>['setEditingTokens'];
+  setEditingCategories: ReturnType<typeof useDictionaryEditSessions>['setEditingCategories'];
+  setSessionTokens: ReturnType<typeof useDictionaryEditSessions>['setSessionTokens'];
+  setSessionCategories: ReturnType<typeof useDictionaryEditSessions>['setSessionCategories'];
+  updateLocalDoc: (doc: KbDocument) => void;
+}
+
+export function useProjectDictionaries(
+  doc: KbDocument,
+  descriptionColumn: string | null,
+  onDocUpdated: (doc: KbDocument) => void,
+): UseProjectDictionariesResult {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [localDoc, setLocalDoc] = useState(doc);
+  const [projectId, setProjectId] = useState<string | null>(doc.project_id ?? null);
+  const [available, setAvailable] = useState<KbDictionary[]>([]);
+  const [projectDicts, setProjectDicts] = useState<KbDictionary[]>([]);
+  const [linkedLibrary, setLinkedLibrary] = useState<Array<{ dictionary: KbDictionary; sortOrder: number }>>([]);
+
+  const allLoadedDictionaries = useMemo(
+    () => [...projectDicts, ...linkedLibrary.map((l) => l.dictionary)],
+    [projectDicts, linkedLibrary],
+  );
+
+  const editSessions = useDictionaryEditSessions(allLoadedDictionaries);
+
+  const loadedRefs = useMemo(
+    () => buildLoadedRefs(projectDicts, linkedLibrary),
+    [projectDicts, linkedLibrary],
+  );
+
+  useEffect(() => {
+    setLocalDoc(doc);
+  }, [doc]);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { project, doc: nextDoc } = await ensureProjectForDocument(localDoc);
+      setProjectId(project.id);
+      if (nextDoc.id !== localDoc.id || nextDoc.project_id !== localDoc.project_id) {
+        setLocalDoc(nextDoc);
+        onDocUpdated(nextDoc);
+      }
+
+      if (descriptionColumn && nextDoc.token_dictionary) {
+        await migrateLegacyDocumentDictionary(nextDoc, project.id, descriptionColumn);
+      }
+
+      if (descriptionColumn) {
+        await ensureDefaultProjectDictionary(project.id, nextDoc.name);
+      }
+
+      const [avail, proj, linked] = await Promise.all([
+        listAvailableDictionaries(project.id),
+        listProjectDictionaries(project.id),
+        listLinkedLibraryDictionaries(project.id),
+      ]);
+
+      setAvailable(avail);
+      setProjectDicts(proj);
+      setLinkedLibrary(linked);
+
+      const loaded = [...proj, ...linked.map((l) => l.dictionary)];
+      editSessions.syncSessionsFromLoaded(loaded, true);
+
+      const allLoadedIds = new Set(loaded.map((d) => d.id));
+      const defaultId = defaultDictionaryEditorId(loaded);
+      editSessions.syncOpenEditorsAfterReload(allLoadedIds, defaultId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Errore caricamento dizionari');
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    localDoc,
+    descriptionColumn,
+    onDocUpdated,
+    editSessions.syncSessionsFromLoaded,
+    editSessions.syncOpenEditorsAfterReload,
+  ]);
+
+  useEffect(() => {
+    void reload();
+  }, [localDoc.id, descriptionColumn]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveDictionary = useCallback(async (dictionaryId: string) => {
+    const session = editSessions.getSession(dictionaryId);
+    if (!session) throw new Error('Nessuna sessione per questo dizionario');
+    const saved = await updateDictionary(dictionaryId, {
+      tokens: session.tokens,
+      categories: session.categories,
+    });
+    await reload();
+    editSessions.markSessionSaved(saved);
+    return saved;
+  }, [editSessions.getSession, editSessions.markSessionSaved, reload]);
+
+  const saveEditingDictionary = useCallback(async () => {
+    if (!editSessions.activeDictionaryId) throw new Error('Nessun dizionario in modifica');
+    return saveDictionary(editSessions.activeDictionaryId);
+  }, [editSessions.activeDictionaryId, saveDictionary]);
+
+  const loadLibraryDictionary = useCallback(async (dictionaryId: string) => {
+    if (!projectId) return;
+    await linkLibraryDictionary(projectId, dictionaryId);
+    await reload();
+    editSessions.openDictionaryEditor(dictionaryId);
+  }, [projectId, reload, editSessions.openDictionaryEditor]);
+
+  const unloadLibraryDictionary = useCallback(async (dictionaryId: string) => {
+    if (!projectId) return;
+    editSessions.closeDictionaryEditor(dictionaryId, { force: false });
+    await unlinkLibraryDictionary(projectId, dictionaryId);
+    await reload();
+  }, [projectId, reload, editSessions.closeDictionaryEditor]);
+
+  const createNewDictionary = useCallback(async (input: {
+    name: string;
+    industry: string;
+    industryCustom?: string | null;
+    description?: string | null;
+    scope: 'library' | 'project';
+  }) => {
+    if (!projectId) throw new Error('Progetto non pronto');
+    const created = await createDictionary({
+      ...input,
+      projectId: input.scope === 'project' ? projectId : null,
+    });
+    if (input.scope === 'library') {
+      await linkLibraryDictionary(projectId, created.id);
+    }
+    await reload();
+    editSessions.openDictionaryEditor(created.id);
+    return created;
+  }, [projectId, reload, editSessions.openDictionaryEditor]);
+
+  return {
+    loading,
+    error,
+    projectId,
+    available,
+    projectDicts,
+    linkedLibrary,
+    loadedRefs,
+    allLoadedDictionaries,
+    openEditorIds: editSessions.openEditorIds,
+    editingDictionary: editSessions.editingDictionary,
+    editingDictionaryId: editSessions.activeDictionaryId,
+    setEditingDictionaryId: editSessions.setEditingDictionaryId,
+    focusDictionaryEditor: editSessions.focusDictionaryEditor,
+    dirty: editSessions.dirty,
+    canSave: editSessions.canSave,
+    anyEditorDirty: editSessions.anyEditorDirty,
+    getSession: editSessions.getSession,
+    getDictionaryMeta: editSessions.getDictionaryMeta,
+    openDictionaryEditor: editSessions.openDictionaryEditor,
+    closeDictionaryEditor: editSessions.closeDictionaryEditor,
+    isEditorOpen: editSessions.isEditorOpen,
+    reload,
+    loadLibraryDictionary,
+    unloadLibraryDictionary,
+    createNewDictionary,
+    saveEditingDictionary,
+    saveDictionary,
+    discardEditingDictionary: editSessions.discardEditingDictionary,
+    discardDictionary: editSessions.discardDictionary,
+    setEditingTokens: editSessions.setEditingTokens,
+    setEditingCategories: editSessions.setEditingCategories,
+    setSessionTokens: editSessions.setSessionTokens,
+    setSessionCategories: editSessions.setSessionCategories,
+    updateLocalDoc: setLocalDoc,
+  };
+}

@@ -2,9 +2,16 @@
  * Grammar matching: score each corpus item by how many path nodes match the text;
  * the item with the most matches wins; prefix-ambiguous ties prefer the parent item.
  */
-import type { AnalysisRow } from '../hooks/useAnalysis';
+import type { AnalysisRow, GrammarEntry } from '../hooks/useAnalysis';
+import { normalizeSlotKey } from './analysisTree';
 import { extractItemPathsInTree, resolveItemPaths } from './itemPaths';
 import { compileGrammarRegex, normalizeGrammarEntry } from './grammarNormalize';
+import {
+  buildTokenGrammarIndex,
+  getTokenTextForSlot,
+  resolveRecognitionGrammarForSlot,
+} from './tokenGrammar';
+import type { TokenEntry } from './tokenDictionary';
 
 export interface GrammarMatchResult {
   targetPath: string | null;
@@ -22,6 +29,41 @@ export interface ItemGrammarMatchResult {
 export interface MatchBestItemOptions {
   anchorPath?: string | null;
   itemPaths?: string[] | null;
+  /** Canonical token grammars — preferred over row.grammar when matching. */
+  tokens?: TokenEntry[] | null;
+}
+
+function resolveRowRecognitionGrammar(
+  slot: string,
+  row: AnalysisRow | undefined,
+  tokenIndex: Map<string, GrammarEntry>,
+): GrammarEntry | null {
+  const tokenText = getTokenTextForSlot(slot);
+  const stored = tokenIndex.get(tokenText) ?? tokenIndex.get(normalizeSlotKey(tokenText));
+  const fromToken = resolveRecognitionGrammarForSlot(slot, stored);
+  if (fromToken) return fromToken;
+  return row?.grammar?.regex?.trim() ? row.grammar : null;
+}
+
+function matchGrammarAtSlot(
+  input: string,
+  slot: string,
+  row: AnalysisRow | undefined,
+  tokenIndex: Map<string, GrammarEntry>,
+): GrammarMatchResult {
+  const grammar = resolveRowRecognitionGrammar(slot, row, tokenIndex);
+  if (!grammar) return { targetPath: null };
+  return matchGrammarInput(input, {
+    slot_filling: slot,
+    question: null,
+    grammar,
+    answer_grammar: null,
+    no_match_1: null,
+    no_match_2: null,
+    no_match_3: null,
+    confirmation_text: null,
+    status: null,
+  });
 }
 
 function pathPrefixesInTree(targetPath: string, slots: string[]): string[] {
@@ -89,6 +131,7 @@ function scoreItemPath(
   slots: string[],
   input: string,
   rowBySlot: Map<string, AnalysisRow>,
+  tokenIndex: Map<string, GrammarEntry>,
 ): ItemScore {
   const prefixes = pathPrefixesInTree(itemPath, slots);
   let matchCount = 0;
@@ -97,8 +140,7 @@ function scoreItemPath(
 
   for (const slot of prefixes) {
     const row = rowBySlot.get(slot);
-    if (!row) continue;
-    const result = matchGrammarInput(input, row);
+    const result = matchGrammarAtSlot(input, slot, row, tokenIndex);
     if (!result.targetPath) continue;
     matchCount += 1;
     totalMatchLen += result.matchedLength ?? 0;
@@ -155,12 +197,25 @@ export function matchBestItemPath(
   }
 
   const rowBySlot = new Map(rows.map((r) => [r.slot_filling, r]));
+  const tokenIndex = buildTokenGrammarIndex(options?.tokens ?? []);
   let firstRegexError: string | undefined;
   let compilableGrammars = 0;
 
-  for (const row of rows) {
-    if (!row.grammar?.regex?.trim()) continue;
-    const probe = matchGrammarInput(input, row);
+  for (const slot of slots) {
+    const row = rowBySlot.get(slot);
+    const grammar = resolveRowRecognitionGrammar(slot, row, tokenIndex);
+    if (!grammar?.regex?.trim()) continue;
+    const probe = matchGrammarInput(input, {
+      slot_filling: slot,
+      question: null,
+      grammar,
+      answer_grammar: null,
+      no_match_1: null,
+      no_match_2: null,
+      no_match_3: null,
+      confirmation_text: null,
+      status: null,
+    });
     if (probe.regexError) {
       if (!firstRegexError) firstRegexError = probe.regexError;
     } else {
@@ -168,7 +223,9 @@ export function matchBestItemPath(
     }
   }
 
-  const scores = itemPaths.map((item) => scoreItemPath(item, slots, input, rowBySlot));
+  const scores = itemPaths.map((item) =>
+    scoreItemPath(item, slots, input, rowBySlot, tokenIndex),
+  );
   const maxCount = Math.max(...scores.map((s) => s.matchCount));
   if (maxCount === 0) {
     return {

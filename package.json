@@ -16,6 +16,7 @@
     "@react-pdf-viewer/core": "^3.12.0",
     "@react-pdf-viewer/zoom": "^3.12.0",
     "@supabase/supabase-js": "^2.57.4",
+    "dockview": "^4.13.1",
     "lucide-react": "^0.344.0",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^3.11.174",

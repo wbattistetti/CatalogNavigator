@@ -1,6 +1,7 @@
 /**
  * Corpus-driven token dictionary and deterministic longest-match segmentation.
  */
+import type { GrammarEntry } from '../hooks/useAnalysis';
 import type { TokenCategory } from './dictionaryTree';
 import { orderSegmentsByCategories, type SegmentMatch } from './dictionaryTree';
 
@@ -13,6 +14,8 @@ export interface TokenEntry {
   suppressedBy?: string;
   /** Surface phrase that maps to another canonical token (synonym). */
   aliasOf?: string;
+  /** Recognition grammar shared by all nodes using this token segment. */
+  grammar?: GrammarEntry | null;
 }
 
 /** Phrase matched in corpus text and its canonical token for path segmentation. */
@@ -400,11 +403,17 @@ export function loadSavedTokens(
     }
 
     if (migrated.some((t) => t.text === text)) continue;
+    const grammarRaw = item.grammar as { regex?: string; mappings?: Record<string, string> } | null | undefined;
+    const grammar = grammarRaw?.regex?.trim()
+      ? { regex: grammarRaw.regex, mappings: grammarRaw.mappings ?? {} }
+      : null;
+
     migrated.push({
       text,
       enabled: item.enabled !== false,
       suppressedBy: item.suppressedBy,
       aliasOf: item.aliasOf ? normalizeDescriptionText(item.aliasOf) : undefined,
+      grammar: grammar ?? undefined,
     });
   }
 

@@ -61,3 +61,150 @@
 .rpv-core__page-layer {
   box-shadow: 0 2px 12px rgba(0,0,0,0.6);
 }
+
+/* Dockview dark theme — outer document editor + nested dictionary editors */
+.document-editor-dock.dockview-theme-dark {
+  --dv-tabs-and-actions-container-background-color: #080e0a;
+  --dv-tabs-and-actions-container-height: 36px;
+  --dv-activegroup-visiblepanel-tab-background-color: #134e32;
+  --dv-activegroup-hiddenpanel-tab-background-color: #0a1510;
+  --dv-inactivegroup-visiblepanel-tab-background-color: #080e0a;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #080e0a;
+  --dv-tab-divider-color: #1a3a2a;
+  --dv-separator-border: #1a3a2a;
+  --dv-paneview-header-border-color: #1a3a2a;
+  --dv-group-view-background-color: #0d0d0d;
+  --dv-tabs-container-scrollbar-color: #2d6a4a;
+  --dv-icon-hover-background-color: rgba(52, 211, 153, 0.12);
+  --dv-drag-over-background-color: rgba(52, 211, 153, 0.12);
+  --dv-watermark-color: rgba(52, 211, 153, 0.15);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: rgba(52, 211, 153, 0.45);
+  background: #0d0d0d;
+}
+
+.document-editor-dock .dv-tabs-and-actions-container {
+  border-bottom: 1px solid #1a3a2a;
+}
+
+.document-editor-dock .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  box-shadow: none;
+  background-color: #134e32 !important;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  border-bottom-color: transparent;
+  border-radius: 4px 4px 0 0;
+}
+
+.document-editor-dock .dv-tab:not(.dv-active-tab) {
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px 4px 0 0;
+}
+
+.document-editor-dock .dv-tab:not(.dv-active-tab):hover {
+  background-color: rgba(52, 211, 153, 0.08);
+}
+
+.document-editor-dock .dv-tab {
+  cursor: grab;
+}
+
+.document-editor-dock .dv-tab:active {
+  cursor: grabbing;
+}
+
+.document-editor-dock .dv-tab .dv-default-tab-action {
+  display: none;
+}
+
+.document-editor-dock .dv-split-view-container .dv-sash-container .dv-sash.dv-enabled {
+  transition-delay: 0s;
+}
+
+/* Nested dock — only inside the Dizionari panel (dictionary tabs: drag to split) */
+.dictionaries-editor-dock.dockview-theme-dark {
+  --dv-tabs-and-actions-container-background-color: #070d09;
+  --dv-tabs-and-actions-container-height: 32px;
+  --dv-activegroup-visiblepanel-tab-background-color: #0f3524;
+  --dv-activegroup-hiddenpanel-tab-background-color: #080e0a;
+  --dv-inactivegroup-visiblepanel-tab-background-color: #070d09;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #070d09;
+  --dv-tab-divider-color: #1a3a2a;
+  --dv-separator-border: #1a3a2a;
+  --dv-paneview-header-border-color: #1a3a2a;
+  --dv-group-view-background-color: #070d09;
+  --dv-tabs-container-scrollbar-color: #2d6a4a;
+  --dv-icon-hover-background-color: rgba(52, 211, 153, 0.12);
+  --dv-drag-over-background-color: rgba(52, 211, 153, 0.15);
+  --dv-watermark-color: rgba(52, 211, 153, 0.15);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: rgba(52, 211, 153, 0.35);
+  background: #070d09;
+}
+
+.dictionaries-editor-dock .dv-tabs-and-actions-container {
+  border-bottom: 1px solid #1a3a2a;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  height: auto !important;
+  min-height: var(--dv-tabs-and-actions-container-height, 32px);
+  row-gap: 2px;
+  padding-bottom: 2px;
+}
+
+.dictionaries-editor-dock .dv-scrollable {
+  overflow: visible !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto !important;
+}
+
+.dictionaries-editor-dock .dv-tabs-container {
+  align-items: stretch;
+  flex-wrap: wrap;
+  overflow: visible !important;
+  height: auto !important;
+  row-gap: 2px;
+  column-gap: 0;
+}
+
+.dictionaries-editor-dock .dv-void-container {
+  flex: 1 1 1.5rem;
+  min-width: 0.5rem;
+  min-height: var(--dv-tabs-and-actions-container-height, 32px);
+}
+
+.dictionaries-editor-dock .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  box-shadow: none;
+  background-color: #0f3524 !important;
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  border-bottom-color: transparent;
+  border-radius: 4px 4px 0 0;
+}
+
+.dictionaries-editor-dock .dv-tab:not(.dv-active-tab) {
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px 4px 0 0;
+}
+
+.dictionaries-editor-dock .dv-tab:not(.dv-active-tab):hover {
+  background-color: rgba(52, 211, 153, 0.08);
+}
+
+.dictionaries-editor-dock .dv-tab {
+  cursor: grab;
+  max-width: 14rem;
+}
+
+.dictionaries-editor-dock .dv-tab:active {
+  cursor: grabbing;
+}
+
+.dictionaries-editor-dock .dv-tab .dv-default-tab-action {
+  display: none;
+}
+
+.dictionaries-editor-dock .dv-split-view-container .dv-sash-container .dv-sash.dv-enabled {
+  transition-delay: 0s;
+}

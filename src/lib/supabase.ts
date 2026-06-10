@@ -20,6 +20,8 @@ export interface SavedTokenDictionary {
     text: string;
     enabled: boolean;
     suppressedBy?: string;
+    aliasOf?: string;
+    grammar?: { regex: string; mappings: Record<string, string> } | null;
   }>;
   /** @deprecated legacy n-gram format */
   entries?: Array<{
@@ -40,8 +42,35 @@ export interface KbDocument {
   file_size: number | null;
   column_headers: string[];
   column_roles: Record<string, ColumnRole>;
+  project_id?: string | null;
   token_dictionary?: SavedTokenDictionary | null;
   created_at: string;
+}
+
+export interface KbProject {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DictionaryScope = 'library' | 'project';
+
+export interface KbDictionaryRow {
+  id: string;
+  name: string;
+  industry: string;
+  industry_custom: string | null;
+  description: string | null;
+  scope: DictionaryScope;
+  project_id: string | null;
+  icon_key: string;
+  icon_color: string;
+  categories: SavedTokenDictionary['categories'];
+  tokens: SavedTokenDictionary['tokens'];
+  created_at: string;
+  updated_at: string;
 }
 
 export type KbFileFormat =

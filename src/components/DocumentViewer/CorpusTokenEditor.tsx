@@ -6,6 +6,9 @@ import { Key, X } from 'lucide-react';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import { removeTokenFromLayout } from '../../lib/dictionaryTree';
 import type { HighlightSpan, SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
+import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
+import { segmentDescriptionMulti } from '../../lib/multiDictionarySegment';
+import { DictionaryIcon } from './DictionaryIcon';
 import {
   addAlias,
   addToken,
@@ -17,13 +20,19 @@ import {
   removeAlias,
   removeCanonicalToken,
   selectionToTokenPhrase,
+  tokenizeToWords,
 } from '../../lib/tokenDictionary';
 import { TokenTreeEditor } from './TokenTreeEditor';
+import { TokenGrammarSidePanel } from './TokenGrammarSidePanel';
+import type { GrammarEditorHandle } from './InlineGrammarEditor';
+import type { GrammarEntry } from '../../hooks/useAnalysis';
+import { getStoredTokenGrammar, setTokenGrammar } from '../../lib/tokenGrammar';
 
 interface CorpusTokenEditorProps {
   descriptions: string[];
   tokens: TokenEntry[];
   categories: TokenCategory[];
+  loadedRefs?: LoadedDictionaryRef[];
   onTokensChange: (tokens: TokenEntry[]) => void;
   onCategoriesChange: (categories: TokenCategory[]) => void;
 }
@@ -41,6 +50,9 @@ interface AliasPickState {
   normalizedPhrase: string;
 }
 
+/** Shared grid: row index | descriptions | segmentation (ratio 5:3). */
+const CORPUS_ROW_GRID = 'grid grid-cols-[2rem_minmax(0,5fr)_minmax(0,3fr)]';
+
 /** Rounded chip for a matched token phrase; optional delete control on hover. */
 function TokenChip({
   label,
@@ -48,6 +60,9 @@ function TokenChip({
   variant = 'token',
   aliasOf,
   className = '',
+  iconKey,
+  iconColor,
+  iconTitle,
   onRemove,
 }: {
   label: string;
@@ -55,6 +70,9 @@ function TokenChip({
   variant?: 'token' | 'alias';
   aliasOf?: string;
   className?: string;
+  iconKey?: string;
+  iconColor?: string;
+  iconTitle?: string;
   onRemove?: () => void;
 }) {
   const isAlias = variant === 'alias';
@@ -63,13 +81,16 @@ function TokenChip({
     <span
       className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip ${
         muted
-          ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-400/35'
+          ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-300/75'
           : isAlias
             ? 'bg-sky-400/20 border-sky-400/40 text-sky-100'
             : 'bg-amber-400/20 border-amber-400/40 text-amber-100'
       } ${className}`}
-      title={isAlias && aliasOf ? `alias of: ${aliasOf}` : undefined}
+      title={iconTitle ?? (isAlias && aliasOf ? `alias of: ${aliasOf}` : undefined)}
     >
+      {iconKey && iconColor && (
+        <DictionaryIcon iconKey={iconKey} iconColor={iconColor} size="xs" />
+      )}
       <span>
         {label}
         {isAlias && aliasOf && (
@@ -135,43 +156,63 @@ function HighlightedDescription({
 
 function SegmentationChips({
   text,
-  tokens,
-  categories,
+  loadedRefs,
+  fallbackTokens,
+  fallbackCategories,
   onRemoveCanonical,
 }: {
   text: string;
-  tokens: TokenEntry[];
-  categories: TokenCategory[];
+  loadedRefs: LoadedDictionaryRef[];
+  fallbackTokens: TokenEntry[];
+  fallbackCategories: TokenCategory[];
   onRemoveCanonical: (token: string) => void;
 }) {
-  const { segments, path, unmatched } = useMemo(
-    () => segmentDescription(text, tokens, categories),
-    [text, tokens, categories],
+  const dictById = useMemo(
+    () => new Map(loadedRefs.map((r) => [r.dictionary.id, r.dictionary])),
+    [loadedRefs],
   );
+
+  const { segments, unmatched } = useMemo(() => {
+    if (loadedRefs.length > 0) {
+      const result = segmentDescriptionMulti(text, loadedRefs);
+      return { segments: result.segments, unmatched: result.unmatched };
+    }
+    const legacy = segmentDescription(text, fallbackTokens, fallbackCategories);
+    return {
+      segments: legacy.segments.map((t) => ({ text: t, dictionaryId: '' })),
+      unmatched: legacy.unmatched,
+    };
+  }, [text, loadedRefs, fallbackTokens, fallbackCategories]);
 
   if (segments.length === 0) {
     return (
-      <span className="font-mono text-[10px] text-emerald-400/20 italic">
+      <span className={`font-mono text-[10px] italic ${
+        unmatched.length > 0 ? 'text-amber-300/85' : 'text-emerald-400/55'
+      }`}>
         {unmatched.length > 0 ? 'nessun token' : '—'}
       </span>
     );
   }
 
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-1">
-        {segments.map((token, i) => (
-          <span key={i} className="inline-flex items-center">
-            <TokenChip label={token} onRemove={() => onRemoveCanonical(token)} />
+    <div className="flex flex-wrap items-center gap-1">
+      {segments.map((seg, i) => {
+        const dict = seg.dictionaryId ? dictById.get(seg.dictionaryId) : undefined;
+        return (
+          <span key={`${seg.text}-${i}`} className="inline-flex items-center">
+            <TokenChip
+              label={seg.text}
+              iconKey={dict?.icon_key}
+              iconColor={dict?.icon_color}
+              iconTitle={dict ? `${seg.text} · ${dict.name}` : seg.text}
+              onRemove={() => onRemoveCanonical(seg.text)}
+            />
             {i < segments.length - 1 && (
-              <span className="text-emerald-400/25 font-mono text-xs mx-0.5">·</span>
+              <span className="text-emerald-400/60 font-mono text-xs mx-0.5">·</span>
             )}
           </span>
-        ))}
-      </div>
-      <p className="font-mono text-[9px] text-emerald-400/35 break-all leading-snug" title="Path foglia">
-        → {path}
-      </p>
+        );
+      })}
     </div>
   );
 }
@@ -180,13 +221,17 @@ export function CorpusTokenEditor({
   descriptions,
   tokens,
   categories,
+  loadedRefs = [],
   onTokensChange,
   onCategoriesChange,
 }: CorpusTokenEditorProps) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [aliasPick, setAliasPick] = useState<AliasPickState | null>(null);
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
+  const [grammarPanelOpen, setGrammarPanelOpen] = useState(false);
+  const [grammarEditToken, setGrammarEditToken] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const grammarEditorRef = useRef<GrammarEditorHandle>(null);
 
   const aliasEntryByText = useMemo(() => {
     const map = new Map<string, TokenEntry>();
@@ -250,6 +295,8 @@ export function CorpusTokenEditor({
     requestAnimationFrame(() => {
       const range = getSelectionOffsetsInElement(container, sourceText);
       const raw = window.getSelection()?.toString().trim() ?? '';
+      const phrase = selectionToTokenPhrase(raw, range);
+      if (!phrase || tokenizeToWords(phrase).length !== 1) return;
       try {
         onTokensChange(addToken(tokens, raw, range));
       } catch {
@@ -259,11 +306,37 @@ export function CorpusTokenEditor({
     });
   };
 
+  const handleMouseUp = (e: React.MouseEvent, sourceText: string) => {
+    if (aliasPick || e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+
+    const container = e.currentTarget as HTMLElement;
+    const { clientX, clientY } = e;
+    requestAnimationFrame(() => {
+      const range = getSelectionOffsetsInElement(container, sourceText);
+      const raw = window.getSelection()?.toString().trim() ?? '';
+      const phrase = selectionToTokenPhrase(raw, range);
+      if (!phrase || tokenizeToWords(phrase).length <= 1) return;
+      openContextMenuFromSelection(clientX, clientY, sourceText, container);
+    });
+  };
+
   const handleContextMenu = (e: React.MouseEvent, sourceText: string) => {
     e.preventDefault();
     if (aliasPick) return;
     const container = e.currentTarget as HTMLElement;
     openContextMenuFromSelection(e.clientX, e.clientY, sourceText, container);
+  };
+
+  const createTokenFromMenu = () => {
+    if (!menu) return;
+    try {
+      onTokensChange(addToken(tokens, menu.phrase, menu.range));
+    } catch {
+      /* invalid */
+    }
+    setMenu(null);
+    window.getSelection()?.removeAllRanges();
   };
 
   const startAliasPick = () => {
@@ -312,33 +385,69 @@ export function CorpusTokenEditor({
     ? tokens.some((t) => t.text === menuPhrase && isCanonicalToken(t))
     : false;
   const menuAliasEntry = menuPhrase ? aliasEntryByText.get(menuPhrase) : undefined;
+  const menuWordCount = menuPhrase ? tokenizeToWords(menuPhrase).length : 0;
+  const canCreateToken = Boolean(menuPhrase && !menuIsCanonical && menuWordCount > 1);
   const canStartAliasPick = Boolean(menuPhrase && !menuIsCanonical);
+
+  const flushGrammarEditor = useCallback(() => {
+    grammarEditorRef.current?.flushSave();
+  }, []);
+
+  const toggleGrammarPanel = () => {
+    if (grammarPanelOpen) {
+      flushGrammarEditor();
+      setGrammarEditToken(null);
+      setGrammarPanelOpen(false);
+      return;
+    }
+    setGrammarPanelOpen(true);
+  };
+
+  const handleGrammarEditTokenChange = useCallback((newToken: string) => {
+    if (newToken === grammarEditToken) return;
+    flushGrammarEditor();
+    setGrammarEditToken(newToken);
+  }, [grammarEditToken, flushGrammarEditor]);
+
+  const handleTokenGrammarSave = (grammar: GrammarEntry) => {
+    if (!grammarEditToken) return;
+    onTokensChange(setTokenGrammar(tokens, grammarEditToken, grammar));
+  };
+
+  const grammarForPanel = grammarEditToken
+    ? getStoredTokenGrammar(grammarEditToken, tokens)
+    : null;
 
   return (
     <div className={`flex flex-col h-full min-h-0 ${aliasPick ? 'cursor-crosshair' : ''}`}>
       <div className="flex-1 min-h-0 flex border border-[#1a3a2a] rounded overflow-hidden bg-[#080e0a]">
-        <div className="flex-[1] min-w-0 flex flex-col border-r border-[#1a3a2a]">
-          <div className="flex-shrink-0 flex border-b border-[#1a3a2a] bg-[#0a1510]">
-            <span className="flex-shrink-0 w-8" />
-            <div className="flex-[2] min-w-0 px-3 py-1.5 font-mono text-[10px] text-emerald-400/50 uppercase tracking-wider">
-              Descrizioni
-            </div>
-            <div className="flex-[1.2] min-w-0 px-3 py-1.5 border-l border-[#1a3a2a] font-mono text-[10px] text-amber-400/50 uppercase tracking-wider">
-              Segmentazione
-            </div>
-          </div>
+        <div className="flex-[1] min-w-0 flex flex-col border-r border-[#1a3a2a] min-h-0">
           <div className="flex-1 min-h-0 overflow-y-auto">
+            <div
+              className={`sticky top-0 z-10 ${CORPUS_ROW_GRID} border-b border-[#1a3a2a] bg-[#0a1510]`}
+            >
+              <span className="flex-shrink-0 px-1 py-1.5 font-mono text-[9px] text-emerald-400/70 uppercase tracking-wider text-center">
+                #
+              </span>
+              <div className="min-w-0 px-3 py-1.5 font-mono text-[10px] text-emerald-300/85 uppercase tracking-wider">
+                Descrizioni
+              </div>
+              <div className="min-w-0 px-3 py-1.5 border-l border-[#1a3a2a] font-mono text-[10px] text-amber-300/85 uppercase tracking-wider">
+                Segmentazione
+              </div>
+            </div>
             {rows.map(({ rowIndex, text }) => (
               <div
                 key={rowIndex}
-                className="flex min-h-[2.75rem] items-start border-b border-[#111] hover:bg-[#0f1a12] transition-colors"
+                className={`${CORPUS_ROW_GRID} min-h-[2.75rem] items-start border-b border-[#111] hover:bg-[#0f1a12] transition-colors`}
               >
-                <span className="flex-shrink-0 font-mono text-[9px] text-emerald-400/30 pt-2.5 w-8 text-center">
+                <span className="font-mono text-[9px] text-emerald-300/80 pt-2.5 text-center tabular-nums">
                   R{rowIndex}
                 </span>
                 <div
-                  className="flex-[2] min-w-0 px-3 py-2"
+                  className="min-w-0 px-3 py-2"
                   onDoubleClick={(e) => handleDoubleClick(e, text)}
+                  onMouseUp={(e) => handleMouseUp(e, text)}
                   onContextMenu={(e) => handleContextMenu(e, text)}
                 >
                   <p className="font-mono text-xs select-text cursor-text">
@@ -349,11 +458,12 @@ export function CorpusTokenEditor({
                     />
                   </p>
                 </div>
-                <div className="flex-[1.2] min-w-0 px-3 py-2 border-l border-[#111] pt-2">
+                <div className="min-w-0 px-3 py-2 border-l border-[#1a3a2a]">
                   <SegmentationChips
                     text={text}
-                    tokens={tokens}
-                    categories={categories}
+                    loadedRefs={loadedRefs}
+                    fallbackTokens={tokens}
+                    fallbackCategories={categories}
                     onRemoveCanonical={handleRemoveCanonical}
                   />
                 </div>
@@ -362,10 +472,11 @@ export function CorpusTokenEditor({
           </div>
         </div>
 
-        <div className="w-56 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
+        <div className="w-80 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
           <TokenTreeEditor
             tokens={tokens}
             categories={categories}
+            onTokensChange={onTokensChange}
             onCategoriesChange={onCategoriesChange}
             onRemoveCanonical={handleRemoveCanonical}
             onRemoveAlias={handleRemoveAlias}
@@ -373,8 +484,27 @@ export function CorpusTokenEditor({
             aliasPickPhrase={aliasPick?.normalizedPhrase ?? null}
             onAliasTargetPick={handleAliasTargetPick}
             onCancelAliasPick={cancelAliasPick}
+            grammarPanelOpen={grammarPanelOpen}
+            onToggleGrammarPanel={toggleGrammarPanel}
+            grammarEditToken={grammarEditToken}
+            onGrammarEditTokenChange={handleGrammarEditTokenChange}
           />
         </div>
+
+        {grammarPanelOpen && (
+          <div className="w-52 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
+            <TokenGrammarSidePanel
+              ref={grammarEditorRef}
+              tokenText={grammarEditToken}
+              grammar={grammarForPanel}
+              onSave={handleTokenGrammarSave}
+              onClose={() => {
+                flushGrammarEditor();
+                setGrammarEditToken(null);
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {menu && (
@@ -384,11 +514,25 @@ export function CorpusTokenEditor({
           style={{ left: menu.x, top: menu.y }}
           onPointerDown={(e) => e.stopPropagation()}
         >
+          {canCreateToken && (
+            <button
+              type="button"
+              onClick={createTokenFromMenu}
+              className="w-full text-left px-3 py-1.5 font-mono text-xs text-amber-200 hover:bg-amber-400/15 transition-colors"
+            >
+              Crea token
+              <span className="block text-[9px] text-emerald-400/40 truncate max-w-[200px]">
+                {menuPhrase}
+              </span>
+            </button>
+          )}
           {canStartAliasPick && (
             <button
               type="button"
               onClick={startAliasPick}
-              className="w-full text-left px-3 py-1.5 font-mono text-xs text-sky-200 hover:bg-sky-400/15 transition-colors"
+              className={`w-full text-left px-3 py-1.5 font-mono text-xs text-sky-200 hover:bg-sky-400/15 transition-colors ${
+                canCreateToken ? 'border-t border-[#1a3a2a]' : ''
+              }`}
             >
               Alias of…
               <span className="block text-[9px] text-emerald-400/40 truncate max-w-[200px]">

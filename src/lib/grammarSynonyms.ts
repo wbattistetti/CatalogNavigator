@@ -11,6 +11,7 @@ import {
 } from './grammarNormalize';
 import { isItemSlot, resolveItemPaths } from './itemPaths';
 import { requiresInteractiveNode } from './nluQuestionRules';
+import { getTokenTextForSlot } from './tokenGrammar';
 
 const UNICODE_DASHES = /[\u2010\u2011\u2012\u2013\u2014\u2212]/g;
 
@@ -329,11 +330,12 @@ export function buildGrammarEditorState(
     return { interactive: true, panels, simpleSynonyms: [] };
   }
 
+  const tokenText = getTokenTextForSlot(slot);
   let simpleSynonyms = grammar?.regex?.trim()
-    ? extractSimpleSynonyms(grammar, slot)
-    : seedDefaultSimpleSynonyms(slot);
+    ? extractSimpleSynonyms(grammar, tokenText)
+    : seedDefaultSimpleSynonyms(tokenText);
   if (simpleSynonyms.length === 0) {
-    simpleSynonyms = seedDefaultSimpleSynonyms(slot);
+    simpleSynonyms = seedDefaultSimpleSynonyms(tokenText);
   }
   return { interactive: false, panels: [], simpleSynonyms };
 }
@@ -348,5 +350,5 @@ export function compileGrammarFromEditorState(
   if (mode === 'answer') {
     return compileInteractiveGrammar(panels);
   }
-  return compileSimpleGrammar(slot, simpleSynonyms);
+  return compileSimpleGrammar(getTokenTextForSlot(slot), simpleSynonyms);
 }

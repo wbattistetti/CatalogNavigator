@@ -4,8 +4,8 @@ import { Sidebar } from './components/Sidebar';
 import { MainPanel } from './components/MainPanel';
 import { UploadZone } from './components/UploadZone';
 import { useDocuments } from './hooks/useDocuments';
-import { detectFileFormat } from './lib/fileFormat';
-import { xlsxToTabular } from './lib/parseTabular';
+import { detectFileFormat, isTabularFormat } from './lib/fileFormat';
+import { extractColumnHeadersFromFile } from './lib/parseTabular';
 import type { KbDocument } from './lib/supabase';
 
 export default function App() {
@@ -27,11 +27,12 @@ export default function App() {
         const format = detectFileFormat(file);
         let columnHeaders: string[] = [];
 
-        if (format === 'xlsx') {
+        if (isTabularFormat(format)) {
           try {
-            const { headers } = await xlsxToTabular(file);
-            columnHeaders = headers;
-          } catch {}
+            columnHeaders = await extractColumnHeadersFromFile(file, format);
+          } catch (err) {
+            setUploadError(err instanceof Error ? err.message : 'Impossibile leggere le colonne');
+          }
         }
 
         const doc = await uploadDocument(file, format, columnHeaders);

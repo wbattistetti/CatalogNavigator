@@ -1,13 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
-import type { ColumnRole } from '../../lib/supabase';
+import type { ColumnRole, KbDocument } from '../../lib/supabase';
+import { persistDocumentColumnRoles } from '../../lib/columnRoles';
 import type { ParsedTabular } from '../../lib/parseTabular';
 
 interface TabularPreviewProps {
   tabular: ParsedTabular;
   docId: string;
   initialRoles?: Record<string, ColumnRole>;
+  onDocUpdated?: (doc: KbDocument) => void;
 }
 
 const ROLE_CONFIG: Record<ColumnRole, {
@@ -59,11 +60,15 @@ const ROLE_CONFIG: Record<ColumnRole, {
 
 const ROLES: ColumnRole[] = ['description', 'selector', 'data', 'ignore'];
 
-export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPreviewProps) {
+export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated }: TabularPreviewProps) {
   const { headers, rows } = tabular;
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [columnRoles, setColumnRoles] = useState<Record<string, ColumnRole>>(initialRoles);
+
+  useEffect(() => {
+    setColumnRoles(initialRoles);
+  }, [initialRoles, docId]);
 
   const visibleIndices = headers.reduce<number[]>((acc, h, i) => {
     if (!showAll && columnRoles[h] === 'ignore') return acc;
@@ -96,6 +101,7 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
   const ignoredCount = headers.filter((h) => columnRoles[h] === 'ignore').length;
 
   const handleRoleChange = async (colName: string, role: ColumnRole) => {
+    const previousRoles = columnRoles;
     const newRoles = { ...columnRoles };
     if (newRoles[colName] === role) {
       delete newRoles[colName];
@@ -108,7 +114,12 @@ export function TabularPreview({ tabular, docId, initialRoles = {} }: TabularPre
       newRoles[colName] = role;
     }
     setColumnRoles(newRoles);
-    await supabase.from('kb_documents').update({ column_roles: newRoles }).eq('id', docId);
+    try {
+      const fresh = await persistDocumentColumnRoles(docId, newRoles);
+      onDocUpdated?.(fresh);
+    } catch {
+      setColumnRoles(previousRoles);
+    }
   };
 
   return (

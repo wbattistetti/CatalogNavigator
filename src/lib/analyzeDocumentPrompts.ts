@@ -64,48 +64,45 @@ Formato obbligatorio:
   { "slot_filling": "catalogo.elettronica.smartphone", "question": null, "grammar": null, "no_match_1": null, "no_match_2": null, "no_match_3": null, "status": null }
 ] }`;
 
-export const GENERATE_MESSAGES_PROMPT = `Sei un esperto di dialoghi per slot-filling gerarchico. Ti viene fornita una tassonomia (albero di slot path) GIA' DEFINITA.
-Il tuo compito e' generare SOLO domande e re-prompt (no_match). NON generare grammatiche regex.
-NON aggiungere, NON rimuovere, NON rinominare nessuno slot.
+export const GENERATE_MESSAGES_PROMPT = `Sei un esperto di dialoghi per slot-filling gerarchico.
+L'albero degli slot e' GIA' DEFINITO dal compilatore: NON aggiungere, NON rimuovere, NON rinominare path.
 
-REGOLE TASSATIVE:
-1. Ogni slot della lista DEVE comparire esattamente una volta. I path contengono spazi: copiali IDENTICI.
-2. Campi obbligatori: slot_filling, question, grammar, no_match_1, no_match_2, no_match_3, status.
-3. Nodo interno con 2+ figli diretti (scelta sibling): question OBBLIGATORIA, no_match_1/2/3 OBBLIGATORI, grammar=null.
-4. Nodo strutturale con 1 figlio (NON item corpus): question=null, grammar=null, no_match=null (trasparente).
-5. Nodo ITEM con figlio-item (ambiguita prefisso, es. visita.cardiologica + visita.cardiologica.ecg): question OBBLIGATORIA che chiede se includere l'estensione figlio ("semplice o anche ecg?"), no_match_1/2/3 OBBLIGATORI, grammar=null.
-6. Item terminale (prestazione finale): question=null, grammar=null, no_match=null.
-7. Domande sibling (2+ figli): 2-3 figli -> elenca opzioni; >=4 figli -> domanda aperta.
-7. Imposta status=null per tutte le righe.
+Il tuo compito e' SOLO formulare domande di disambiguazione per i path elencati come "GENERA UNA RIGA".
+Ogni path ha un significato univoco: la domanda va associata a quel slot_filling esatto.
+
+REGOLE:
+1. Genera UNA riga per OGNI path elencato nella sezione interattiva (nient'altro).
+2. Campi: slot_filling (IDENTICO al path), question, grammar=null, no_match_1, no_match_2, no_match_3, status=null.
+3. Scelta tra fratelli (2+ figli): domanda naturale che elenca le opzioni (2-3 figli) o domanda aperta (>=4).
+4. Ambiguita prefisso (item + figlio-item): chiedi "semplice o anche [estensione]?".
+5. NON generare righe per nodi trasparenti o item terminali (compilati automaticamente dal sistema).
+6. I path contengono spazi: copiali IDENTICI (es. "prima visita", non "prima_visita").
 
 IMPORTANTE: Rispondi SOLO con JSON valido.
 
-Formato obbligatorio:
+Formato:
 { "rows": [
-  { "slot_filling": "catalogo", "question": "Quale categoria desidera: elettronica o abbigliamento?", "grammar": null, "no_match_1": "...", "no_match_2": "...", "no_match_3": "...", "status": null },
-  { "slot_filling": "catalogo.elettronica.smartphone", "question": null, "grammar": null, "no_match_1": null, "no_match_2": null, "no_match_3": null, "status": null }
+  { "slot_filling": "cardiologica", "question": "Desidera una visita di controllo o una prima visita?", "grammar": null, "no_match_1": "...", "no_match_2": "...", "no_match_3": "...", "status": null }
 ] }`;
 
-export const REGEN_MESSAGES_PROMPT = `Sei un esperto di dialoghi per slot-filling gerarchico. Ti viene fornita una struttura di slot path ESISTENTI.
-RIGENERA SOLO domande e re-prompt (no_match). NON generare grammatiche regex. I path slot_filling restano INVARIATI.
+export const REGEN_MESSAGES_PROMPT = `Sei un esperto di dialoghi per slot-filling gerarchico.
+L'albero e' FISSO: rigenera SOLO le domande di disambiguazione per i path elencati come interattivi.
 
-REGOLE TASSATIVE:
-1. NON aggiungere, NON rimuovere, NON rinominare nessuno slot. Copia i path IDENTICI (spazi inclusi).
-2. Campi: slot_filling, question, grammar, no_match_1, no_match_2, no_match_3, status.
-3. Nodo con 2+ figli (sibling): question + no_match_1/2/3 OBBLIGATORI, grammar=null.
-4. Nodo strutturale con 1 figlio: question=null, grammar=null, no_match=null.
-5. Nodo ITEM con figlio-item (ambiguita prefisso): question che chiede "semplice o anche [figlio]?", no_match obbligatori, grammar=null.
-6. Item terminale: question=null, grammar=null, no_match=null.
-7. Domande sibling: 2-3 figli -> elenca opzioni; >=4 figli -> domanda aperta.
-7. status=null per tutte le righe.
+Ogni path interattivo e' UNICO — associa la domanda a quel slot_filling esatto.
+NON generare grammatiche regex. NON generare righe per nodi trasparenti o item terminali.
 
-IMPORTANTE: Rispondi SOLO con JSON valido.
+REGOLE:
+1. UNA riga per OGNI path nella lista "GENERA UNA RIGA" (e solo quelli).
+2. slot_filling IDENTICO al path (spazi inclusi). grammar=null. status=null.
+3. question + no_match_1/2/3 per ogni riga.
+4. Sibling (2-3 figli): elenca opzioni; >=4 figli: domanda aperta.
+5. Prefisso ambiguo: "semplice o anche [figlio]?".
 
-NON usare mappe con chiavi slot ({ "tac": { ... } }). Usa SEMPRE un array in "rows".
+IMPORTANTE: Rispondi SOLO con JSON valido. Usa { "rows": [ ... ] }, NON mappe con chiavi slot.
 
-Formato obbligatorio:
+Formato:
 { "rows": [
-  { "slot_filling": "tac", "question": "...", "grammar": null, "no_match_1": "...", "no_match_2": "...", "no_match_3": "...", "status": null }
+  { "slot_filling": "cardiologica", "question": "...", "grammar": null, "no_match_1": "...", "no_match_2": "...", "no_match_3": "...", "status": null }
 ] }`;
 
 export const GENERATE_GRAMMARS_PROMPT = `Sei un esperto di NLU regex per riconoscimento gerarchico parallelo.

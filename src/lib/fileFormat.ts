@@ -6,7 +6,9 @@ export function detectFileFormat(file: File): KbFileFormat {
 
   if (name.endsWith('.pdf') || mime === 'application/pdf') return 'pdf';
   if (name.endsWith('.docx') || mime.includes('wordprocessingml')) return 'docx';
-  if (name.endsWith('.xlsx') || mime.includes('spreadsheetml')) return 'xlsx';
+  if (name.endsWith('.xlsx') || name.endsWith('.xls') || mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel') {
+    return 'xlsx';
+  }
   if (name.endsWith('.csv') || mime === 'text/csv') return 'csv';
   if (name.endsWith('.json') || mime === 'application/json') return 'json';
   if (name.endsWith('.md') || name.endsWith('.markdown')) return 'md';
@@ -20,6 +22,13 @@ export function isBinaryFormat(format: KbFileFormat): boolean {
 
 export function isTabularFormat(format: KbFileFormat): boolean {
   return format === 'xlsx' || format === 'csv';
+}
+
+/** True when the document should be parsed with SheetJS (xlsx/xls), not as plain text. */
+export function isSpreadsheetFormat(format: KbFileFormat, fileName = ''): boolean {
+  if (format === 'xlsx') return true;
+  const name = fileName.toLowerCase();
+  return name.endsWith('.xlsx') || name.endsWith('.xls');
 }
 
 /** Formats that can use the deterministic dictionary → taxonomy workflow. */

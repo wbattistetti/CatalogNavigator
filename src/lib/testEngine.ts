@@ -1,6 +1,7 @@
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import { matchBestItemPath, matchGrammarInput } from './grammarMatch';
 import { requiresInteractiveNode, resolveNavigationTarget } from './nluQuestionRules';
+import type { TokenEntry } from './tokenDictionary';
 
 export interface TestMessage {
   id: string;
@@ -20,6 +21,8 @@ export interface AgentTestConfig {
   start_question: string | null;
   confirmation_preamble: string | null;
   item_paths?: string[] | null;
+  /** Canonical token grammars for recognition matching. */
+  tokens?: TokenEntry[] | null;
 }
 
 /** Builds the final confirmation message when a leaf is selected. */
@@ -187,6 +190,7 @@ export function processInput(
   const grammarResult = matchBestItemPath(cumulativeText, rows, {
     anchorPath: state.currentPath,
     itemPaths: config?.item_paths,
+    tokens: config?.tokens,
   });
 
   if (!grammarResult.targetPath) {

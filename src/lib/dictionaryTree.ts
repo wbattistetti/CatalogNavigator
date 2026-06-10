@@ -20,6 +20,17 @@ export interface DictionaryLayout {
 /** Sort key for uncategorized tokens — always after categorized ones. */
 export const UNCATEGORIZED_SORT_ORDER = Number.MAX_SAFE_INTEGER;
 
+/** UI sentinel for the virtual "no category" bucket in the dictionary editor. */
+export const NO_CATEGORY_SENTINEL = '__no_category__';
+
+const localeSort = (a: string, b: string) =>
+  a.localeCompare(b, 'it', { sensitivity: 'base' });
+
+/** Sorts token texts alphabetically (Italian locale). */
+export function sortTokenTextsAlphabetically(texts: string[]): string[] {
+  return [...texts].sort(localeSort);
+}
+
 export interface SegmentMatch {
   text: string;
   /** Word index in the description where this token matched. */
@@ -100,10 +111,69 @@ export function categorizedTokenTexts(categories: TokenCategory[]): Set<string> 
 /** Token texts not assigned to any category (root level); excludes aliases. */
 export function rootTokenTexts(tokens: TokenEntry[], categories: TokenCategory[]): string[] {
   const inCat = categorizedTokenTexts(categories);
-  return tokens
-    .filter((t) => !t.aliasOf)
-    .map((t) => t.text)
-    .filter((text) => !inCat.has(text));
+  return sortTokenTextsAlphabetically(
+    tokens
+      .filter((t) => !t.aliasOf)
+      .map((t) => t.text)
+      .filter((text) => !inCat.has(text)),
+  );
+}
+
+/** Finds a category by name (case-insensitive trim). */
+export function findCategoryByName(
+  categories: TokenCategory[],
+  name: string,
+): TokenCategory | undefined {
+  const key = name.trim().toLowerCase();
+  if (!key) return undefined;
+  return categories.find((c) => c.name.trim().toLowerCase() === key);
+}
+
+/** Token texts for the active category view (sorted alphabetically). */
+export function tokenTextsForCategoryView(
+  categoryKey: string,
+  tokens: TokenEntry[],
+  categories: TokenCategory[],
+): string[] {
+  if (categoryKey === NO_CATEGORY_SENTINEL) {
+    return rootTokenTexts(tokens, categories);
+  }
+  const cat = categories.find((c) => c.id === categoryKey);
+  if (!cat) return [];
+  return sortTokenTextsAlphabetically(cat.tokenTexts);
+}
+
+/** Moves a token into a category and keeps tokenTexts sorted alphabetically. */
+export function addTokenToCategorySorted(
+  categories: TokenCategory[],
+  categoryId: string,
+  tokenText: string,
+): TokenCategory[] {
+  const next = moveTokensToCategory(categories, categoryId, [tokenText]);
+  return next.map((cat) =>
+    cat.id === categoryId
+      ? { ...cat, tokenTexts: sortTokenTextsAlphabetically(cat.tokenTexts) }
+      : cat,
+  );
+}
+
+/** Reorders a category to a new index in the normalized list. */
+export function reorderCategoryToIndex(
+  categories: TokenCategory[],
+  categoryId: string,
+  targetIndex: number,
+): TokenCategory[] {
+  const sorted = normalizeCategoryOrders(categories);
+  const fromIndex = sorted.findIndex((c) => c.id === categoryId);
+  if (fromIndex < 0) return sorted;
+
+  const clamped = Math.max(0, Math.min(targetIndex, sorted.length - 1));
+  if (fromIndex === clamped) return sorted;
+
+  const next = [...sorted];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(clamped, 0, moved!);
+  return normalizeCategoryOrders(next);
 }
 
 /** Creates a category; selected tokens are moved into it. */
