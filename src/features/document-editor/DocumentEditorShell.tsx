@@ -1,14 +1,15 @@
 /**
- * Document editor shell: header, tabs, toolbar, workspace.
+ * Document editor shell: fast tab strip + stacked workspaces; drag tab to split.
  */
-import { useDocumentEditor } from './DocumentEditorContext';
+import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { DocumentEditorHeader } from './DocumentEditorHeader';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
-import { DocumentEditorDock } from './DocumentEditorDock';
+import { DocumentEditorTabStrip } from './DocumentEditorTabStrip';
+import { DocumentEditorWorkspace } from './DocumentEditorWorkspace';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 
 function AgentGenerationProgress() {
-  const { analysisApi } = useDocumentEditor();
+  const { analysisApi } = useDocumentEditorController();
   const { generating, generatingPhase, agentGenProgress } = analysisApi;
 
   if (!generating || (generatingPhase !== 'messages' && generatingPhase !== 'grammars') || !agentGenProgress) {
@@ -55,19 +56,20 @@ function AgentGenerationProgress() {
 }
 
 export function DocumentEditorShell() {
-  const { activeTab } = useDocumentEditor();
+  const { activeTab } = useDocumentEditorTab();
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0">
       <DocumentEditorHeader />
 
-      <div className="flex-shrink-0 flex items-center justify-end px-4 border-b border-[#1a3a2a] bg-[#080e0a]">
+      <div className="flex-shrink-0 flex items-end justify-between gap-2 px-2 border-b border-[#1a3a2a] bg-[#080e0a]">
+        <DocumentEditorTabStrip />
         <DocumentEditorToolbar />
       </div>
 
       {activeTab === EDITOR_TAB_IDS.agent && <AgentGenerationProgress />}
 
-      <DocumentEditorDock />
+      <DocumentEditorWorkspace />
     </div>
   );
 }

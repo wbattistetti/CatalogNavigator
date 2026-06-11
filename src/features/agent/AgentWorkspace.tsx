@@ -15,6 +15,10 @@ export function AgentWorkspace() {
     setAffinaOpen,
     testOpen,
     setTestOpen,
+    convaiOpen,
+    setConvaiOpen,
+    dictState,
+    agentNeedsUpdate,
     leafDescriptionMap,
     selectedSlot,
     setSelectedSlot,
@@ -44,6 +48,14 @@ export function AgentWorkspace() {
       onAffinaOpenChange={setAffinaOpen}
       testOpen={testOpen}
       onTestOpenChange={setTestOpen}
+      convaiOpen={convaiOpen}
+      onConvaiOpenChange={setConvaiOpen}
+      convaiExportContext={{
+        dictionary: agentDictionaryContext?.dictionary ?? null,
+        descriptions: agentDictionaryContext?.descriptions ?? [],
+        dictionaryDirty: dictState?.dirty ?? false,
+        pathsOutOfSync: agentNeedsUpdate,
+      }}
       leafDescriptionMap={leafDescriptionMap}
       selectedSlot={selectedSlot}
       onSelectedSlotChange={setSelectedSlot}

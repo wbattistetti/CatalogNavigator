@@ -1,11 +1,12 @@
 /**
  * Corpus segmentation and ontology editing workspace.
  */
+import { memo } from 'react';
 import { Loader2 } from 'lucide-react';
 import { DictionaryPanel } from '../../components/DocumentViewer/DictionaryPanel';
-import { useDocumentEditor } from '../document-editor/DocumentEditorContext';
+import { useDocumentEditorController } from '../document-editor/DocumentEditorContext';
 
-export function OntologyWorkspace() {
+export const OntologyWorkspace = memo(function OntologyWorkspace() {
   const {
     doc,
     content,
@@ -16,7 +17,7 @@ export function OntologyWorkspace() {
     handleDictionaryAfterSave,
     syncNotice,
     analysisApi,
-  } = useDocumentEditor();
+  } = useDocumentEditorController();
 
   if (content.loading) {
     return (
@@ -48,4 +49,4 @@ export function OntologyWorkspace() {
       error={analysisApi.error}
     />
   );
-}
+});

@@ -2,19 +2,21 @@
  * Nuovo / Carica (e scollega) — una sola barra nel workspace Dizionari, sopra il dock editor.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, FolderKanban, Library, Loader2, Plus, Unlink } from 'lucide-react';
+import { ChevronDown, FolderKanban, FolderTree, Library, Loader2, Plus, Unlink } from 'lucide-react';
+import { CATEGORIZE_WAIT_LABEL, useCategorizeTokens } from './useCategorizeTokens';
 import type { UseProjectDictionariesResult } from '../../hooks/useProjectDictionaries';
 import type { KbDictionary } from '../../lib/dictionaryLibrary';
 import { DICTIONARY_INDUSTRIES, industryLabel } from '../../lib/dictionaryIndustries';
 import { DictionaryIcon } from '../../components/DocumentViewer/DictionaryIcon';
-import { useDocumentEditor } from '../document-editor/DocumentEditorContext';
-
-const UI_TEXT = 'font-mono text-[10px]';
-const FIELD =
-  'w-full bg-[#080e0a] border border-[#1a3a2a] rounded px-2 py-1.5 font-mono text-xs text-emerald-200 focus:outline-none focus:border-sky-400/50';
-const FORM_LABEL = 'font-mono text-xs text-emerald-300';
-const FORM_ROW = 'grid grid-cols-[5.5rem_1fr] gap-x-3 items-center';
-const FORM_ROW_TOP = 'grid grid-cols-[5.5rem_1fr] gap-x-3 items-start';
+import { useDocumentEditorController } from '../document-editor/DocumentEditorContext';
+import {
+  DICT_FORM_FIELD,
+  DICT_FORM_LABEL,
+  DICT_FORM_ROW,
+  DICT_FORM_ROW_TOP,
+  DICT_UI_BTN,
+  DICT_UI_TEXT,
+} from './dictionaryFormStyles';
 
 function groupByIndustry(dictionaries: KbDictionary[]) {
   const map = new Map<string, KbDictionary[]>();
@@ -71,7 +73,7 @@ function ScopeRadio({
         className="w-3 h-3 flex-shrink-0 accent-amber-400"
       />
       <Icon className="w-3 h-3 flex-shrink-0" strokeWidth={2.25} style={{ color: iconColor }} />
-      <span className={UI_TEXT}>{label}</span>
+      <span className={DICT_UI_TEXT}>{label}</span>
     </label>
   );
 }
@@ -82,8 +84,9 @@ interface DictionaryLibraryActionsProps {
 }
 
 export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: DictionaryLibraryActionsProps) {
-  const ctx = useDocumentEditor();
+  const ctx = useDocumentEditorController();
   const dicts = dictsProp ?? ctx.dicts;
+  const categorize = useCategorizeTokens();
 
   const [creating, setCreating] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -187,7 +190,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
 
   if (dicts.loading) {
     return (
-      <div className={`flex items-center gap-1.5 px-1 ${UI_TEXT} text-emerald-400/50`}>
+      <div className={`flex items-center gap-1.5 px-1 ${DICT_UI_TEXT} text-emerald-400/50`}>
         <Loader2 className="w-3 h-3 animate-spin" />
         …
       </div>
@@ -195,7 +198,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
   }
 
   const loadGroups = groupByIndustry(libraryLoadable);
-  const btnClass = `${UI_TEXT} rounded border px-2 flex items-center gap-1 whitespace-nowrap h-[22px] leading-none`;
+  const btnClass = DICT_UI_BTN;
 
   return (
     <div className="flex items-center gap-1.5 flex-shrink-0 h-full">
@@ -210,23 +213,23 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
         </button>
         {creating && (
           <div className="absolute left-0 top-full mt-1 z-[100] w-[22rem] rounded border border-[#1a3a2a] bg-[#0a1510] shadow-xl p-3 space-y-2.5">
-            <div className={FORM_ROW}>
-              <span className={FORM_LABEL}>Nome</span>
+            <div className={DICT_FORM_ROW}>
+              <span className={DICT_FORM_LABEL}>Nome</span>
               <input
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Nome dizionario *"
-                className={FIELD}
+                className={DICT_FORM_FIELD}
               />
             </div>
-            <div className={FORM_ROW}>
-              <span className={FORM_LABEL}>Industry</span>
+            <div className={DICT_FORM_ROW}>
+              <span className={DICT_FORM_LABEL}>Industry</span>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
                 <select
                   value={newIndustry}
                   onChange={(e) => setNewIndustry(e.target.value)}
-                  className={`${FIELD} w-auto min-w-[7.5rem] max-w-[9rem] flex-shrink-0`}
+                  className={`${DICT_FORM_FIELD} w-auto min-w-[7.5rem] max-w-[9rem] flex-shrink-0`}
                 >
                   {DICTIONARY_INDUSTRIES.map((i) => (
                     <option key={i.id} value={i.id}>{i.label}</option>
@@ -251,32 +254,32 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
               </div>
             </div>
             {newIndustry === 'other' && (
-              <div className={FORM_ROW}>
-                <span className={FORM_LABEL}>Altro</span>
+              <div className={DICT_FORM_ROW}>
+                <span className={DICT_FORM_LABEL}>Altro</span>
                 <input
                   type="text"
                   value={newIndustryCustom}
                   onChange={(e) => setNewIndustryCustom(e.target.value)}
                   placeholder="Industry custom *"
-                  className={FIELD}
+                  className={DICT_FORM_FIELD}
                 />
               </div>
             )}
-            <div className={FORM_ROW_TOP}>
-              <span className={`${FORM_LABEL} pt-1.5`}>Descrizione</span>
+            <div className={DICT_FORM_ROW_TOP}>
+              <span className={`${DICT_FORM_LABEL} pt-1.5`}>Descrizione</span>
               <textarea
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
                 placeholder="Opzionale"
                 rows={2}
-                className={`${FIELD} resize-y min-h-[3rem]`}
+                className={`${DICT_FORM_FIELD} resize-y min-h-[3rem]`}
               />
             </div>
             <div className="flex items-center gap-1 justify-end pt-1">
               <button
                 type="button"
                 onClick={() => setCreating(false)}
-                className={`px-2 py-1 ${UI_TEXT} text-emerald-400 hover:text-emerald-200`}
+                className={`px-2 py-1 ${DICT_UI_TEXT} text-emerald-400 hover:text-emerald-200`}
               >
                 Annulla
               </button>
@@ -284,7 +287,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
                 type="button"
                 disabled={busy || !newName.trim() || (newIndustry === 'other' && !newIndustryCustom.trim())}
                 onClick={() => void handleCreate()}
-                className={`px-3 py-1 ${UI_TEXT} rounded border border-amber-400/50 text-amber-200 hover:bg-amber-400/15 disabled:opacity-40`}
+                className={`px-3 py-1 ${DICT_UI_TEXT} rounded border border-amber-400/50 text-amber-200 hover:bg-amber-400/15 disabled:opacity-40`}
               >
                 Crea
               </button>
@@ -307,7 +310,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
           <div className="absolute left-0 top-full mt-1 z-[100] min-w-[16rem] max-w-[22rem] max-h-72 overflow-y-auto rounded border border-[#1a3a2a] bg-[#0a1510] shadow-xl py-1">
             {linkedLoaded.length > 0 && (
               <>
-                <div className={`${UI_TEXT} px-3 py-1.5 text-emerald-400/60 uppercase tracking-wide`}>
+                <div className={`${DICT_UI_TEXT} px-3 py-1.5 text-emerald-400/60 uppercase tracking-wide`}>
                   Nel progetto (tokenizzazione)
                 </div>
                 {linkedLoaded.map((d) => (
@@ -316,7 +319,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
                     type="button"
                     disabled={busy}
                     onClick={() => void handleUnloadLibrary(d.id)}
-                    className={`w-full flex items-center gap-2 pl-3 pr-3 py-1.5 ${UI_TEXT} text-emerald-200/80 hover:bg-red-400/10 text-left disabled:opacity-40`}
+                    className={`w-full flex items-center gap-2 pl-3 pr-3 py-1.5 ${DICT_UI_TEXT} text-emerald-200/80 hover:bg-red-400/10 text-left disabled:opacity-40`}
                   >
                     <Unlink className="w-3 h-3 text-red-400/70 flex-shrink-0" />
                     <DictionaryIcon iconKey={d.icon_key} iconColor={d.icon_color} size="xs" />
@@ -332,7 +335,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
             {loadGroups.length > 0 ? (
               loadGroups.map((group) => (
                 <div key={group.industryKey}>
-                  <div className={`${UI_TEXT} px-3 py-1.5 text-emerald-400 font-semibold uppercase tracking-wide`}>
+                  <div className={`${DICT_UI_TEXT} px-3 py-1.5 text-emerald-400 font-semibold uppercase tracking-wide`}>
                     {group.label}
                   </div>
                   {group.items.map((d) => (
@@ -341,7 +344,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
                       type="button"
                       disabled={busy}
                       onClick={() => void handleLoadLibrary(d.id)}
-                      className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 ${UI_TEXT} text-emerald-200 hover:bg-sky-400/10 text-left disabled:opacity-40`}
+                      className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 ${DICT_UI_TEXT} text-emerald-200 hover:bg-sky-400/10 text-left disabled:opacity-40`}
                     >
                       <DictionaryIcon iconKey={d.icon_key} iconColor={d.icon_color} size="sm" />
                       <span className="truncate">{d.name}</span>
@@ -350,7 +353,7 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
                 </div>
               ))
             ) : linkedLoaded.length === 0 ? (
-              <div className={`${UI_TEXT} px-3 py-2 text-emerald-300/80`}>
+              <div className={`${DICT_UI_TEXT} px-3 py-2 text-emerald-300/80`}>
                 Nessun dizionario libreria disponibile
               </div>
             ) : null}
@@ -358,9 +361,40 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
         )}
       </div>
 
-      {(localError || dicts.error) && (
-        <span className={`${UI_TEXT} text-red-400 truncate max-w-[8rem]`} title={localError ?? dicts.error ?? ''}>
-          Errore
+      <button
+        type="button"
+        disabled={busy || categorize.generating || !categorize.canCategorize}
+        onClick={() => void categorize.startCategorize()}
+        title={
+          categorize.generating
+            ? CATEGORIZE_WAIT_LABEL
+            : categorize.canCategorize
+              ? 'Assegna con IA i token in no category; puoi correggere dopo manualmente'
+              : 'Serve almeno una categoria, descrizioni e token senza categoria'
+        }
+        className={`${btnClass} border-emerald-400/50 text-emerald-100 hover:bg-emerald-400/15 disabled:opacity-40 ${
+          categorize.generating ? 'bg-emerald-400/10' : ''
+        }`}
+      >
+        {categorize.generating ? (
+          <>
+            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+            <span>{CATEGORIZE_WAIT_LABEL}</span>
+          </>
+        ) : (
+          <>
+            <FolderTree className="w-3 h-3 flex-shrink-0" />
+            Categorizza
+          </>
+        )}
+      </button>
+
+      {(localError || categorize.error || dicts.error) && (
+        <span
+          className={`${DICT_UI_TEXT} text-red-400 truncate max-w-[14rem]`}
+          title={localError ?? categorize.error ?? dicts.error ?? ''}
+        >
+          {localError ?? categorize.error ?? dicts.error}
         </span>
       )}
     </div>

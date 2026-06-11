@@ -1,7 +1,8 @@
 /**
  * Single dictionary editor body — rendered inside nested Dizionari dock panels.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { MoveCategoryToLibraryDialog } from './MoveCategoryToLibraryDialog';
 import { syncCategoriesWithTokens, removeTokenFromLayout } from '../../lib/dictionaryTree';
 import { addAlias, removeAlias, removeCanonicalToken } from '../../lib/tokenDictionary';
 import { TokenTreeEditor } from '../../components/DocumentViewer/TokenTreeEditor';
@@ -9,22 +10,39 @@ import { TokenGrammarSidePanel } from '../../components/DocumentViewer/TokenGram
 import type { GrammarEditorHandle } from '../../components/DocumentViewer/InlineGrammarEditor';
 import type { GrammarEntry } from '../../hooks/useAnalysis';
 import { getStoredTokenGrammar, setTokenGrammar } from '../../lib/tokenGrammar';
-import { useDocumentEditor } from '../document-editor/DocumentEditorContext';
-
-export function DictionaryEditorView({ dictionaryId }: { dictionaryId: string }) {
+import {
+  useDictionaryCatalog,
+  useDictionarySessionActions,
+  useDocumentEditorDictionaryNav,
+} from '../document-editor/DocumentEditorContext';
+import { useDictionarySession } from '../../hooks/useDictionarySession';
+export const DictionaryEditorView = memo(function DictionaryEditorView({ dictionaryId }: { dictionaryId: string }) {
+  const catalog = useDictionaryCatalog();
+  const { setSessionTokens, setSessionCategories } = useDictionarySessionActions();
   const {
-    dicts,
     dictionaryTreeFocus,
     clearDictionaryTreeFocus,
     dictionaryAliasPick,
     cancelDictionaryAliasPick,
-  } = useDocumentEditor();
-  const meta = dicts.getDictionaryMeta(dictionaryId);
-  const session = dicts.getSession(dictionaryId);
+  } = useDocumentEditorDictionaryNav();
+  const meta = catalog.getDictionaryMeta(dictionaryId);
+  const session = useDictionarySession(dictionaryId);
 
   const [grammarPanelOpen, setGrammarPanelOpen] = useState(false);
   const [grammarEditToken, setGrammarEditToken] = useState<string | null>(null);
+  const [moveCategory, setMoveCategory] = useState<{
+    id: string;
+    name: string;
+    tokenCount: number;
+  } | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const grammarEditorRef = useRef<GrammarEditorHandle>(null);
+
+  const libraryDictionaries = useMemo(
+    () => catalog.available.filter((d) => d.scope === 'library'),
+    [catalog.available],
+  );
 
   const tokens = session?.tokens ?? [];
   const categories = session?.categories ?? [];
@@ -41,13 +59,13 @@ export function DictionaryEditorView({ dictionaryId }: { dictionaryId: string })
 
   const handleTokensChange = useCallback((next: typeof tokens) => {
     const synced = syncCategoriesWithTokens(categories, next);
-    dicts.setSessionTokens(dictionaryId, next);
-    dicts.setSessionCategories(dictionaryId, synced);
-  }, [dicts, dictionaryId, categories]);
+    setSessionTokens(dictionaryId, next);
+    setSessionCategories(dictionaryId, synced);
+  }, [setSessionTokens, setSessionCategories, dictionaryId, categories]);
 
   const handleCategoriesChange = useCallback((next: typeof categories) => {
-    dicts.setSessionCategories(dictionaryId, next);
-  }, [dicts, dictionaryId]);
+    setSessionCategories(dictionaryId, next);
+  }, [setSessionCategories, dictionaryId]);
 
   const handleRemoveCanonical = useCallback((text: string) => {
     handleTokensChange(removeCanonicalToken(tokens, text));
@@ -82,6 +100,31 @@ export function DictionaryEditorView({ dictionaryId }: { dictionaryId: string })
     if (!grammarEditToken) return;
     handleTokensChange(setTokenGrammar(tokens, grammarEditToken, grammar));
   }, [grammarEditToken, handleTokensChange, tokens]);
+
+  const handleMoveCategoryToLibrary = useCallback((
+    categoryId: string,
+    categoryName: string,
+    tokenCount: number,
+  ) => {
+    setMoveError(null);
+    setMoveCategory({ id: categoryId, name: categoryName, tokenCount });
+  }, []);
+
+  const handleConfirmMoveCategory = useCallback(async (
+    target: { mode: 'new'; name: string } | { mode: 'existing'; dictionaryId: string },
+  ) => {
+    if (!moveCategory) return;
+    setMoveBusy(true);
+    setMoveError(null);
+    try {
+      await catalog.moveCategoryToLibrary(dictionaryId, moveCategory.id, target);
+      setMoveCategory(null);
+    } catch (err) {
+      setMoveError(err instanceof Error ? err.message : 'Spostamento fallito');
+    } finally {
+      setMoveBusy(false);
+    }
+  }, [catalog, dictionaryId, moveCategory]);
 
   const handleAliasTargetPick = useCallback((canonicalText: string) => {
     if (!dictionaryAliasPick || dictionaryAliasPick.dictionaryId !== dictionaryId) return;
@@ -133,8 +176,27 @@ export function DictionaryEditorView({ dictionaryId }: { dictionaryId: string })
             focusTokenText={focusTokenText}
             onFocusTokenHandled={clearDictionaryTreeFocus}
             showDictionaryHeader={false}
+            onMoveCategoryToLibrary={
+              meta.scope === 'project' ? handleMoveCategoryToLibrary : undefined
+            }
           />
         </div>
+        {moveCategory && (
+          <MoveCategoryToLibraryDialog
+            categoryName={moveCategory.name}
+            tokenCount={moveCategory.tokenCount}
+            libraryDictionaries={libraryDictionaries}
+            busy={moveBusy}
+            error={moveError}
+            onConfirm={(target) => void handleConfirmMoveCategory(target)}
+            onClose={() => {
+              if (!moveBusy) {
+                setMoveCategory(null);
+                setMoveError(null);
+              }
+            }}
+          />
+        )}
         {grammarPanelOpen && (
           <div className="w-52 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
             <TokenGrammarSidePanel
@@ -152,4 +214,4 @@ export function DictionaryEditorView({ dictionaryId }: { dictionaryId: string })
       </div>
     </div>
   );
-}
+});

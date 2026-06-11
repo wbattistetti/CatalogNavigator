@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "db:status": "supabase status",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "functions:serve": "supabase functions serve analyze-document --env-file supabase/functions/.env"
   },
   "dependencies": {
     "@react-pdf-viewer/core": "^3.12.0",

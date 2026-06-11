@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from 'dockview';
-import { useDocumentEditor } from '../document-editor/DocumentEditorContext';
+import { useDocumentEditorController } from '../document-editor/DocumentEditorContext';
 import { DICTIONARY_EDITOR_COMPONENTS } from './DictionaryEditorPanel';
 import { DictionaryEditorTab } from './DictionaryEditorTab';
 import { dictionaryEditorPanelId, parseDictionaryEditorPanelId } from '../../lib/dictionaryEditorDockPanelIds';
@@ -29,7 +29,7 @@ function openIdsEqual(a: string[], b: string[]): boolean {
 }
 
 export function DictionaryEditorsDock() {
-  const { dicts } = useDocumentEditor();
+  const { dicts } = useDocumentEditorController();
   const apiRef = useRef<DockviewApi | null>(null);
   const getDictionaryMetaRef = useRef(dicts.getDictionaryMeta);
   const focusDictionaryEditorRef = useRef(dicts.focusDictionaryEditor);
@@ -86,12 +86,15 @@ export function DictionaryEditorsDock() {
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
-    return api.onDidActivePanelChange(() => {
+
+    const disposable = api.onDidActivePanelChange(() => {
       const active = api.activePanel;
       if (!active) return;
       const dictId = parseDictionaryEditorPanelId(active.id);
       if (dictId) focusDictionaryEditorRef.current(dictId);
-    }).dispose();
+    });
+
+    return () => disposable.dispose();
   }, []);
 
   useEffect(() => {

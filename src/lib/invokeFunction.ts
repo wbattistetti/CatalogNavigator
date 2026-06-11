@@ -2,6 +2,7 @@
  * Invokes a Supabase edge function and surfaces readable error messages.
  */
 import { FunctionsHttpError } from '@supabase/supabase-js';
+import { formatAiProxyError } from './aiProxyErrors';
 import { supabase } from './supabase';
 
 /** Reads the JSON/text body from a failed edge function response. */
@@ -45,10 +46,10 @@ export async function invokeFunction<T>(
   if (error) {
     if (signal?.aborted) throw new DOMException('Generazione annullata', 'AbortError');
     const detailed = await extractFunctionError(error, data);
-    throw new Error(detailed ?? error.message);
+    throw new Error(formatAiProxyError(detailed ?? error.message));
   }
 
   const payload = data as T & { error?: string };
-  if (payload?.error) throw new Error(payload.error);
+  if (payload?.error) throw new Error(formatAiProxyError(payload.error));
   return payload;
 }

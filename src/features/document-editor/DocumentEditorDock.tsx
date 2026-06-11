@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from 'dockview';
-import { useDocumentEditor } from './DocumentEditorContext';
+import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 import { DOCUMENT_EDITOR_DOCK_COMPONENTS } from './DocumentEditorDockPanels';
 import { DocumentEditorDockTab } from './DocumentEditorDockTab';
@@ -29,7 +29,8 @@ function isEditorTabId(id: string): id is EditorTabId {
 }
 
 export function DocumentEditorDock() {
-  const { dictionaryMode, activeTab, setActiveTab } = useDocumentEditor();
+  const { dictionaryMode } = useDocumentEditorController();
+  const { activeTab, setActiveTab } = useDocumentEditorTab();
   const apiRef = useRef<DockviewApi | null>(null);
   const rootPanelIdRef = useRef<string | null>(null);
 
@@ -90,12 +91,15 @@ export function DocumentEditorDock() {
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
-    return api.onDidActivePanelChange(() => {
+
+    const disposable = api.onDidActivePanelChange(() => {
       const active = api.activePanel;
       if (active && isEditorTabId(active.id)) {
         setActiveTab(active.id);
       }
-    }).dispose();
+    });
+
+    return () => disposable.dispose();
   }, [setActiveTab]);
 
   return (

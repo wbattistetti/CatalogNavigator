@@ -5,7 +5,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Circle, Trash2, FolderPlus, Braces, Plus, GripVertical,
+  Circle, Trash2, FolderPlus, Braces, Plus, GripVertical, Library, Scissors,
 } from 'lucide-react';
 import { DictionaryIcon } from './DictionaryIcon';
 import { iconForCategory, NO_CATEGORY_ICON } from '../../lib/categoryIconCatalog';
@@ -25,13 +25,18 @@ import {
 import {
   addToken,
   aliasCanonicalHint,
+  getSelectionOffsetsInElement,
   isCanonicalToken,
   selectionToTokenPhrase,
+  tokenizeToWords,
   type TokenEntry,
 } from '../../lib/tokenDictionary';
+import { applyCanonicalTokenSplit, splitPartsFromTokenSelection } from '../../lib/splitCanonicalToken';
 import { useListSelection } from '../../hooks/useListSelection';
+import { useCorpusVirtualScroll } from '../../hooks/useCorpusVirtualScroll';
 import {
   TOKEN_DRAG_MIME,
+  TOKEN_DRAG_PLAIN_PREFIX,
   CATEGORY_DRAG_MIME,
   DRAG_THRESHOLD_PX,
   assignTokensToCategory,
@@ -39,6 +44,7 @@ import {
   formatDragGhostLabel,
   isTokenDragEvent,
   parseTokenDragPayload,
+  tokenDragPayload,
 } from '../../lib/dictionaryTokenDrag';
 import {
   useDictionaryDragActive,
@@ -67,7 +73,13 @@ export interface TokenTreeEditorProps {
   /** After corpus token creation, select and scroll this token in the tree. */
   focusTokenText?: string | null;
   onFocusTokenHandled?: () => void;
+  /** When set, project categories show a control to move the whole category to library. */
+  onMoveCategoryToLibrary?: (categoryId: string, categoryName: string, tokenCount: number) => void;
 }
+
+const TOKEN_ROW_HEIGHT_PX = 30;
+/** Single readable size for category names, counts, and token labels. */
+const TREE_LABEL = 'font-mono text-xs';
 
 function TokenRow({
   entry,
@@ -75,20 +87,34 @@ function TokenRow({
   dragging,
   aliasPickActive,
   grammarEditActive,
+  splittingActive,
+  splitError,
+  labelRef,
   onRemove,
+  onStartSplit,
+  onCancelSplit,
+  onApplySplit,
   onRowClick,
   onRowMouseDown,
   onRowDoubleClick,
+  onLabelDoubleClick,
 }: {
   entry: TokenEntry;
   selected: boolean;
   dragging?: boolean;
   aliasPickActive?: boolean;
   grammarEditActive?: boolean;
+  splittingActive?: boolean;
+  splitError?: string | null;
+  labelRef?: React.Ref<HTMLSpanElement>;
   onRemove: () => void;
+  onStartSplit?: () => void;
+  onCancelSplit?: () => void;
+  onApplySplit?: () => void;
   onRowClick: (e: React.MouseEvent) => void;
   onRowMouseDown: (e: React.MouseEvent) => void;
   onRowDoubleClick?: () => void;
+  onLabelDoubleClick?: (e: React.MouseEvent) => void;
 }) {
   const pickable = Boolean(aliasPickActive);
 
@@ -100,42 +126,94 @@ function TokenRow({
       data-selected={selected ? 'true' : 'false'}
       onClick={onRowClick}
       onMouseDown={onRowMouseDown}
-      onDoubleClick={onRowDoubleClick}
-      className={`group flex items-center gap-1.5 px-2 py-1 rounded select-none ${
+      onDoubleClick={splittingActive ? undefined : onRowDoubleClick}
+      className={`group flex items-center gap-1.5 px-2 py-1 rounded ${
+        splittingActive ? 'select-text' : 'select-none'
+      } ${
         pickable
           ? 'cursor-pointer hover:bg-sky-400/15 hover:ring-1 hover:ring-sky-400/40'
-          : selected
-            ? dragging
-              ? 'bg-emerald-500/35 ring-2 ring-emerald-300/80 opacity-90 cursor-grabbing'
-              : 'bg-emerald-500/30 ring-2 ring-emerald-400/70 cursor-grab'
-            : grammarEditActive
-              ? 'bg-sky-400/20 ring-1 ring-sky-400/50 cursor-pointer'
-              : 'hover:bg-[#0f1a12] cursor-default'
+          : splittingActive
+            ? 'bg-amber-500/15 ring-1 ring-amber-400/45 cursor-text'
+            : selected
+              ? dragging
+                ? 'bg-emerald-500/35 ring-2 ring-emerald-300/80 opacity-90 cursor-grabbing'
+                : 'bg-emerald-500/30 ring-2 ring-emerald-400/70 cursor-grab'
+              : grammarEditActive
+                ? 'bg-sky-400/20 ring-1 ring-sky-400/50 cursor-pointer'
+                : 'hover:bg-[#0f1a12] cursor-default'
       }`}
     >
       <Circle className={`w-2 h-2 flex-shrink-0 ${entry.enabled ? 'text-amber-400/80 fill-amber-400/40' : 'text-emerald-400/25'}`} />
-      <span
-        className={`flex-1 min-w-0 font-mono text-[10px] truncate ${
-          entry.enabled ? 'text-emerald-200/90' : 'text-emerald-400/65'
-        }`}
-        title={entry.text}
-      >
-        {entry.text}
-      </span>
-      {!pickable && (
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 hover:bg-red-400/10 transition-all"
-          title="Rimuovi token"
+      <div className="flex items-center gap-1 min-w-0">
+        <span
+          ref={labelRef}
+          onDoubleClick={onLabelDoubleClick}
+          className={`min-w-0 ${TREE_LABEL} ${
+            splittingActive ? '' : 'truncate'
+          } ${entry.enabled ? 'text-emerald-200/90' : 'text-emerald-400/65'}`}
+          title={splitError ?? entry.text}
         >
-          <Trash2 className="w-3 h-3" />
-        </button>
-      )}
+          {entry.text}
+        </span>
+        {!pickable && !splittingActive && (
+          <>
+            {onStartSplit && (
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStartSplit();
+                }}
+                className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-amber-400/60 hover:text-amber-300 hover:bg-amber-400/10 transition-all"
+                title="Dividi token"
+              >
+                <Scissors className="w-3 h-3" />
+              </button>
+            )}
+            <button
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 hover:bg-red-400/10 transition-all"
+              title="Rimuovi token"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </>
+        )}
+        {splittingActive && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCancelSplit?.();
+              }}
+              className={`${TREE_LABEL} px-1 py-0.5 rounded text-emerald-400/55 hover:text-emerald-200 hover:bg-[#0f1a12]`}
+              title="Annulla (ESC)"
+            >
+              ESC
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onApplySplit?.();
+              }}
+              className={`${TREE_LABEL} px-1.5 py-0.5 rounded border border-amber-400/40 text-amber-200/90 hover:bg-amber-400/15`}
+              title="Dividi in due token"
+            >
+              Dividi
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -153,6 +231,7 @@ function CategoryRow({
   draggable,
   onSelect,
   onDelete,
+  onMoveToLibrary,
   onDragStart,
   onDragOver,
   onDragLeave,
@@ -169,6 +248,7 @@ function CategoryRow({
   draggable: boolean;
   onSelect: () => void;
   onDelete?: () => void;
+  onMoveToLibrary?: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: () => void;
@@ -205,18 +285,31 @@ function CategoryRow({
       <DictionaryIcon
         iconKey={iconKey}
         iconColor={iconColor}
-        size="sm"
+        size="lg"
         title={name}
       />
       <span
-        className={`font-mono text-[10px] whitespace-nowrap ${
+        className={`${TREE_LABEL} whitespace-nowrap ${
           isNoCategory ? 'text-emerald-300/80 italic' : 'font-semibold'
         }`}
         style={isNoCategory ? undefined : { color: iconColor }}
       >
         {name}
       </span>
-      <span className="font-mono text-[8px] text-emerald-400/75 tabular-nums">{count}</span>
+      <span className={`${TREE_LABEL} text-emerald-400/80 tabular-nums`}>{count}</span>
+      {onMoveToLibrary && count > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMoveToLibrary();
+          }}
+          className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-sky-400/60 hover:text-sky-200 hover:bg-sky-400/10 transition-all"
+          title="Sposta categoria in libreria"
+        >
+          <Library className="w-3 h-3" />
+        </button>
+      )}
       {onDelete && (
         <button
           type="button"
@@ -252,6 +345,7 @@ export function TokenTreeEditor({
   showDictionaryHeader = true,
   focusTokenText = null,
   onFocusTokenHandled,
+  onMoveCategoryToLibrary,
 }: TokenTreeEditorProps) {
   const selected = useDictionarySelectedSet();
   const dictionaryCategoryDropTarget = useDictionaryDropTarget();
@@ -264,8 +358,11 @@ export function TokenTreeEditor({
   const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
   const [categoryDropIndex, setCategoryDropIndex] = useState<number | null>(null);
   const [tokenDragActive, setTokenDragActive] = useState(false);
+  const [splittingTokenText, setSplittingTokenText] = useState<string | null>(null);
+  const [splitError, setSplitError] = useState<string | null>(null);
   const dragGhostRef = useRef<HTMLDivElement>(null);
   const tokenListRef = useRef<HTMLDivElement>(null);
+  const splitLabelRef = useRef<HTMLSpanElement>(null);
 
   const sortedCategories = useMemo(
     () => normalizeCategoryOrders(categories),
@@ -310,20 +407,55 @@ export function TokenTreeEditor({
     validIds: allCanonicalTexts,
   });
 
+  const { containerRef: tokenScrollRef, range: tokenRange } = useCorpusVirtualScroll(
+    selectableTokenTexts.length,
+    TOKEN_ROW_HEIGHT_PX,
+  );
+
+  const renderedTokenTexts = useMemo(
+    () => selectableTokenTexts.slice(tokenRange.start, tokenRange.end),
+    [selectableTokenTexts, tokenRange.start, tokenRange.end],
+  );
+
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+
+  useEffect(() => {
+    if (tokenScrollRef.current) tokenScrollRef.current.scrollTop = 0;
+  }, [activeCategoryKey, tokenScrollRef]);
+
+  useEffect(() => {
+    setSplittingTokenText(null);
+    setSplitError(null);
+  }, [activeCategoryKey]);
+
+  useEffect(() => {
+    if (!splittingTokenText) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSplittingTokenText(null);
+        setSplitError(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [splittingTokenText]);
 
   useEffect(() => {
     if (!focusTokenText) return;
     if (!entryByText.has(focusTokenText)) return;
     setSelected(new Set([focusTokenText]));
+    const index = selectableTokenTexts.indexOf(focusTokenText);
     requestAnimationFrame(() => {
+      if (index >= 0 && tokenScrollRef.current) {
+        tokenScrollRef.current.scrollTop = Math.max(0, index * TOKEN_ROW_HEIGHT_PX - 40);
+      }
       const escaped = focusTokenText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      const el = document.querySelector(`[data-select-id="${escaped}"]`);
+      const el = tokenScrollRef.current?.querySelector(`[data-select-id="${escaped}"]`);
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       onFocusTokenHandled?.();
     });
-  }, [focusTokenText, entryByText, setSelected, onFocusTokenHandled]);
+  }, [focusTokenText, entryByText, setSelected, onFocusTokenHandled, selectableTokenTexts, tokenScrollRef]);
 
   const allVisibleSelected = selectableTokenTexts.length > 0
     && selectableTokenTexts.every((text) => selected.has(text));
@@ -366,10 +498,10 @@ export function TokenTreeEditor({
 
     try {
       const next = createCategoryWithTokens(categories, name, []);
-      onCategoriesChange(next);
       const created = findCategoryByName(next, name);
-      if (created) setActiveCategoryKey(created.id);
       setNewCategoryName('');
+      if (created) setActiveCategoryKey(created.id);
+      onCategoriesChange(next);
     } catch {
       /* invalid */
     }
@@ -467,11 +599,11 @@ export function TokenTreeEditor({
   }, []);
 
   const startTokenPointerDrag = useCallback((e: React.MouseEvent, tokenText: string) => {
-    if (!selectedRef.current.has(tokenText)) return;
-    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     if ((e.target as HTMLElement).closest('button, input, a')) return;
 
-    const texts = [...selectedRef.current];
+    const texts = selectedRef.current.has(tokenText)
+      ? [...selectedRef.current]
+      : [tokenText];
     const originX = e.clientX;
     const originY = e.clientY;
     let active = false;
@@ -585,25 +717,93 @@ export function TokenTreeEditor({
   });
 
   /** Single mousedown entry point — event delegation, no per-row handlers. */
+  const cancelTokenSplit = useCallback(() => {
+    setSplittingTokenText(null);
+    setSplitError(null);
+  }, []);
+
+  const startTokenSplit = useCallback((text: string) => {
+    setSplittingTokenText(text);
+    setSplitError(null);
+    setSelected(new Set([text]));
+    onGrammarEditTokenChange?.(null);
+  }, [onGrammarEditTokenChange, setSelected]);
+
+  const applyTokenSplit = useCallback(() => {
+    if (!splittingTokenText) return;
+    const container = splitLabelRef.current;
+    if (!container) {
+      setSplitError('Seleziona una parte del token');
+      return;
+    }
+    try {
+      const range = getSelectionOffsetsInElement(container, splittingTokenText);
+      if (!range) {
+        setSplitError('Seleziona una parte del token da separare');
+        return;
+      }
+      const parts = splitPartsFromTokenSelection(splittingTokenText, range.start, range.end);
+      const result = applyCanonicalTokenSplit(tokens, categories, splittingTokenText, parts);
+      onTokensChange(result.tokens);
+      onCategoriesChange(result.categories);
+      setSplittingTokenText(null);
+      setSplitError(null);
+      setSelected(new Set([parts.head, parts.tail]));
+    } catch (err) {
+      setSplitError(err instanceof Error ? err.message : 'Divisione non valida');
+    }
+  }, [categories, onCategoriesChange, onTokensChange, setSelected, splittingTokenText, tokens]);
+
+  const handleSplitLabelDoubleClick = useCallback((e: React.MouseEvent, text: string) => {
+    e.stopPropagation();
+    if (splittingTokenText !== text) return;
+    const words = tokenizeToWords(text);
+    if (words.length < 2) return;
+    const first = words[0]!;
+    const start = text.indexOf(first);
+    if (start < 0) return;
+    const container = e.currentTarget as HTMLElement;
+    const textNode = container.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return;
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + first.length);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    setSplitError(null);
+  }, [splittingTokenText]);
+
   const handleTokenRowClick = useCallback((e: React.MouseEvent, text: string) => {
     if (aliasPickActive) {
       onAliasTargetPick?.(text);
       return;
     }
+    if (splittingTokenText && splittingTokenText !== text) {
+      cancelTokenSplit();
+    }
     e.stopPropagation();
     handleRowClick(e, text);
-  }, [aliasPickActive, handleRowClick, onAliasTargetPick]);
+  }, [aliasPickActive, cancelTokenSplit, handleRowClick, onAliasTargetPick, splittingTokenText]);
 
-  /** Drag only: mousedown on an already-selected row (selection happens on click). */
+  /** Drag: mousedown selects the row when needed, then starts pointer drag to categories. */
   const handleTokenRowMouseDown = useCallback((e: React.MouseEvent, text: string) => {
+    if (splittingTokenText) return;
     if (aliasPickActive) return;
     if (e.button !== 0) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     if ((e.target as HTMLElement).closest('button, input, a, label')) return;
-    if (!selectedRef.current.has(text)) return;
+
+    if (!selectedRef.current.has(text)) {
+      const next = new Set([text]);
+      selectedRef.current = next;
+      setSelected(next);
+    }
+
+    e.preventDefault();
     e.stopPropagation();
     startTokenPointerDrag(e, text);
-  }, [aliasPickActive, startTokenPointerDrag]);
+  }, [aliasPickActive, setSelected, splittingTokenText, startTokenPointerDrag]);
 
   const handleTokenListBackgroundClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('[data-select-id]')) return;
@@ -686,7 +886,7 @@ export function TokenTreeEditor({
               </button>
             </div>
           </div>
-          <div className="flex-shrink-0 px-2 py-1 font-mono text-[9px] text-emerald-300/90 uppercase tracking-wider">
+          <div className={`flex-shrink-0 px-2 py-1 ${TREE_LABEL} text-emerald-300/90 uppercase tracking-wider`}>
             Categorie
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5">
@@ -724,6 +924,11 @@ export function TokenTreeEditor({
                   onDelete={
                     cat.tokenTexts.length === 0
                       ? () => handleDeleteCategory(cat.id)
+                      : undefined
+                  }
+                  onMoveToLibrary={
+                    onMoveCategoryToLibrary
+                      ? () => onMoveCategoryToLibrary(cat.id, cat.name, cat.tokenTexts.length)
                       : undefined
                   }
                   onDragStart={(e) => handleCategoryDragStart(e, cat.id, cat.name)}
@@ -791,55 +996,103 @@ export function TokenTreeEditor({
           </div>
           <div className="flex-shrink-0 px-2 py-1 flex items-center gap-2 border-b border-[#1a3a2a]/60">
             <span
-              className="font-mono text-[9px] text-amber-300/95 uppercase tracking-wider whitespace-nowrap min-w-0 flex-1"
+              className={`${TREE_LABEL} text-amber-300/95 uppercase tracking-wider whitespace-nowrap min-w-0 flex-1`}
             >
               {activeCategoryLabel}
             </span>
             {selectedList.length > 0 && (
-              <span className="font-mono text-[9px] text-emerald-300/85 flex-shrink-0">
+              <span className={`${TREE_LABEL} text-emerald-300/85 flex-shrink-0`}>
                 {selectedList.length} sel.
               </span>
             )}
           </div>
           <div
-            ref={tokenListRef}
+            ref={tokenScrollRef}
             role="listbox"
             aria-multiselectable
-            className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5"
+            className="flex-1 min-h-0 overflow-y-auto p-1"
             onClick={handleTokenListBackgroundClick}
           >
             {selectableTokenTexts.length === 0 ? (
-              <p className="font-mono text-[10px] text-emerald-300/90 px-2 py-4 text-center leading-relaxed">
+              <p className={`${TREE_LABEL} text-emerald-300/90 px-2 py-4 text-center leading-relaxed`}>
                 Nessun token in questa categoria.
               </p>
             ) : (
-              selectableTokenTexts.map((text) => {
-                const entry = entryByText.get(text);
-                if (!entry) return null;
-                const isSelected = selected.has(text);
-                return (
-                  <MemoTokenRow
-                    key={text}
-                    entry={entry}
-                    selected={isSelected}
-                    dragging={anyTokenDragActive && isSelected}
-                    aliasPickActive={aliasPickActive}
-                    {...grammarRowProps(text)}
-                    onRemove={() => onRemoveCanonical(text)}
-                    onRowClick={(e) => handleTokenRowClick(e, text)}
-                    onRowMouseDown={(e) => handleTokenRowMouseDown(e, text)}
-                    onRowDoubleClick={
-                      grammarPanelOpen && onGrammarEditTokenChange
-                        ? () => onGrammarEditTokenChange(text)
-                        : undefined
-                    }
-                  />
-                );
-              })
+              <div
+                ref={tokenListRef}
+                style={{ height: tokenRange.totalHeight, position: 'relative' }}
+              >
+                <div
+                  className="space-y-0.5 absolute left-0 right-0 p-0"
+                  style={{
+                    transform: `translateY(${tokenRange.offsetY}px)`,
+                    willChange: 'transform',
+                  }}
+                >
+                  {renderedTokenTexts.map((text) => {
+                    const entry = entryByText.get(text);
+                    if (!entry) return null;
+                    const isSelected = selected.has(text);
+                    return (
+                      <div
+                        key={text}
+                        style={{ minHeight: TOKEN_ROW_HEIGHT_PX }}
+                        draggable={!aliasPickActive && !splittingTokenText}
+                        onDragStart={(e) => {
+                          const dragTexts = isSelected ? [...selected] : [text];
+                          if (!isSelected) {
+                            const next = new Set([text]);
+                            selectedRef.current = next;
+                            setSelected(next);
+                          }
+                          const payload = tokenDragPayload(dragTexts);
+                          e.dataTransfer.setData(TOKEN_DRAG_MIME, payload);
+                          e.dataTransfer.setData('text/plain', `${TOKEN_DRAG_PLAIN_PREFIX}${payload}`);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setTokenDragActive(true);
+                          setDragActive(true);
+                          const ghost = prepareDragImage(formatDragGhostLabel(dragTexts));
+                          if (ghost) e.dataTransfer.setDragImage(ghost, 12, 16);
+                        }}
+                        onDragEnd={handleTokenDragEnd}
+                      >
+                        <MemoTokenRow
+                          entry={entry}
+                          selected={isSelected}
+                          dragging={anyTokenDragActive && isSelected}
+                          aliasPickActive={aliasPickActive}
+                          splittingActive={splittingTokenText === text}
+                          splitError={splittingTokenText === text ? splitError : null}
+                          labelRef={splittingTokenText === text ? splitLabelRef : undefined}
+                          {...grammarRowProps(text)}
+                          onRemove={() => onRemoveCanonical(text)}
+                          onStartSplit={
+                            isCanonicalToken(entry) && tokenizeToWords(entry.text).length >= 2
+                              ? () => startTokenSplit(text)
+                              : undefined
+                          }
+                          onCancelSplit={cancelTokenSplit}
+                          onApplySplit={applyTokenSplit}
+                          onRowClick={(e) => handleTokenRowClick(e, text)}
+                          onRowMouseDown={(e) => handleTokenRowMouseDown(e, text)}
+                          onLabelDoubleClick={(e) => handleSplitLabelDoubleClick(e, text)}
+                          onRowDoubleClick={
+                            grammarPanelOpen && onGrammarEditTokenChange && splittingTokenText !== text
+                              ? () => onGrammarEditTokenChange(text)
+                              : undefined
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
-          <div className="flex-shrink-0 px-2 py-0.5 border-t border-[#1a3a2a]/60 font-mono text-[8px] text-emerald-400/75">
-            Click seleziona · Ctrl+click aggiunge/toglie · Shift+click intervallo · trascina selezionati per spostare
+          <div className={`flex-shrink-0 px-2 py-0.5 border-t border-[#1a3a2a]/60 ${TREE_LABEL} text-emerald-400/75`}>
+            {splittingTokenText
+              ? 'Seleziona testo nel token · Doppio click prima parola · Dividi · ESC annulla'
+              : 'Click seleziona · Forbici dividi token · trascina su categoria · Ctrl/Shift multi-selezione'}
           </div>
         </div>
       </div>
@@ -856,7 +1109,7 @@ export function TokenTreeEditor({
 
       {aliasEntries.length > 0 && (
         <div className="flex-shrink-0 max-h-[28%] overflow-y-auto border-t border-[#1a3a2a]/60 bg-[#080e0a]">
-          <p className="sticky top-0 px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-sky-400/45 bg-[#080e0a] border-b border-[#1a3a2a]/40">
+          <p className={`sticky top-0 px-2 py-1 ${TREE_LABEL} uppercase tracking-wider text-sky-400/45 bg-[#080e0a] border-b border-[#1a3a2a]/40`}>
             Alias ({aliasEntries.length})
           </p>
           <div className="p-1 space-y-0.5">
@@ -867,7 +1120,7 @@ export function TokenTreeEditor({
                 title={`alias of: ${entry.aliasOf}`}
               >
                 <Circle className="w-2 h-2 flex-shrink-0 text-sky-400/60 fill-sky-400/25" />
-                <span className="flex-1 min-w-0 font-mono text-[10px] text-sky-200/90 truncate">
+                <span className={`flex-1 min-w-0 ${TREE_LABEL} text-sky-200/90 truncate`}>
                   {entry.text}
                   {entry.aliasOf && (
                     <span className="text-sky-300/45"> ({aliasCanonicalHint(entry.aliasOf)})</span>

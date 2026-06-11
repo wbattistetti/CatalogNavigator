@@ -2,10 +2,10 @@
  * Single contextual toolbar for the active editor tab.
  */
 import {
-  BookOpen, Braces, FlaskConical, Loader2, MessageSquare,
+  BookOpen, Braces, FlaskConical, Loader2, MessageSquare, Mic,
   RefreshCw, RotateCcw, Save, Wand2, X,
 } from 'lucide-react';
-import { useDocumentEditor } from './DocumentEditorContext';
+import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 
 export function DocumentEditorToolbar() {
@@ -15,19 +15,20 @@ export function DocumentEditorToolbar() {
     dictionaryMode,
     documentText,
     analysisApi,
-    activeTab,
-    setActiveTab,
     dictState,
     setAffinaOpen,
     testOpen,
     setTestOpen,
+    convaiOpen,
+    setConvaiOpen,
     grammarOverwrite,
     setGrammarOverwrite,
     grammarTokens,
     dicts,
     agentDictionaryContext,
     agentNeedsUpdate,
-  } = useDocumentEditor();
+  } = useDocumentEditorController();
+  const { activeTab, setActiveTab } = useDocumentEditorTab();
 
   const {
     generating, generatingPhase, analysis,
@@ -54,7 +55,7 @@ export function DocumentEditorToolbar() {
           <button
             type="button"
             onClick={() => dictState.discard()}
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors"
+            className="flex items-center gap-1 px-2 py-1.5 font-mono text-xs text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors"
           >
             <RotateCcw className="w-3 h-3" />
             Annulla
@@ -67,6 +68,7 @@ export function DocumentEditorToolbar() {
   if (activeTab === EDITOR_TAB_IDS.dictionaries && dictionaryMode) {
     const activeId = dicts.editingDictionaryId;
     const session = activeId ? dicts.getSession(activeId) : null;
+    const meta = activeId ? dicts.getDictionaryMeta(activeId) : null;
     const canSave = !!session?.dirty && !!activeId && dicts.savingDictionaryId !== activeId;
 
     return (
@@ -87,7 +89,7 @@ export function DocumentEditorToolbar() {
           <button
             type="button"
             onClick={() => dicts.discardDictionary(activeId)}
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors"
+            className="flex items-center gap-1 px-2 py-1.5 font-mono text-xs text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors"
           >
             <RotateCcw className="w-3 h-3" />
             Annulla
@@ -213,7 +215,7 @@ export function DocumentEditorToolbar() {
               } catch { /* error in hook */ }
             })()}
             disabled={!canRunGrammarGeneration}
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] rounded border border-violet-400/30 text-violet-300/80 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1 px-2 py-1.5 font-mono text-xs rounded border border-violet-400/30 text-violet-300/80 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
           >
             {generating && generatingPhase === 'grammars' ? 'IA…' : 'IA'}
           </button>
@@ -256,7 +258,7 @@ export function DocumentEditorToolbar() {
                 type="button"
                 onClick={() => void discardAnalysisChanges()}
                 disabled={saving || generating}
-                className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
+                className="flex items-center gap-1 px-2 py-1.5 font-mono text-xs text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
               >
                 <RotateCcw className="w-3 h-3" />
                 Annulla
@@ -266,16 +268,30 @@ export function DocumentEditorToolbar() {
               type="button"
               onClick={() => setAffinaOpen((v) => !v)}
               disabled={generating}
-              className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] text-amber-400/60 border border-amber-400/25 rounded hover:border-amber-400/50 hover:text-amber-400/90 transition-colors disabled:opacity-30"
+              className="flex items-center gap-1 px-2 py-1.5 font-mono text-xs text-amber-400/60 border border-amber-400/25 rounded hover:border-amber-400/50 hover:text-amber-400/90 transition-colors disabled:opacity-30"
             >
               <Wand2 className="w-3 h-3" />
               Affina
+            </button>
+            <button
+              type="button"
+              onClick={() => setConvaiOpen(true)}
+              disabled={!hasTaxonomy || !agentDictionaryContext}
+              title="Export per ElevenLabs Convai"
+              className={`flex items-center gap-1 px-2 py-1.5 font-mono text-xs border rounded transition-colors disabled:opacity-40 ${
+                convaiOpen
+                  ? 'text-violet-200 border-violet-400/50 bg-violet-400/10'
+                  : 'text-violet-300/70 border-violet-400/25 hover:border-violet-400/50 hover:text-violet-200'
+              }`}
+            >
+              <Mic className="w-3 h-3" />
+              Convai
             </button>
             {hasMessages && (
               <button
                 type="button"
                 onClick={() => setTestOpen((v) => !v)}
-                className={`flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] border rounded transition-colors ${
+                className={`flex items-center gap-1 px-2 py-1.5 font-mono text-xs border rounded transition-colors ${
                   testOpen
                     ? 'text-emerald-300 border-emerald-400/50 bg-emerald-400/10'
                     : agentReady

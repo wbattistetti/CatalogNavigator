@@ -18,6 +18,11 @@ import {
 } from '../lib/dictionaryLibrary';
 import { buildLoadedRefs, type LoadedDictionaryRef } from '../lib/multiDictionarySegment';
 import { defaultDictionaryEditorId } from '../lib/dictionaryTabOrder';
+import {
+  moveCategoryToLibrary,
+  promoteProjectDictionaryToLibrary,
+  type MoveCategoryTarget,
+} from '../lib/dictionaryPromotion';
 import { useDictionaryEditSessions } from './useDictionaryEditSessions';
 
 export type { DictionaryEditSession } from '../lib/dictionaryEditSession';
@@ -54,6 +59,20 @@ export interface UseProjectDictionariesResult {
     description?: string | null;
     scope: 'library' | 'project';
   }) => Promise<KbDictionary>;
+  promoteDictionaryToLibrary: (
+    dictionaryId: string,
+    input: {
+      name: string;
+      industry: string;
+      industryCustom?: string | null;
+      description?: string | null;
+    },
+  ) => Promise<{ promoted: KbDictionary; newProject: KbDictionary }>;
+  moveCategoryToLibrary: (
+    sourceDictionaryId: string,
+    categoryId: string,
+    target: MoveCategoryTarget,
+  ) => Promise<{ source: KbDictionary; target: KbDictionary }>;
   saveEditingDictionary: () => Promise<KbDictionary>;
   saveDictionary: (dictionaryId: string) => Promise<KbDictionary>;
   savingDictionaryId: string | null;
@@ -97,8 +116,9 @@ export function useProjectDictionaries(
   }, [doc]);
 
   const reload = useCallback(async () => {
-    setLoading(true);
     setError(null);
+    const hasLoadedData = projectDicts.length > 0 || linkedLibrary.length > 0;
+    if (!hasLoadedData) setLoading(true);
     try {
       const { project, doc: nextDoc } = await ensureProjectForDocument(localDoc);
       setProjectId(project.id);
@@ -140,6 +160,8 @@ export function useProjectDictionaries(
     localDoc,
     descriptionColumn,
     onDocUpdated,
+    projectDicts,
+    linkedLibrary,
     editSessions.syncSessionsFromLoaded,
     editSessions.syncOpenEditorsAfterReload,
   ]);
@@ -224,6 +246,72 @@ export function useProjectDictionaries(
     return created;
   }, [projectId, reload, editSessions.openDictionaryEditor]);
 
+  const promoteDictionaryToLibrary = useCallback(async (
+    dictionaryId: string,
+    input: {
+      name: string;
+      industry: string;
+      industryCustom?: string | null;
+      description?: string | null;
+    },
+  ) => {
+    if (!projectId) throw new Error('Progetto non pronto');
+    const session = editSessions.getSession(dictionaryId);
+    if (session?.dirty) {
+      await saveDictionary(dictionaryId);
+    }
+    const promoted = await promoteProjectDictionaryToLibrary(dictionaryId, projectId, input);
+    const newProject = await createDictionary({
+      name: 'Project',
+      industry: promoted.industry,
+      industryCustom: promoted.industry_custom,
+      description: 'Dizionario di progetto',
+      scope: 'project',
+      projectId,
+    });
+    await reload();
+    editSessions.openDictionaryEditor(promoted.id);
+    editSessions.openDictionaryEditor(newProject.id);
+    editSessions.focusDictionaryEditor(newProject.id);
+    return { promoted, newProject };
+  }, [
+    projectId,
+    editSessions.getSession,
+    saveDictionary,
+    reload,
+    editSessions.openDictionaryEditor,
+    editSessions.focusDictionaryEditor,
+  ]);
+
+  const moveCategoryToLibraryAction = useCallback(async (
+    sourceDictionaryId: string,
+    categoryId: string,
+    target: MoveCategoryTarget,
+  ) => {
+    if (!projectId) throw new Error('Progetto non pronto');
+    const session = editSessions.getSession(sourceDictionaryId);
+    const meta = editSessions.getDictionaryMeta(sourceDictionaryId);
+    if (!session || !meta) throw new Error('Dizionario sorgente non disponibile');
+    if (meta.scope !== 'project') {
+      throw new Error('Solo le categorie dei dizionari di progetto possono essere spostate in libreria');
+    }
+
+    const result = await moveCategoryToLibrary({
+      sourceDictionaryId,
+      categoryId,
+      projectId,
+      sourceTokens: session.tokens,
+      sourceCategories: session.categories,
+      sourceIndustry: meta.industry,
+      sourceIndustryCustom: meta.industry_custom,
+      target,
+    });
+
+    await reload();
+    editSessions.openDictionaryEditor(result.target.id);
+    return result;
+  }, [projectId, editSessions, reload, editSessions.openDictionaryEditor]);
+
   return {
     loading,
     error,
@@ -250,6 +338,8 @@ export function useProjectDictionaries(
     loadLibraryDictionary,
     unloadLibraryDictionary,
     createNewDictionary,
+    promoteDictionaryToLibrary,
+    moveCategoryToLibrary: moveCategoryToLibraryAction,
     saveEditingDictionary,
     saveDictionary,
     savingDictionaryId,

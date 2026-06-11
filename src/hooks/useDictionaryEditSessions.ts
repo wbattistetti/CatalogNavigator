@@ -1,7 +1,7 @@
 /**
  * Manages per-dictionary edit buffers and open editor tabs (no network I/O).
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import type { KbDictionary } from '../lib/dictionaryLibrary';
 import type { TokenCategory } from '../lib/dictionaryTree';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../lib/dictionaryEditSession';
 import type { TokenEntry } from '../lib/tokenDictionary';
 import { orderDictionaryIds } from '../lib/dictionaryTabOrder';
+import { replaceDictionarySessions } from '../lib/dictionarySessionStore';
 
 export interface UseDictionaryEditSessionsResult {
   openEditorIds: string[];
@@ -74,6 +75,11 @@ export function useDictionaryEditSessions(
     [sessions],
   );
 
+  /** Pushes session state to the external store after commit (never during setState). */
+  useLayoutEffect(() => {
+    replaceDictionarySessions(sessions);
+  }, [sessions]);
+
   const upsertSessionFromDictionary = useCallback((dict: KbDictionary, preserveIfDirty: boolean) => {
     setSessions((prev) => {
       const existing = prev.get(dict.id);
@@ -105,12 +111,20 @@ export function useDictionaryEditSessions(
     dictionaries?: KbDictionary[],
   ) => {
     const pool = dictionaries ?? allLoadedDictionaries;
-    const orderedIds = orderDictionaryIds(pool, validIds);
-    setOpenEditorIds(orderedIds);
+
+    setOpenEditorIds((prev) => {
+      const pruned = orderDictionaryIds(pool, prev.filter((id) => validIds.has(id)));
+      if (pruned.length > 0) return pruned;
+      if (defaultDictionaryId && validIds.has(defaultDictionaryId)) return [defaultDictionaryId];
+      const first = orderDictionaryIds(pool, validIds)[0];
+      return first ? [first] : [];
+    });
+
     setActiveDictionaryId((prev) => {
       if (prev && validIds.has(prev)) return prev;
       if (defaultDictionaryId && validIds.has(defaultDictionaryId)) return defaultDictionaryId;
-      return orderedIds[0] ?? null;
+      const first = orderDictionaryIds(pool, validIds)[0];
+      return first ?? null;
     });
   }, [allLoadedDictionaries]);
 
@@ -192,8 +206,9 @@ export function useDictionaryEditSessions(
     setSessions((prev) => {
       const current = prev.get(dictionaryId);
       if (!current) return prev;
+      const updated = applyDictionaryEditSessionPatch(current, patch);
       const next = new Map(prev);
-      next.set(dictionaryId, applyDictionaryEditSessionPatch(current, patch));
+      next.set(dictionaryId, updated);
       return next;
     });
   }, []);

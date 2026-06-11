@@ -6,34 +6,17 @@ import type { TokenCategory } from './dictionaryTree';
 import type { LoadedDictionaryRef } from './multiDictionarySegment';
 import { findDictionaryForToken } from './multiDictionarySegment';
 import { DEFAULT_LUCIDE_ICON_KEY } from './lucideIconRegistry';
+import { CATEGORY_COLOR } from './categoryIconColors';
+import {
+  HEALTHCARE_CATEGORY_KEYWORD_RULES,
+  HEALTHCARE_EXACT_CATEGORY_ICONS,
+  HEALTHCARE_EXACT_TOKEN_ICONS,
+  HEALTHCARE_TOKEN_KEYWORD_RULES,
+  type CategoryIconSpec,
+} from './healthcareIconCatalogData';
 
-export interface CategoryIconSpec {
-  iconKey: string;
-  iconColor: string;
-}
-
-/** Glossy-console palette — one hue per semantic family. */
-export const CATEGORY_COLOR = {
-  specialty: '#a78bfa',
-  visitType: '#38bdf8',
-  visit: '#fb7185',
-  exam: '#22d3ee',
-  age: '#fcd34d',
-  diagnosis: '#86efac',
-  symptom: '#f87171',
-  drug: '#c084fc',
-  service: '#4ade80',
-  location: '#60a5fa',
-  urgency: '#ef4444',
-  gender: '#e879f9',
-  staff: '#94a3b8',
-  imaging: '#67e8f9',
-  lab: '#2dd4bf',
-  mental: '#d8b4fe',
-  default: '#f59e0b',
-  noCategory: '#34d399',
-  library: '#38bdf8',
-} as const;
+export type { CategoryIconSpec };
+export { CATEGORY_COLOR };
 
 /** @deprecated Use CATEGORY_COLOR.default */
 export const PROJECT_CATEGORY_ICON_COLOR = CATEGORY_COLOR.default;
@@ -50,86 +33,27 @@ const DEFAULT_CATEGORY_ICON: CategoryIconSpec = {
   iconColor: CATEGORY_COLOR.default,
 };
 
-function spec(iconKey: string, iconColor: string): CategoryIconSpec {
-  return { iconKey, iconColor };
-}
-
-/** Exact normalized name → icon + accent color. */
-const EXACT_CATEGORY_ICONS: Record<string, CategoryIconSpec> = {
-  'specialita': spec('Building2', CATEGORY_COLOR.specialty),
-  'specialità': spec('Building2', CATEGORY_COLOR.specialty),
-  'tipo visita': spec('ClipboardList', CATEGORY_COLOR.visitType),
-  'visita': spec('Stethoscope', CATEGORY_COLOR.visit),
-  'visite': spec('Stethoscope', CATEGORY_COLOR.visit),
-  'esame': spec('FlaskConical', CATEGORY_COLOR.exam),
-  'esami': spec('FlaskConical', CATEGORY_COLOR.exam),
-  'fascia di eta': spec('Users', CATEGORY_COLOR.age),
-  'fascia di età': spec('Users', CATEGORY_COLOR.age),
-  'fasce di eta': spec('Users', CATEGORY_COLOR.age),
-  'fasce di età': spec('Users', CATEGORY_COLOR.age),
-  'diagnosi': spec('FileText', CATEGORY_COLOR.diagnosis),
-  'sintomo': spec('Thermometer', CATEGORY_COLOR.symptom),
-  'sintomi': spec('Thermometer', CATEGORY_COLOR.symptom),
-  'farmaco': spec('Pill', CATEGORY_COLOR.drug),
-  'farmaci': spec('Pill', CATEGORY_COLOR.drug),
-  'terapia': spec('Pill', CATEGORY_COLOR.drug),
-  'prestazione': spec('ClipboardCheck', CATEGORY_COLOR.service),
-  'prestazioni': spec('ClipboardCheck', CATEGORY_COLOR.service),
-  'sede': spec('MapPin', CATEGORY_COLOR.location),
-  'struttura': spec('Building2', CATEGORY_COLOR.location),
-  'priorita': spec('AlertTriangle', CATEGORY_COLOR.urgency),
-  'priorità': spec('AlertTriangle', CATEGORY_COLOR.urgency),
-  'urgenza': spec('AlertTriangle', CATEGORY_COLOR.urgency),
-  'sesso': spec('UserRound', CATEGORY_COLOR.gender),
-  'genere': spec('UserRound', CATEGORY_COLOR.gender),
-  'medico': spec('User', CATEGORY_COLOR.staff),
-  'operatore': spec('User', CATEGORY_COLOR.staff),
+/** General-domain category names (non-healthcare). */
+const GENERAL_EXACT_CATEGORY_ICONS: Record<string, CategoryIconSpec> = {
+  sede: { iconKey: 'MapPin', iconColor: CATEGORY_COLOR.location },
+  struttura: { iconKey: 'Building2', iconColor: CATEGORY_COLOR.location },
 };
 
-/** Keyword contained in normalized label → icon + color. */
-const KEYWORD_ICON_RULES: Array<{ keywords: string[]; spec: CategoryIconSpec }> = [
-  { keywords: ['prima visita', 'nuova visita', 'ingresso'], spec: spec('CalendarPlus', CATEGORY_COLOR.visitType) },
-  { keywords: ['controllo', 'follow up', 'follow-up', 'rivalutazione', 'richiamo'], spec: spec('RefreshCw', CATEGORY_COLOR.visitType) },
-  { keywords: ['teleconsulto', 'televisita', 'videochiamata'], spec: spec('Video', CATEGORY_COLOR.visitType) },
-  { keywords: ['telefon'], spec: spec('Phone', CATEGORY_COLOR.visitType) },
-  { keywords: ['cardiolog', 'cuore', 'ecg', 'elettrocardiogramma'], spec: spec('HeartPulse', CATEGORY_COLOR.symptom) },
-  { keywords: ['neurolog', 'encefal'], spec: spec('Brain', CATEGORY_COLOR.specialty) },
-  { keywords: ['ortoped', 'traumatolog', 'osso', 'frattura'], spec: spec('Bone', CATEGORY_COLOR.specialty) },
-  { keywords: ['pediatr', 'neonat', 'bambin'], spec: spec('Baby', CATEGORY_COLOR.age) },
-  { keywords: ['oculist', 'oftalmolog', 'vista'], spec: spec('Eye', CATEGORY_COLOR.specialty) },
-  { keywords: ['otorin', 'orecchio', 'udito'], spec: spec('Ear', CATEGORY_COLOR.specialty) },
-  { keywords: ['pneumolog', 'polmon', 'spirometr'], spec: spec('Wind', CATEGORY_COLOR.specialty) },
-  { keywords: ['psicolog', 'psichiatr'], spec: spec('MessageCircle', CATEGORY_COLOR.mental) },
-  { keywords: ['radiolog', 'radiograf', 'rx', 'tac', 'risonanza', 'rmn', 'tomograf'], spec: spec('Scan', CATEGORY_COLOR.imaging) },
-  { keywords: ['ecograf', 'ultrasuon'], spec: spec('Waves', CATEGORY_COLOR.imaging) },
-  { keywords: ['laborator', 'emocrom', 'sangue', 'emoglob', 'glicem', 'colesterol'], spec: spec('Droplet', CATEGORY_COLOR.lab) },
-  { keywords: ['urin', 'urina'], spec: spec('TestTube2', CATEGORY_COLOR.lab) },
-  { keywords: ['biops', 'citolog'], spec: spec('Syringe', CATEGORY_COLOR.exam) },
-  { keywords: ['microscop', 'coltura', 'batteri'], spec: spec('Microscope', CATEGORY_COLOR.lab) },
-  { keywords: ['provetta', 'analisi'], spec: spec('FlaskConical', CATEGORY_COLOR.exam) },
-  { keywords: ['visita', 'ambulator'], spec: spec('Stethoscope', CATEGORY_COLOR.visit) },
-  { keywords: ['0-17', '0 17', 'minoren', 'infanzia'], spec: spec('Baby', CATEGORY_COLOR.age) },
-  { keywords: ['18-39', '18 39', 'giovane adult'], spec: spec('User', CATEGORY_COLOR.age) },
-  { keywords: ['40-64', '40 64', 'mezza eta', 'mezza età'], spec: spec('UserRound', CATEGORY_COLOR.age) },
-  { keywords: ['65', 'anzian', 'geriatr', 'over 65'], spec: spec('PersonStanding', CATEGORY_COLOR.age) },
-  { keywords: ['fascia', 'eta', 'età', 'anni'], spec: spec('Users', CATEGORY_COLOR.age) },
-  { keywords: ['special', 'branca', 'disciplina'], spec: spec('Building2', CATEGORY_COLOR.specialty) },
-  { keywords: ['diagnos'], spec: spec('FileText', CATEGORY_COLOR.diagnosis) },
-  { keywords: ['sintom', 'dolore', 'febbre'], spec: spec('Thermometer', CATEGORY_COLOR.symptom) },
-  { keywords: ['farmaco', 'terapia', 'pillola'], spec: spec('Pill', CATEGORY_COLOR.drug) },
-  { keywords: ['prestaz', 'servizio'], spec: spec('ClipboardCheck', CATEGORY_COLOR.service) },
-  { keywords: ['ospedal', 'clinica', 'sede', 'struttura'], spec: spec('MapPin', CATEGORY_COLOR.location) },
-  { keywords: ['urgen', 'emergenz', 'priorit'], spec: spec('AlertTriangle', CATEGORY_COLOR.urgency) },
-  { keywords: ['oncolog', 'tumor'], spec: spec('Radiation', CATEGORY_COLOR.imaging) },
-  { keywords: ['dermatolog', 'pelle'], spec: spec('ScanSearch', CATEGORY_COLOR.specialty) },
-  { keywords: ['endoscop'], spec: spec('SearchCheck', CATEGORY_COLOR.exam) },
-  { keywords: ['attivita', 'attività', 'monitor'], spec: spec('Activity', CATEGORY_COLOR.symptom) },
-  { keywords: ['apertura', 'accoglienza'], spec: spec('DoorOpen', CATEGORY_COLOR.visitType) },
-  { keywords: ['nuovo', 'nuova'], spec: spec('Sparkles', CATEGORY_COLOR.visitType) },
-  { keywords: ['ripet', 'ciclo'], spec: spec('Repeat', CATEGORY_COLOR.visitType) },
-  { keywords: ['calendario', 'appuntament'], spec: spec('Calendar', CATEGORY_COLOR.visitType) },
-  { keywords: ['conferm', 'completat'], spec: spec('CheckCircle', CATEGORY_COLOR.service) },
-  { keywords: ['cerca', 'ricerca'], spec: spec('FileSearch', CATEGORY_COLOR.diagnosis) },
+const GENERAL_CATEGORY_KEYWORD_RULES: Array<{ keywords: string[]; spec: CategoryIconSpec }> = [
+  { keywords: ['ospedal', 'clinica', 'sede', 'struttura'], spec: { iconKey: 'MapPin', iconColor: CATEGORY_COLOR.location } },
+  { keywords: ['apertura', 'accoglienza'], spec: { iconKey: 'DoorOpen', iconColor: CATEGORY_COLOR.visitType } },
+  { keywords: ['nuovo', 'nuova'], spec: { iconKey: 'Sparkles', iconColor: CATEGORY_COLOR.visitType } },
+  { keywords: ['ripet', 'ciclo'], spec: { iconKey: 'Repeat', iconColor: CATEGORY_COLOR.visitType } },
+  { keywords: ['calendario', 'appuntament'], spec: { iconKey: 'Calendar', iconColor: CATEGORY_COLOR.visitType } },
+  { keywords: ['conferm', 'completat'], spec: { iconKey: 'CheckCircle', iconColor: CATEGORY_COLOR.service } },
+  { keywords: ['cerca', 'ricerca'], spec: { iconKey: 'FileSearch', iconColor: CATEGORY_COLOR.diagnosis } },
+  { keywords: ['0-17', '0 17', 'minoren', 'infanzia'], spec: { iconKey: 'Baby', iconColor: CATEGORY_COLOR.age } },
+  { keywords: ['18-39', '18 39', 'giovane adult'], spec: { iconKey: 'User', iconColor: CATEGORY_COLOR.age } },
+  { keywords: ['40-64', '40 64', 'mezza eta', 'mezza età'], spec: { iconKey: 'UserRound', iconColor: CATEGORY_COLOR.age } },
+  { keywords: ['65', 'anzian', 'geriatr', 'over 65'], spec: { iconKey: 'PersonStanding', iconColor: CATEGORY_COLOR.age } },
+  { keywords: ['diagnos'], spec: { iconKey: 'FileText', iconColor: CATEGORY_COLOR.diagnosis } },
+  { keywords: ['prestaz', 'servizio'], spec: { iconKey: 'ClipboardCheck', iconColor: CATEGORY_COLOR.service } },
+  { keywords: ['attivita', 'attività', 'monitor'], spec: { iconKey: 'Activity', iconColor: CATEGORY_COLOR.symptom } },
 ];
 
 export interface ChipSurfaceStyle {
@@ -157,8 +81,11 @@ export function normalizeIconLabel(label: string): string {
     .replace(/\s+/g, ' ');
 }
 
-function lookupByKeyword(normalized: string): CategoryIconSpec | null {
-  for (const rule of KEYWORD_ICON_RULES) {
+function lookupByKeyword(
+  normalized: string,
+  rules: Array<{ keywords: string[]; spec: CategoryIconSpec }>,
+): CategoryIconSpec | null {
+  for (const rule of rules) {
     if (rule.keywords.some((kw) => normalized.includes(normalizeIconLabel(kw)))) {
       return rule.spec;
     }
@@ -166,12 +93,20 @@ function lookupByKeyword(normalized: string): CategoryIconSpec | null {
   return null;
 }
 
+function lookupTokenIcon(normalized: string): CategoryIconSpec | null {
+  if (!normalized) return null;
+  return HEALTHCARE_EXACT_TOKEN_ICONS[normalized]
+    ?? lookupByKeyword(normalized, HEALTHCARE_TOKEN_KEYWORD_RULES);
+}
+
 /** Resolves icon + accent color for a category name (exact match, then keyword rules). */
 export function resolveCategoryIcon(categoryName: string): CategoryIconSpec {
   const normalized = normalizeIconLabel(categoryName);
   if (!normalized) return DEFAULT_CATEGORY_ICON;
-  return EXACT_CATEGORY_ICONS[normalized]
-    ?? lookupByKeyword(normalized)
+  return HEALTHCARE_EXACT_CATEGORY_ICONS[normalized]
+    ?? GENERAL_EXACT_CATEGORY_ICONS[normalized]
+    ?? lookupByKeyword(normalized, HEALTHCARE_CATEGORY_KEYWORD_RULES)
+    ?? lookupByKeyword(normalized, GENERAL_CATEGORY_KEYWORD_RULES)
     ?? DEFAULT_CATEGORY_ICON;
 }
 
@@ -213,11 +148,16 @@ export function formatChipTooltipTitle(
   return `${dictLabel} - ${categoryName}`;
 }
 
-/** Icon for a token: parent category icon, or the shared "no category" bucket icon. */
+/**
+ * Icon for a token: catalog token rules first, then parent category, then no-category bucket.
+ */
 export function resolveTokenIcon(
   categories: TokenCategory[],
   tokenText: string,
 ): CategoryIconSpec {
+  const tokenSpec = lookupTokenIcon(normalizeIconLabel(tokenText));
+  if (tokenSpec) return tokenSpec;
+
   const categoryId = categoryIdContainingToken(tokenText, categories);
   if (categoryId) {
     const cat = categories.find((c) => c.id === categoryId);

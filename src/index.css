@@ -197,6 +197,10 @@
   max-width: 14rem;
 }
 
+.dictionaries-editor-dock .dv-tab.dv-active-tab:has([data-project-tab]) {
+  max-width: min(32rem, 100%);
+}
+
 .dictionaries-editor-dock .dv-tab:active {
   cursor: grabbing;
 }

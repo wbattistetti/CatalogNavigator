@@ -17,6 +17,7 @@ import type {
 import { resolveItemPaths } from '../../lib/itemPaths';
 import type { KbDocument } from '../../lib/supabase';
 import { ChatPanel } from './ChatPanel';
+import { ConvaiExportPanel } from './ConvaiExportPanel';
 import { AnswerGrammarModal } from './AnswerGrammarModal';
 import {
   AnswerGrammarSynonymTooltip,
@@ -55,6 +56,14 @@ interface AnalysisViewProps {
   onAffinaOpenChange?: (open: boolean) => void;
   testOpen?: boolean;
   onTestOpenChange?: (open: boolean) => void;
+  convaiOpen?: boolean;
+  onConvaiOpenChange?: (open: boolean) => void;
+  convaiExportContext?: {
+    dictionary: import('../../lib/tokenDictionary').TokenDictionary | null;
+    descriptions: string[];
+    dictionaryDirty?: boolean;
+    pathsOutOfSync?: boolean;
+  } | null;
   /** Corpus descriptions keyed by leaf path (for IA confirmation generation). */
   leafDescriptionMap?: Map<string, string> | null;
   selectedSlot?: string | null;
@@ -1972,6 +1981,9 @@ export function AnalysisView({
   onAffinaOpenChange,
   testOpen: testOpenProp,
   onTestOpenChange,
+  convaiOpen: convaiOpenProp,
+  onConvaiOpenChange,
+  convaiExportContext = null,
   leafDescriptionMap = null,
   selectedSlot = null,
   onSelectedSlotChange,
@@ -2014,6 +2026,8 @@ export function AnalysisView({
   const setAffinaOpen = onAffinaOpenChange ?? setAffinaOpenLocal;
   const testOpen = testOpenProp ?? testOpenLocal;
   const setTestOpen = onTestOpenChange ?? setTestOpenLocal;
+  const convaiOpen = convaiOpenProp ?? false;
+  const setConvaiOpen = onConvaiOpenChange ?? (() => {});
 
   const rows: AnalysisRow[] = analysis?.rows ?? [];
   const itemPaths = useMemo(
@@ -2632,6 +2646,19 @@ export function AnalysisView({
           question={grammarEditRow.question}
           onSave={(grammar) => handleGrammarSaveForSlot(grammarEditTarget.slot, 'answer', grammar)}
           onClose={closeGrammarEdit}
+        />
+      )}
+
+      {convaiOpen && convaiExportContext?.dictionary && (
+        <ConvaiExportPanel
+          documentName={doc.name}
+          dictionary={convaiExportContext.dictionary}
+          descriptions={convaiExportContext.descriptions}
+          analysis={analysis}
+          dictionaryDirty={convaiExportContext.dictionaryDirty}
+          analysisDirty={analysisDirty}
+          pathsOutOfSync={convaiExportContext.pathsOutOfSync}
+          onClose={() => setConvaiOpen(false)}
         />
       )}
     </div>

@@ -8,7 +8,10 @@ import type { TokenCategory } from '../../lib/dictionaryTree';
 import { removeTokenFromLayout } from '../../lib/dictionaryTree';
 import type { HighlightSpan, SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
 import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
-import { mergeLiveEditingIntoLoadedRefs, corpusHighlightTokens, segmentDescriptionMulti } from '../../lib/multiDictionarySegment';
+import type { CorpusSegmentationEntry } from '../../lib/corpusSegmentationCache';
+import { mergeLiveEditingIntoLoadedRefs, corpusHighlightTokens } from '../../lib/multiDictionarySegment';
+import { useCorpusVirtualScroll } from '../../hooks/useCorpusVirtualScroll';
+import { lookupCorpusSegmentation, useSegmentationCache } from '../../hooks/useSegmentationCache';
 import { DictionaryIcon } from './DictionaryIcon';
 import {
   addToken,
@@ -24,7 +27,11 @@ import {
   tokenizeToWords,
 } from '../../lib/tokenDictionary';
 import { chipSurfaceStyleFromColor, resolveChipAppearance } from '../../lib/categoryIconCatalog';
-import { useDocumentEditor } from '../../features/document-editor/DocumentEditorContext';
+import {
+  useDocumentEditorDictionaryNav,
+  useDocumentEditorTab,
+} from '../../features/document-editor/DocumentEditorContext';
+import { EDITOR_TAB_IDS } from '../../features/document-editor/editorTabIds';
 import {
   clearDictionaryTokenSelection,
   getDictionarySelectionSnapshot,
@@ -78,6 +85,7 @@ interface LongerTokenPromptState {
 
 /** Shared grid: row index | descriptions | segmentation (ratio 5:3). */
 const CORPUS_ROW_GRID = 'grid grid-cols-[2rem_minmax(0,5fr)_minmax(0,3fr)]';
+const CORPUS_ROW_HEIGHT_PX = 72;
 
 /** Chip that subscribes to selection store — only re-renders when its own selection changes. */
 const SelectableCorpusChip = memo(function SelectableCorpusChip({
@@ -270,6 +278,7 @@ function SegmentationChips({
   editingCategories,
   fallbackTokens,
   fallbackCategories,
+  segmentation,
   onRemoveCanonical,
   editableCanonicalSet,
 }: {
@@ -279,20 +288,11 @@ function SegmentationChips({
   editingCategories: TokenCategory[];
   fallbackTokens: TokenEntry[];
   fallbackCategories: TokenCategory[];
+  segmentation?: CorpusSegmentationEntry;
   onRemoveCanonical: (token: string) => void;
   editableCanonicalSet: ReadonlySet<string>;
 }) {
-  const { segments, unmatched } = useMemo(() => {
-    if (loadedRefs.length > 0) {
-      const result = segmentDescriptionMulti(text, loadedRefs);
-      return { segments: result.segments, unmatched: result.unmatched };
-    }
-    const legacy = segmentDescription(text, fallbackTokens, fallbackCategories);
-    return {
-      segments: legacy.segments.map((t) => ({ text: t, dictionaryId: '' })),
-      unmatched: legacy.unmatched,
-    };
-  }, [text, loadedRefs, fallbackTokens, fallbackCategories]);
+  const { segments, unmatched } = segmentation ?? { segments: [], unmatched: [] };
 
   if (segments.length === 0) {
     return (
@@ -341,6 +341,7 @@ const MemoSegmentationChips = memo(
   SegmentationChips,
   (prev, next) =>
     prev.text === next.text
+    && prev.segmentation === next.segmentation
     && prev.loadedRefs === next.loadedRefs
     && prev.editingDictionaryId === next.editingDictionaryId
     && prev.editingCategories === next.editingCategories
@@ -364,8 +365,10 @@ export function CorpusTokenEditor({
     startDictionaryAliasPick,
     cancelDictionaryAliasPick,
     dictionaryAliasPick,
-  } = useDocumentEditor();
+  } = useDocumentEditorDictionaryNav();
+  const { activeTab } = useDocumentEditorTab();
   const projectDictionaryId = editingDictionaryId;
+  const segmentationCacheEnabled = activeTab === EDITOR_TAB_IDS.ontology;
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const dragGhostRef = useRef<HTMLDivElement>(null);
@@ -450,12 +453,16 @@ export function CorpusTokenEditor({
   const startChipPointerDrag = useCallback((e: React.MouseEvent, canonical: string) => {
     if (!editableCanonicalSet.has(canonical)) return;
     if ((e.target as HTMLElement).closest('button')) return;
-    e.stopPropagation();
-    const currentSelected = getDictionarySelectionSnapshot().selected;
-    if (!currentSelected.has(canonical)) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    e.stopPropagation();
 
-    const texts = [...currentSelected].filter((t) => editableCanonicalSet.has(t));
+    const snapshot = getDictionarySelectionSnapshot();
+    if (!snapshot.selected.has(canonical)) {
+      selectSingleDictionaryToken(canonical);
+    }
+
+    const texts = [...getDictionarySelectionSnapshot().selected]
+      .filter((t) => editableCanonicalSet.has(t));
     if (texts.length === 0) return;
 
     const originX = e.clientX;
@@ -508,6 +515,24 @@ export function CorpusTokenEditor({
         .filter((r) => r.text.length > 0)
         .sort((a, b) => a.text.localeCompare(b.text, 'it', { sensitivity: 'base' })),
     [descriptions],
+  );
+
+  const segmentationCache = useSegmentationCache(
+    rows.map((r) => r.text),
+    effectiveLoadedRefs,
+    tokens,
+    categories,
+    { enabled: segmentationCacheEnabled },
+  );
+
+  const { containerRef: corpusScrollRef, range: corpusRange } = useCorpusVirtualScroll(
+    rows.length,
+    CORPUS_ROW_HEIGHT_PX,
+  );
+
+  const visibleRows = useMemo(
+    () => rows.slice(corpusRange.start, corpusRange.end),
+    [rows, corpusRange.start, corpusRange.end],
   );
 
   const cancelAliasPick = cancelDictionaryAliasPick;
@@ -760,6 +785,7 @@ export function CorpusTokenEditor({
       <div className="flex-1 min-h-0 flex border border-[#1a3a2a] rounded overflow-hidden bg-[#080e0a]">
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
           <div
+            ref={corpusScrollRef}
             className="flex-1 min-h-0 overflow-y-auto"
             onClick={(e) => {
               if ((e.target as HTMLElement).closest('[role="option"]')) return;
@@ -782,47 +808,58 @@ export function CorpusTokenEditor({
               </div>
             </div>
             <CorpusSelectionBanner />
-            {rows.map(({ rowIndex, text }) => (
+            <div style={{ height: corpusRange.totalHeight, position: 'relative' }}>
               <div
-                key={rowIndex}
-                className={`${CORPUS_ROW_GRID} min-h-[2.75rem] items-start border-b border-[#111] hover:bg-[#0f1a12]`}
+                style={{
+                  transform: `translateY(${corpusRange.offsetY}px)`,
+                  willChange: 'transform',
+                }}
               >
-                <span className="font-mono text-[9px] text-emerald-300/80 pt-2.5 text-center tabular-nums">
-                  R{rowIndex}
-                </span>
-                <div
-                  className="min-w-0 px-3 py-2"
-                  onMouseDown={handleMouseDown}
-                  onDoubleClick={(e) => handleDoubleClick(e, text)}
-                  onMouseUp={(e) => handleMouseUp(e, text)}
-                  onContextMenu={(e) => handleContextMenu(e, text)}
-                >
-                  <p className="font-mono text-xs select-text cursor-text">
-                    <MemoHighlightedDescription
-                      text={text}
-                      tokens={highlightTokens}
-                      loadedRefs={effectiveLoadedRefs}
-                      editingDictionaryId={projectDictionaryId}
-                      editingCategories={categories}
-                      onRemoveSpan={handleRemoveSpan}
-                      editableCanonicalSet={editableCanonicalSet}
-                    />
-                  </p>
-                </div>
-                <div className="min-w-0 px-3 py-2 border-l border-[#1a3a2a]">
-                  <MemoSegmentationChips
-                    text={text}
-                    loadedRefs={effectiveLoadedRefs}
-                    editingDictionaryId={projectDictionaryId}
-                    editingCategories={categories}
-                    fallbackTokens={tokens}
-                    fallbackCategories={categories}
-                    onRemoveCanonical={handleRemoveCanonical}
-                    editableCanonicalSet={editableCanonicalSet}
-                  />
-                </div>
+                {visibleRows.map(({ rowIndex, text }) => (
+                  <div
+                    key={rowIndex}
+                    className={`${CORPUS_ROW_GRID} items-start border-b border-[#111] hover:bg-[#0f1a12]`}
+                    style={{ minHeight: CORPUS_ROW_HEIGHT_PX }}
+                  >
+                    <span className="font-mono text-[9px] text-emerald-300/80 pt-2.5 text-center tabular-nums">
+                      R{rowIndex}
+                    </span>
+                    <div
+                      className="min-w-0 px-3 py-2"
+                      onMouseDown={handleMouseDown}
+                      onDoubleClick={(e) => handleDoubleClick(e, text)}
+                      onMouseUp={(e) => handleMouseUp(e, text)}
+                      onContextMenu={(e) => handleContextMenu(e, text)}
+                    >
+                      <p className="font-mono text-xs select-text cursor-text">
+                        <MemoHighlightedDescription
+                          text={text}
+                          tokens={highlightTokens}
+                          loadedRefs={effectiveLoadedRefs}
+                          editingDictionaryId={projectDictionaryId}
+                          editingCategories={categories}
+                          onRemoveSpan={handleRemoveSpan}
+                          editableCanonicalSet={editableCanonicalSet}
+                        />
+                      </p>
+                    </div>
+                    <div className="min-w-0 px-3 py-2 border-l border-[#1a3a2a]">
+                      <MemoSegmentationChips
+                        text={text}
+                        loadedRefs={effectiveLoadedRefs}
+                        editingDictionaryId={projectDictionaryId}
+                        editingCategories={categories}
+                        fallbackTokens={tokens}
+                        fallbackCategories={categories}
+                        segmentation={lookupCorpusSegmentation(segmentationCache, text)}
+                        onRemoveCanonical={handleRemoveCanonical}
+                        editableCanonicalSet={editableCanonicalSet}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </div>

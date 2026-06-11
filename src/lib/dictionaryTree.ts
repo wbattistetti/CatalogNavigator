@@ -64,6 +64,17 @@ export function getCategoryIdForToken(
   return null;
 }
 
+/**
+ * Signature of category layout that affects corpus segmentation order.
+ * Empty categories do not change segment ordering — omitted from the signature.
+ */
+export function segmentationCategorySignature(categories: TokenCategory[]): string {
+  return normalizeCategoryOrders(categories)
+    .filter((c) => c.tokenTexts.length > 0)
+    .map((c) => `${c.order}:${[...c.tokenTexts].sort(localeSort).join('\u001f')}`)
+    .join('\u001e');
+}
+
 /** Sort order for mounting: category.order, or UNCATEGORIZED_SORT_ORDER for root tokens. */
 export function getCategorySortOrder(
   tokenText: string,

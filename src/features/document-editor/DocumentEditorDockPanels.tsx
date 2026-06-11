@@ -1,54 +1,69 @@
 /**
- * Panel bodies registered with the outer document editor Dockview.
+ * Outer dock panel bodies: drag/split via Dockview, keep-alive via retained mount.
  */
 import { Loader2 } from 'lucide-react';
 import type { IDockviewPanelProps } from 'dockview';
 import { DictionariesWorkspace } from '../dictionaries/DictionariesWorkspace';
 import { AgentWorkspace } from '../agent/AgentWorkspace';
 import { OntologyWorkspace } from '../ontology/OntologyWorkspace';
+import { DockPanelRetained } from './dock/DockPanelRetained';
+import { useDocumentPanelMount } from './dock/useDocumentPanelMount';
+import { useDocumentEditorController } from './DocumentEditorContext';
 import { DocumentWorkspace } from './DocumentWorkspace';
-import { useDocumentEditor } from './DocumentEditorContext';
+import { EDITOR_TAB_IDS } from './editorTabIds';
 
-export function DocumentDockPanel(_props: IDockviewPanelProps) {
+function LoadingPlaceholder({ label }: { label: string }) {
   return (
-    <div className="h-full min-h-0 flex flex-col">
+    <div className="flex items-center justify-center h-full gap-2 text-emerald-400/30 font-mono text-sm">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      {label}
+    </div>
+  );
+}
+
+export function DocumentDockPanel(props: IDockviewPanelProps) {
+  const mounted = useDocumentPanelMount(EDITOR_TAB_IDS.document, props.api);
+
+  return (
+    <DockPanelRetained mounted={mounted}>
       <DocumentWorkspace />
-    </div>
+    </DockPanelRetained>
   );
 }
 
-export function DictionariesDockPanel(_props: IDockviewPanelProps) {
-  const { content, dicts } = useDocumentEditor();
-
-  if (content.loading || dicts.loading) {
-    return (
-      <div className="flex items-center justify-center h-full gap-2 text-emerald-400/30 font-mono text-sm">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        Caricamento…
-      </div>
-    );
-  }
+export function DictionariesDockPanel(props: IDockviewPanelProps) {
+  const mounted = useDocumentPanelMount(EDITOR_TAB_IDS.dictionaries, props.api);
+  const { content, dicts } = useDocumentEditorController();
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <DictionariesWorkspace />
-    </div>
+    <DockPanelRetained mounted={mounted}>
+      {content.loading || dicts.loading
+        ? <LoadingPlaceholder label="Caricamento…" />
+        : <DictionariesWorkspace />}
+    </DockPanelRetained>
   );
 }
 
-export function OntologyDockPanel(_props: IDockviewPanelProps) {
+export function OntologyDockPanel(props: IDockviewPanelProps) {
+  const mounted = useDocumentPanelMount(EDITOR_TAB_IDS.ontology, props.api);
+  const { content } = useDocumentEditorController();
+
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <OntologyWorkspace />
-    </div>
+    <DockPanelRetained mounted={mounted}>
+      {content.loading
+        ? <LoadingPlaceholder label="Caricamento tabella…" />
+        : <OntologyWorkspace />}
+    </DockPanelRetained>
   );
 }
 
-export function AgentDockPanel(_props: IDockviewPanelProps) {
+export function AgentDockPanel(props: IDockviewPanelProps) {
+  const mounted = useDocumentPanelMount(EDITOR_TAB_IDS.agent, props.api);
+
   return (
-    <div className="h-full min-h-0 flex flex-col">
+    <DockPanelRetained mounted={mounted}>
       <AgentWorkspace />
-    </div>
+    </DockPanelRetained>
   );
 }
 

@@ -20,10 +20,16 @@ describe('normalizeIconLabel', () => {
 
 describe('resolveCategoryIcon', () => {
   it('maps known healthcare category containers', () => {
-    expect(resolveCategoryIcon('specialità').iconKey).toBe('Building2');
+    expect(resolveCategoryIcon('specialità').iconKey).toBe('Puzzle');
+    expect(resolveCategoryIcon('visite').iconKey).toBe('Stethoscope');
     expect(resolveCategoryIcon('tipo visita').iconKey).toBe('ClipboardList');
     expect(resolveCategoryIcon('esami').iconKey).toBe('FlaskConical');
-    expect(resolveCategoryIcon('fascia di età').iconKey).toBe('Users');
+    expect(resolveCategoryIcon('fascia di età').iconKey).toBe('AgeGrowth');
+    expect(resolveCategoryIcon('fasce di età').iconKey).toBe('AgeGrowth');
+    expect(resolveCategoryIcon('organo').iconKey).toBe('Heart');
+    expect(resolveCategoryIcon('posizione').iconKey).toBe('ArrowLeftRight');
+    expect(resolveCategoryIcon('anatomia').iconKey).toBe('Layers');
+    expect(resolveCategoryIcon('parte del corpo').iconKey).toBe('PersonStanding');
   });
 
   it('assigns distinct accent colors per category family', () => {
@@ -31,6 +37,7 @@ describe('resolveCategoryIcon', () => {
     expect(resolveCategoryIcon('specialità').iconColor).toBe('#a78bfa');
     expect(resolveCategoryIcon('tipo visita').iconColor).toBe('#38bdf8');
     expect(resolveCategoryIcon('fascia di età').iconColor).toBe('#fcd34d');
+    expect(resolveCategoryIcon('parte del corpo').iconColor).toBe('#818cf8');
   });
 
   it('falls back to Folder for unknown names', () => {
@@ -44,14 +51,63 @@ describe('resolveTokenIcon', () => {
       id: 'c1',
       name: 'esami',
       order: 0,
-      tokenTexts: ['emocromo'],
+      tokenTexts: ['emocromo', 'esame generico'],
       iconKey: 'FlaskConical',
       iconColor: '#f59e0b',
     },
+    {
+      id: 'c2',
+      name: 'organo',
+      order: 1,
+      tokenTexts: ['cuore', 'aorta'],
+      iconKey: 'Heart',
+      iconColor: '#f472b6',
+    },
+    {
+      id: 'c3',
+      name: 'posizione',
+      order: 2,
+      tokenTexts: ['sinistra', 'completo'],
+      iconKey: 'ArrowLeftRight',
+      iconColor: '#a3e635',
+    },
+    {
+      id: 'c4',
+      name: 'tipo visita',
+      order: 3,
+      tokenTexts: ['prima visita', 'visita di controllo'],
+      iconKey: 'ClipboardList',
+      iconColor: '#38bdf8',
+    },
+    {
+      id: 'c5',
+      name: 'parte del corpo',
+      order: 4,
+      tokenTexts: ['braccio', 'gamba', 'spalla'],
+      iconKey: 'PersonStanding',
+      iconColor: '#818cf8',
+    },
   ];
 
-  it('inherits icon from parent category', () => {
-    expect(resolveTokenIcon(categories, 'emocromo').iconKey).toBe('FlaskConical');
+  it('uses catalog token icon before parent category', () => {
+    expect(resolveTokenIcon(categories, 'emocromo').iconKey).toBe('Droplet');
+    expect(resolveTokenIcon(categories, 'ecocardiogramma').iconKey).toBe('HeartPulse');
+  });
+
+  it('inherits icon from parent category when token has no catalog entry', () => {
+    expect(resolveTokenIcon(categories, 'esame generico').iconKey).toBe('FlaskConical');
+  });
+
+  it('maps healthcare tokens for organi, posizione e visite', () => {
+    expect(resolveTokenIcon(categories, 'cuore').iconKey).toBe('Heart');
+    expect(resolveTokenIcon(categories, 'aorta').iconKey).toBe('HeartPulse');
+    expect(resolveTokenIcon(categories, 'sinistra').iconKey).toBe('ArrowLeft');
+    expect(resolveTokenIcon(categories, 'completo').iconKey).toBe('Maximize2');
+    expect(resolveTokenIcon(categories, 'prima visita').iconKey).toBe('CalendarPlus');
+    expect(resolveTokenIcon(categories, 'visita di controllo').iconKey).toBe('RefreshCw');
+    expect(resolveTokenIcon(categories, 'braccio').iconKey).toBe('PersonStanding');
+    expect(resolveTokenIcon(categories, 'gamba').iconKey).toBe('PersonStanding');
+    expect(resolveTokenIcon(categories, 'spalla').iconKey).toBe('PersonStanding');
   });
 
   it('uses no-category icon for uncategorized tokens', () => {

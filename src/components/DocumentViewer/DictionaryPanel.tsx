@@ -1,7 +1,7 @@
 /**
  * Tokenization workflow: corpus editor (dictionary tree is in the Dizionari tab).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Loader2, AlertCircle, Check } from 'lucide-react';
 import type { KbDocument } from '../../lib/supabase';
 import type { ParsedTabular } from '../../lib/parseTabular';
@@ -55,7 +55,7 @@ interface DictionaryPanelProps {
 
 type SaveStatus = 'idle' | 'saved' | 'error';
 
-export function DictionaryPanel({
+export const DictionaryPanel = memo(function DictionaryPanel({
   doc,
   tabular,
   dicts,
@@ -217,7 +217,6 @@ export function DictionaryPanel({
       saving,
       descriptionColumn,
       editingTokens.length,
-      editingCategories.length,
     ].join('\0'),
     [
       projectDirty,
@@ -226,7 +225,6 @@ export function DictionaryPanel({
       saving,
       descriptionColumn,
       editingTokens.length,
-      editingCategories.length,
     ],
   );
 
@@ -319,4 +317,4 @@ export function DictionaryPanel({
       )}
     </div>
   );
-}
+});

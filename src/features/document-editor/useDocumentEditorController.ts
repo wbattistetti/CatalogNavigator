@@ -49,6 +49,7 @@ export function useDocumentEditorController({
   const [dictState, setDictState] = useState<DictionaryPanelState | null>(null);
   const [affinaOpen, setAffinaOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
+  const [convaiOpen, setConvaiOpen] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [grammarEditTarget, setGrammarEditTarget] = useState<GrammarEditTarget | null>(null);
   const [grammarOverwrite, setGrammarOverwrite] = useState(false);
@@ -80,6 +81,7 @@ export function useDocumentEditorController({
     setDictState(null);
     setAffinaOpen(false);
     setTestOpen(false);
+    setConvaiOpen(false);
     setSelectedSlot(null);
     setGrammarEditTarget(null);
   }, [doc.id]);
@@ -256,6 +258,23 @@ export function useDocumentEditorController({
     documentText,
   ]);
 
+  const dictionaryCatalog = useMemo(
+    () => ({
+      available: dicts.available,
+      getDictionaryMeta: dicts.getDictionaryMeta,
+      moveCategoryToLibrary: dicts.moveCategoryToLibrary,
+    }),
+    [dicts.available, dicts.getDictionaryMeta, dicts.moveCategoryToLibrary],
+  );
+
+  const dictionarySessionActions = useMemo(
+    () => ({
+      setSessionTokens: dicts.setSessionTokens,
+      setSessionCategories: dicts.setSessionCategories,
+    }),
+    [dicts.setSessionTokens, dicts.setSessionCategories],
+  );
+
   return {
     doc,
     fileUrl,
@@ -265,6 +284,8 @@ export function useDocumentEditorController({
     descriptionColumn,
     documentText,
     dicts,
+    dictionaryCatalog,
+    dictionarySessionActions,
     analysisApi,
     dictState,
     setDictState: handleDictStateChange,
@@ -272,6 +293,8 @@ export function useDocumentEditorController({
     setAffinaOpen,
     testOpen,
     setTestOpen,
+    convaiOpen,
+    setConvaiOpen,
     selectedSlot,
     setSelectedSlot,
     grammarEditTarget,
