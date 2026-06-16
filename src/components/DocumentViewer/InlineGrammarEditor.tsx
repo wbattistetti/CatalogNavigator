@@ -4,6 +4,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import type { GrammarEditMode, GrammarEntry } from '../../hooks/useAnalysis';
+import { buildCategoryGrammarEditorState } from '../../lib/categoryGrammar';
+import type { TokenCategory } from '../../lib/dictionaryTree';
+import type { TokenEntry } from '../../lib/tokenDictionary';
 import {
   buildGrammarEditorState,
   compileGrammarFromEditorState,
@@ -14,6 +17,8 @@ import {
 
 const ANSWER_PANEL_GUIDE =
   'Parole che, rispondendo alla domanda sopra, specificano questo nodo.';
+const CATEGORY_PANEL_GUIDE =
+  'Parole riconosciute per questo valore canonico nella categoria.';
 const NODE_GUIDE =
   'Sinonimi del token (condivisi da tutti i nodi con questo segmento).';
 
@@ -65,6 +70,7 @@ export const InlineGrammarEditor = forwardRef(function InlineGrammarEditor({
   itemPaths,
   grammar,
   mode,
+  categoryContext,
   onSave,
   onCancel,
 }: {
@@ -73,12 +79,24 @@ export const InlineGrammarEditor = forwardRef(function InlineGrammarEditor({
   itemPaths: string[];
   grammar: GrammarEntry | null;
   mode: GrammarEditMode;
+  categoryContext?: { category: TokenCategory; tokens: TokenEntry[] };
   onSave: (grammar: GrammarEntry) => void;
   onCancel: () => void;
 }, ref) {
+  const resolveEditorState = () => {
+    if (mode === 'category' && categoryContext) {
+      return buildCategoryGrammarEditorState(
+        categoryContext.category,
+        categoryContext.tokens,
+        grammar,
+      );
+    }
+    return buildGrammarEditorState(slot, slots, itemPaths, grammar, mode);
+  };
+
   const initial = useMemo(
-    () => buildGrammarEditorState(slot, slots, itemPaths, grammar, mode),
-    [slot, slots, itemPaths, grammar, mode],
+    () => resolveEditorState(),
+    [slot, slots, itemPaths, grammar, mode, categoryContext?.category.id, categoryContext?.tokens],
   );
 
   const grammarSync = grammar?.regex ?? '';
@@ -89,11 +107,13 @@ export const InlineGrammarEditor = forwardRef(function InlineGrammarEditor({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const next = buildGrammarEditorState(slot, slots, itemPaths, grammar, mode);
+    const next = resolveEditorState();
     setPanels(next.panels);
     setSimpleSynonyms(next.simpleSynonyms);
     setError(null);
-  }, [slot, mode, grammarSync, slots, itemPaths, grammar]);
+  }, [slot, mode, grammarSync, slots, itemPaths, grammar, categoryContext?.category.id, categoryContext?.tokens]);
+
+  const panelGuide = mode === 'category' ? CATEGORY_PANEL_GUIDE : ANSWER_PANEL_GUIDE;
 
   const updatePanelSynonyms = (index: number, synonyms: string[]) => {
     setPanels((prev) => prev.map((p, i) => (i === index ? { ...p, synonyms } : p)));
@@ -118,7 +138,11 @@ export const InlineGrammarEditor = forwardRef(function InlineGrammarEditor({
     persistDraft();
   };
 
-  const title = mode === 'node' ? 'Sinonimi token' : 'Sinonimi risposta';
+  const title = mode === 'node'
+    ? 'Sinonimi token'
+    : mode === 'category'
+      ? 'Valori categoria'
+      : 'Sinonimi risposta';
 
   return (
     <div
@@ -136,7 +160,7 @@ export const InlineGrammarEditor = forwardRef(function InlineGrammarEditor({
               {panel.label}
             </p>
             <p className="font-sans text-[10px] text-emerald-400/45 leading-snug">
-              {ANSWER_PANEL_GUIDE}
+              {panelGuide}
             </p>
             <SynonymTextarea
               syncKey={`${mode}:${slot}:${panel.targetPath}:${grammarSync}`}

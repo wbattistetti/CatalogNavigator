@@ -6,10 +6,10 @@ import { MoveCategoryToLibraryDialog } from './MoveCategoryToLibraryDialog';
 import { syncCategoriesWithTokens, removeTokenFromLayout } from '../../lib/dictionaryTree';
 import { addAlias, removeAlias, removeCanonicalToken } from '../../lib/tokenDictionary';
 import { TokenTreeEditor } from '../../components/DocumentViewer/TokenTreeEditor';
-import { TokenGrammarSidePanel } from '../../components/DocumentViewer/TokenGrammarSidePanel';
+import { CategoryGrammarSidePanel } from '../../components/DocumentViewer/CategoryGrammarSidePanel';
 import type { GrammarEditorHandle } from '../../components/DocumentViewer/InlineGrammarEditor';
 import type { GrammarEntry } from '../../hooks/useAnalysis';
-import { getStoredTokenGrammar, setTokenGrammar } from '../../lib/tokenGrammar';
+import { getStoredCategoryGrammar, setCategoryGrammar } from '../../lib/categoryGrammar';
 import {
   useDictionaryCatalog,
   useDictionarySessionActions,
@@ -29,7 +29,7 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
   const session = useDictionarySession(dictionaryId);
 
   const [grammarPanelOpen, setGrammarPanelOpen] = useState(false);
-  const [grammarEditToken, setGrammarEditToken] = useState<string | null>(null);
+  const [grammarEditCategoryId, setGrammarEditCategoryId] = useState<string | null>(null);
   const [moveCategory, setMoveCategory] = useState<{
     id: string;
     name: string;
@@ -83,23 +83,23 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
   const handleToggleGrammarPanel = useCallback(() => {
     if (grammarPanelOpen) {
       flushGrammarEditor();
-      setGrammarEditToken(null);
+      setGrammarEditCategoryId(null);
       setGrammarPanelOpen(false);
       return;
     }
     setGrammarPanelOpen(true);
   }, [flushGrammarEditor, grammarPanelOpen]);
 
-  const handleGrammarEditTokenChange = useCallback((newToken: string | null) => {
-    if (newToken === grammarEditToken) return;
+  const handleGrammarEditCategoryChange = useCallback((newCategoryId: string | null) => {
+    if (newCategoryId === grammarEditCategoryId) return;
     flushGrammarEditor();
-    setGrammarEditToken(newToken);
-  }, [flushGrammarEditor, grammarEditToken]);
+    setGrammarEditCategoryId(newCategoryId);
+  }, [flushGrammarEditor, grammarEditCategoryId]);
 
-  const handleTokenGrammarSave = useCallback((grammar: GrammarEntry) => {
-    if (!grammarEditToken) return;
-    handleTokensChange(setTokenGrammar(tokens, grammarEditToken, grammar));
-  }, [grammarEditToken, handleTokensChange, tokens]);
+  const handleCategoryGrammarSave = useCallback((grammar: GrammarEntry) => {
+    if (!grammarEditCategoryId) return;
+    handleCategoriesChange(setCategoryGrammar(categories, grammarEditCategoryId, grammar));
+  }, [grammarEditCategoryId, handleCategoriesChange, categories]);
 
   const handleMoveCategoryToLibrary = useCallback((
     categoryId: string,
@@ -150,8 +150,12 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
     );
   }
 
-  const grammarForPanel = grammarEditToken
-    ? getStoredTokenGrammar(grammarEditToken, tokens)
+  const grammarEditCategory = grammarEditCategoryId
+    ? categories.find((cat) => cat.id === grammarEditCategoryId) ?? null
+    : null;
+
+  const grammarForPanel = grammarEditCategoryId
+    ? getStoredCategoryGrammar(grammarEditCategoryId, categories)
     : null;
 
   return (
@@ -171,8 +175,8 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
             onCancelAliasPick={cancelDictionaryAliasPick}
             grammarPanelOpen={grammarPanelOpen}
             onToggleGrammarPanel={handleToggleGrammarPanel}
-            grammarEditToken={grammarEditToken}
-            onGrammarEditTokenChange={handleGrammarEditTokenChange}
+            grammarEditCategoryId={grammarEditCategoryId}
+            onGrammarEditCategoryChange={handleGrammarEditCategoryChange}
             focusTokenText={focusTokenText}
             onFocusTokenHandled={clearDictionaryTreeFocus}
             showDictionaryHeader={false}
@@ -199,14 +203,15 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
         )}
         {grammarPanelOpen && (
           <div className="w-52 flex-shrink-0 flex flex-col min-w-0 border-l border-[#1a3a2a]">
-            <TokenGrammarSidePanel
+            <CategoryGrammarSidePanel
               ref={grammarEditorRef}
-              tokenText={grammarEditToken}
+              category={grammarEditCategory}
+              tokens={tokens}
               grammar={grammarForPanel}
-              onSave={handleTokenGrammarSave}
+              onSave={handleCategoryGrammarSave}
               onClose={() => {
                 flushGrammarEditor();
-                setGrammarEditToken(null);
+                setGrammarEditCategoryId(null);
               }}
             />
           </div>

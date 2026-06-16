@@ -4,7 +4,7 @@
 import { memo } from 'react';
 import { Loader2 } from 'lucide-react';
 import { DictionaryPanel } from '../../components/DocumentViewer/DictionaryPanel';
-import { useDocumentEditorController } from '../document-editor/DocumentEditorContext';
+import { useDocumentEditorController, useDocumentEditorDictionaryNav } from '../document-editor/DocumentEditorContext';
 
 export const OntologyWorkspace = memo(function OntologyWorkspace() {
   const {
@@ -15,9 +15,15 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
     onDocUpdated,
     setDictState,
     handleDictionaryAfterSave,
+    handleUnloadLibraryDictionary,
     syncNotice,
     analysisApi,
   } = useDocumentEditorController();
+  const { openDictionaryTree } = useDocumentEditorDictionaryNav();
+
+  const handleOpenDictionary = (dictionaryId: string) => {
+    openDictionaryTree({ dictionaryId });
+  };
 
   if (content.loading) {
     return (
@@ -45,6 +51,8 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
       onDocUpdated={onDocUpdated}
       onStateChange={setDictState}
       onAfterSave={handleDictionaryAfterSave}
+      onUnloadLibraryDictionary={handleUnloadLibraryDictionary}
+      onOpenDictionary={handleOpenDictionary}
       syncNotice={syncNotice}
       error={analysisApi.error}
     />

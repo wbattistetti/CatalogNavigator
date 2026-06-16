@@ -3,6 +3,7 @@
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import { getInteractiveMessageSlots } from './analysisTree';
+import type { TokenCategory } from './dictionaryTree';
 import { coerceAiResponseToRows, parseOpenAiContent } from './coerceAiRows';
 import { invokeFunction } from './invokeFunction';
 import type { TaxonomyBuildResult } from './analyzeAiPostProcess';
@@ -176,15 +177,18 @@ export async function runRegenMessagesSubtree(
   documentText?: string,
   signal?: AbortSignal,
   itemPaths?: string[] | null,
+  categories?: TokenCategory[],
 ): Promise<AnalysisRow[]> {
-  const interactiveSlots = getInteractiveMessageSlots(slots, itemPaths);
+  const interactiveSlots = getInteractiveMessageSlots(slots, itemPaths, categories);
   if (interactiveSlots.length === 0) {
     return processMessagesAiResponse(slots, [], itemPaths);
   }
 
   return callLayerWithRetry(
     REGEN_MESSAGES_PROMPT,
-    (correction) => buildRegenMessagesSubtreeUserMessage(slots, rootSlot, documentName, documentText, correction, itemPaths),
+    (correction) => buildRegenMessagesSubtreeUserMessage(
+      slots, rootSlot, documentName, documentText, correction, itemPaths, categories,
+    ),
     slots,
     buildMessagesCorrectionMessage,
     processMessagesAiResponse,

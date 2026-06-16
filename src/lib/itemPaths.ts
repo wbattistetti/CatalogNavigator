@@ -8,22 +8,29 @@ import {
   normalizeCompactPath,
   sortSlotsTreeOrder,
 } from './analysisTree';
+import type { TokenCategory } from './dictionaryTree';
 
 /** Normalizes and deduplicates corpus item paths. */
-export function normalizeItemPaths(paths: string[]): string[] {
+export function normalizeItemPaths(
+  paths: string[],
+  categories?: TokenCategory[],
+): string[] {
   const out = new Set<string>();
   for (const raw of paths) {
     const n = normalizeCompactPath(raw);
     if (n) out.add(n);
   }
-  return sortSlotsTreeOrder([...out]);
+  return sortSlotsTreeOrder([...out], categories);
 }
 
 /**
  * Infers item paths from tree shape when explicit corpus paths are missing.
  * Marks a single-child parent as item when its direct child is a structural leaf (prefix ambiguity).
  */
-export function inferItemPathsFromSlots(slots: string[]): string[] {
+export function inferItemPathsFromSlots(
+  slots: string[],
+  categories?: TokenCategory[],
+): string[] {
   const items = new Set<string>();
   for (const slot of slots) {
     if (isLeafSlot(slots, slot)) items.add(slot);
@@ -35,7 +42,7 @@ export function inferItemPathsFromSlots(slots: string[]): string[] {
       items.add(slot);
     }
   }
-  return sortSlotsTreeOrder([...items]);
+  return sortSlotsTreeOrder([...items], categories);
 }
 
 /** Resolves item paths from stored corpus list or tree inference. */
@@ -78,14 +85,14 @@ export function isTerminalItemSlot(slot: string, itemPaths: string[]): boolean {
   return isItemSlot(slot, itemPaths) && !hasDescendantItem(slot, itemPaths);
 }
 
-/** True when an item node must disambiguate base vs extended child item(s). */
+/** True when an item node must disambiguate base vs direct child item extension. */
 export function isPrefixAmbiguityNode(
   slots: string[],
   slot: string,
   itemPaths: string[],
 ): boolean {
   if (!isItemSlot(slot, itemPaths) || isLeafSlot(slots, slot)) return false;
-  return hasDescendantItem(slot, itemPaths);
+  return getDirectChildItemSlots(slot, itemPaths).length > 0;
 }
 
 /** Merges explicit corpus paths with inferred prefix-ambiguity parents after tree edits. */

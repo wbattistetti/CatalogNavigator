@@ -4,6 +4,7 @@
 import type { GrammarEntry } from '../hooks/useAnalysis';
 import type { TokenCategory } from './dictionaryTree';
 import { orderSegmentsByCategories, type SegmentMatch } from './dictionaryTree';
+import { canonicalizePathSegments } from './pathCanonicalize';
 import {
   collectWordSpanMatchesAfterShadow,
   findAllWordSpanMatches,
@@ -106,8 +107,8 @@ export function getSelectionOffsetsInElement(
     return null;
   }
 
-  const start = textOffsetInElement(container, range.startContainer, range.startOffset);
-  const end = textOffsetInElement(container, range.endContainer, range.endOffset);
+  const start = resolveTextOffsetInContainer(container, range.startContainer, range.startOffset);
+  const end = resolveTextOffsetInContainer(container, range.endContainer, range.endOffset);
   if (start < 0 || end < 0 || start === end) return null;
 
   const normalized = trimSelectionRange(sourceText, Math.min(start, end), Math.max(start, end));
@@ -125,6 +126,54 @@ function textOffsetInElement(root: HTMLElement, node: Node, offset: number): num
     current = walker.nextNode();
   }
   return -1;
+}
+
+function sourceOffsetFromMarkedAncestor(
+  container: HTMLElement,
+  node: Node,
+  offset: number,
+): number {
+  let el: HTMLElement | null = node.nodeType === Node.TEXT_NODE
+    ? node.parentElement
+    : (node as HTMLElement);
+  while (el && container.contains(el)) {
+    const startRaw = el.getAttribute('data-source-start');
+    const endRaw = el.getAttribute('data-source-end');
+    if (startRaw != null && endRaw != null) {
+      const start = Number(startRaw);
+      const end = Number(endRaw);
+      if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const local = textOffsetInElement(el, node, offset);
+          if (local >= 0) return Math.min(end, start + local);
+        }
+        return start;
+      }
+    }
+    el = el.parentElement;
+  }
+  return -1;
+}
+
+function resolveTextOffsetInContainer(
+  container: HTMLElement,
+  node: Node,
+  offset: number,
+): number {
+  const direct = textOffsetInElement(container, node, offset);
+  if (direct >= 0) return direct;
+  return sourceOffsetFromMarkedAncestor(container, node, offset);
+}
+
+/** True when the user has a non-empty text selection inside `container`. */
+export function hasTextSelectionInElement(container: HTMLElement): boolean {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+  const range = sel.getRangeAt(0);
+  if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) {
+    return false;
+  }
+  return sel.toString().trim().length > 0;
 }
 
 /** Normalizes description text for tokenization. */
@@ -415,10 +464,11 @@ export function segmentDescription(
   const words = tokenizeToWords(normalized);
   const { matches, unmatched } = segmentWordsWithPositions(words, matchPhrases);
   const segments = orderSegmentsByCategories(matches, categories);
+  const path = canonicalizePathSegments(segments.join('.'), categories);
 
   return {
-    segments,
-    path: segments.join('.'),
+    segments: path ? path.split('.') : segments,
+    path,
     unmatched: [...new Set(unmatched)],
   };
 }

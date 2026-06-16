@@ -3,6 +3,8 @@
  */
 import type { GrammarEntry } from '../hooks/useAnalysis';
 import { getDirectChildSlots } from './analysisTree';
+import type { TokenCategory } from './dictionaryTree';
+import { getSiblingChoiceChildren } from './nluCategoryRules';
 import {
   extractRawNamedGroupNames,
   groupNameFromSlotSegment,
@@ -27,7 +29,7 @@ function lastSegment(slot: string): string {
   return parts[parts.length - 1] ?? slot;
 }
 
-function escapeRegexLiteral(value: string): string {
+export function escapeRegexLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
@@ -214,10 +216,13 @@ export function buildInteractivePanels(
   slot: string,
   slots: string[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): GrammarEditorPanel[] {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
   const panels: GrammarEditorPanel[] = [];
-  const children = getDirectChildSlots(slots, slot);
+  const children = categories?.length
+    ? (getSiblingChoiceChildren(slots, slot, categories) ?? [])
+    : getDirectChildSlots(slots, slot);
 
   if (isItemSlot(slot, itemPaths)) {
     panels.push({
@@ -286,15 +291,16 @@ export function seedDefaultSimpleSynonyms(slot: string): string[] {
   return defaultSynonymsForSlot(slot);
 }
 
-export type GrammarEditorMode = 'node' | 'answer';
+export type GrammarEditorMode = 'node' | 'category' | 'answer';
 
 /** True when the node uses the multi-panel answer grammar editor. */
 export function usesAnswerGrammarEditor(
   slot: string,
   slots: string[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
-  return requiresInteractiveNode(slots, slot, itemPathsInput);
+  return requiresInteractiveNode(slots, slot, itemPathsInput, categories);
 }
 
 /** @deprecated Use usesAnswerGrammarEditor — node editor is always simple. */
@@ -302,8 +308,9 @@ export function usesInteractiveGrammarEditor(
   slot: string,
   slots: string[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
-  return usesAnswerGrammarEditor(slot, slots, itemPathsInput);
+  return usesAnswerGrammarEditor(slot, slots, itemPathsInput, categories);
 }
 
 /** Compiles a simple-node grammar from a flat synonym list. */
@@ -369,9 +376,10 @@ export function buildGrammarEditorState(
   itemPathsInput: string[] | null | undefined,
   grammar: GrammarEntry | null,
   mode: GrammarEditorMode = 'node',
+  categories?: TokenCategory[],
 ): { interactive: boolean; panels: GrammarEditorPanel[]; simpleSynonyms: string[] } {
-  if (mode === 'answer' && usesAnswerGrammarEditor(slot, slots, itemPathsInput)) {
-    let panels = buildInteractivePanels(slot, slots, itemPathsInput);
+  if (mode === 'answer' && usesAnswerGrammarEditor(slot, slots, itemPathsInput, categories)) {
+    let panels = buildInteractivePanels(slot, slots, itemPathsInput, categories);
     panels = hydratePanelsFromGrammar(panels, grammar);
     panels = seedDefaultPanels(panels, slot);
     panels = panels.map((p) => ({
@@ -398,7 +406,7 @@ export function compileGrammarFromEditorState(
   panels: GrammarEditorPanel[],
   simpleSynonyms: string[],
 ): GrammarEntry {
-  if (mode === 'answer') {
+  if (mode === 'answer' || mode === 'category') {
     return compileInteractiveGrammar(panels);
   }
   return compileSimpleGrammar(getTokenTextForSlot(slot), simpleSynonyms);

@@ -10,18 +10,6 @@ import { useDocumentEditorController } from '../document-editor/DocumentEditorCo
 export const CATEGORIZE_WAIT_LABEL =
   'Per favore, attendi, sto vedendo come categorizzare i token...';
 
-function resolveProjectDictionaryId(
-  editingDictionaryId: string | null,
-  getDictionaryMeta: (id: string) => { scope: string } | null | undefined,
-  projectDicts: Array<{ id: string }>,
-): string | null {
-  if (editingDictionaryId) {
-    const meta = getDictionaryMeta(editingDictionaryId);
-    if (meta?.scope === 'project') return editingDictionaryId;
-  }
-  return projectDicts[0]?.id ?? null;
-}
-
 export function useCategorizeTokens() {
   const { content, doc, dicts } = useDocumentEditorController();
   const [generating, setGenerating] = useState(false);
@@ -29,12 +17,8 @@ export function useCategorizeTokens() {
   const abortRef = useRef<AbortController | null>(null);
 
   const dictionaryId = useMemo(
-    () => resolveProjectDictionaryId(
-      dicts.editingDictionaryId,
-      dicts.getDictionaryMeta,
-      dicts.projectDicts,
-    ),
-    [dicts.editingDictionaryId, dicts.getDictionaryMeta, dicts.projectDicts],
+    () => dicts.projectDictionaryId,
+    [dicts.projectDictionaryId],
   );
 
   const descriptions = useMemo(() => {

@@ -18,7 +18,7 @@ function AgentGenerationProgress() {
 
   return (
     <div className="flex-shrink-0 px-4 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
-      <div className="flex items-center justify-between gap-2 mb-1.5 font-mono text-[10px] text-emerald-400/70">
+      <div className="flex items-center justify-between gap-2 mb-1.5 font-mono text-sm text-emerald-400/70">
         <span>
           {generatingPhase === 'grammars'
             ? agentGenProgress.rootSlot === 'completato'
@@ -62,7 +62,7 @@ export function DocumentEditorShell() {
     <div className="flex flex-col flex-1 min-h-0 min-w-0">
       <DocumentEditorHeader />
 
-      <div className="flex-shrink-0 flex items-end justify-between gap-2 px-2 border-b border-[#1a3a2a] bg-[#080e0a]">
+      <div className="flex-shrink-0 flex flex-wrap items-end justify-between gap-x-2 gap-y-1 px-2 border-b border-[#1a3a2a] bg-[#080e0a] min-w-0 overflow-x-auto scrollbar-thin">
         <DocumentEditorTabStrip />
         <DocumentEditorToolbar />
       </div>

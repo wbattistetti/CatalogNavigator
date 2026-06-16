@@ -2,20 +2,40 @@
  * Builds ElevenLabs Convai exports: dictionary JSON, ontology JSON, unified KB, system prompt.
  */
 import type { Analysis, AnalysisRow } from './analysisTypes';
-import { getDirectChildSlots } from './analysisTree';
-import { normalizeCategoryOrders } from './dictionaryTree';
 import {
-  getDescendantItemSlots,
-  getDirectChildItemSlots,
-  isPrefixAmbiguityNode,
+  getCategoryTypeForToken,
+  normalizeCategoryOrders,
+  normalizeCategoryType,
+  type CategoryType,
+  type TokenCategory,
+} from './dictionaryTree';
+import {
   isTerminalItemSlot,
   normalizeItemPaths,
-  reconcileItemPaths,
 } from './itemPaths';
+import type { LoadedDictionaryRef } from './multiDictionarySegment';
 import {
-  buildInteractiveMessageFallback,
-  defaultNoMatchReplies,
-} from './messageAssembly';
+  segmentAllDescriptionsFromLoadedRefs,
+  segmentDescriptionMulti,
+} from './multiDictionarySegment';
+import {
+  canonicalizeItemPaths,
+  canonicalizeItemPathsFromLoadedRefs,
+  getPathOrderingCategories,
+  itemPathsNeedCanonicalization,
+  itemPathsNeedCanonicalizationFromLoadedRefs,
+} from './pathCanonicalize';
+import {
+  formatConvaiDebugTraceLines,
+  formatConvaiDebugTracePreamble,
+} from './convaiPromptDebugTrace';
+import { buildInteractiveMessageFallback } from './messageAssembly';
+import {
+  getPrefixAmbiguityTargets,
+  getSiblingChoiceChildren,
+  hasAttributoPrefixAmbiguity,
+  requiresVincoloSegmentQuestionNode,
+} from './nluCategoryRules';
 import { requiresInteractiveNode } from './nluQuestionRules';
 import {
   isCanonicalToken,
@@ -36,6 +56,8 @@ export interface ConvaiExportMeta {
 export interface ConvaiDictionaryCategory {
   order: number;
   name: string;
+  /** attributo = catalog dimension; vincolo = eligibility constraint (e.g. age). */
+  type: CategoryType;
   tokens: string[];
 }
 
@@ -43,6 +65,8 @@ export interface ConvaiDictionaryToken {
   canonical: string;
   aliases: string[];
   enabled: boolean;
+  /** Inherited from the token's dictionary category. */
+  category_type: CategoryType;
 }
 
 export interface ConvaiDictionaryExport {
@@ -51,10 +75,16 @@ export interface ConvaiDictionaryExport {
   tokens: ConvaiDictionaryToken[];
 }
 
+export interface ConvaiCorpusSegment {
+  text: string;
+  category_type: CategoryType;
+}
+
 export interface ConvaiCorpusItem {
   path: string;
   source_text: string;
-  segments: string[];
+  /** Ordered path segments with semantic category type per segment. */
+  segments: ConvaiCorpusSegment[];
   unmatched: string[];
 }
 
@@ -63,10 +93,11 @@ export type ConvaiInteractiveNodeType = 'sibling_choice' | 'prefix_ambiguity';
 export interface ConvaiInteractiveNode {
   slot: string;
   type: ConvaiInteractiveNodeType;
-  question: string;
-  no_match_1: string;
-  no_match_2: string;
-  no_match_3: string;
+  /**
+   * Design-time disambiguation draft (NLU/template). The Convai agent paraphrases it
+   * naturally at runtime; do not read verbatim.
+   */
+  prompt_hint: string;
   children?: string[];
   parent_item?: string;
   child_items?: string[];
@@ -108,6 +139,8 @@ export interface ConvaiExportInput {
   dictionary: TokenDictionary;
   descriptions: string[];
   analysis: Analysis | null;
+  /** When set, corpus paths match the live corpus editor (multi-dictionary). */
+  loadedRefs?: LoadedDictionaryRef[];
   dictionaryDirty?: boolean;
   analysisDirty?: boolean;
   pathsOutOfSync?: boolean;
@@ -127,14 +160,17 @@ function buildMeta(input: ConvaiExportInput, extraWarnings: string[] = []): Conv
   return {
     documentName: input.documentName,
     language: 'it',
-    version: '1.0',
+    version: '1.1',
     generatedAt: new Date().toISOString(),
     warnings,
   };
 }
 
-/** Groups canonical tokens with their alias surfaces. */
-export function buildConvaiDictionaryTokens(tokens: TokenEntry[]): ConvaiDictionaryToken[] {
+/** Groups canonical tokens with their alias surfaces and category semantic type. */
+export function buildConvaiDictionaryTokens(
+  tokens: TokenEntry[],
+  categories: import('./dictionaryTree').TokenCategory[] = [],
+): ConvaiDictionaryToken[] {
   const canonicals = tokens.filter(isCanonicalToken);
   return canonicals.map((entry) => ({
     canonical: entry.text,
@@ -142,6 +178,18 @@ export function buildConvaiDictionaryTokens(tokens: TokenEntry[]): ConvaiDiction
       .filter((t) => t.aliasOf === entry.text)
       .map((t) => t.text),
     enabled: entry.enabled,
+    category_type: getCategoryTypeForToken(entry.text, categories),
+  }));
+}
+
+/** Maps flat segment texts to typed segments using dictionary categories. */
+export function buildConvaiCorpusSegments(
+  segmentTexts: string[],
+  categories: import('./dictionaryTree').TokenCategory[],
+): ConvaiCorpusSegment[] {
+  return segmentTexts.map((text) => ({
+    text,
+    category_type: getCategoryTypeForToken(text, categories),
   }));
 }
 
@@ -153,70 +201,68 @@ export function buildConvaiDictionaryExport(input: ConvaiExportInput): ConvaiDic
     categories: categories.map((c) => ({
       order: c.order,
       name: c.name,
+      type: normalizeCategoryType(c.type),
       tokens: [...c.tokenTexts],
     })),
-    tokens: buildConvaiDictionaryTokens(input.dictionary.tokens),
+    tokens: buildConvaiDictionaryTokens(input.dictionary.tokens, categories),
   };
 }
 
-function resolveInteractiveMessages(
+/** Resolves the design-time disambiguation hint exported to Convai (not spoken verbatim). */
+export function resolveConvaiPromptHint(
   slot: string,
   row: AnalysisRow | undefined,
   slots: string[],
   itemPaths: string[],
-): Pick<AnalysisRow, 'question' | 'no_match_1' | 'no_match_2' | 'no_match_3'> {
-  const fallback = buildInteractiveMessageFallback(slots, slot, itemPaths);
-  const question = row?.question?.trim() || fallback.question;
-  const noMatch = defaultNoMatchReplies(question);
-  return {
-    question,
-    no_match_1: row?.no_match_1?.trim() || fallback.no_match_1 || noMatch.no_match_1,
-    no_match_2: row?.no_match_2?.trim() || fallback.no_match_2 || noMatch.no_match_2,
-    no_match_3: row?.no_match_3?.trim() || fallback.no_match_3 || noMatch.no_match_3,
-  };
+  categories?: TokenCategory[],
+): string | null {
+  const fallback = buildInteractiveMessageFallback(slots, slot, itemPaths, categories);
+  const hint = row?.question?.trim() || fallback.question?.trim();
+  return hint || null;
 }
 
 function buildInteractiveNodes(
   rows: AnalysisRow[],
   itemPaths: string[],
+  categories?: TokenCategory[],
 ): ConvaiInteractiveNode[] {
   const slots = rows.map((r) => r.slot_filling);
   const rowBySlot = new Map(rows.map((r) => [r.slot_filling, r]));
   const nodes: ConvaiInteractiveNode[] = [];
 
   for (const slot of slots) {
-    if (!requiresInteractiveNode(slots, slot, itemPaths)) continue;
+    if (!requiresInteractiveNode(slots, slot, itemPaths, categories)) continue;
 
     const row = rowBySlot.get(slot);
-    const messages = resolveInteractiveMessages(slot, row, slots, itemPaths);
-    if (!messages.question?.trim()) continue;
+    const promptHint = resolveConvaiPromptHint(slot, row, slots, itemPaths, categories);
+    if (!promptHint) continue;
 
-    if (isPrefixAmbiguityNode(slots, slot, itemPaths)) {
-      const directChildItems = getDirectChildItemSlots(slot, itemPaths);
-      const childItems = directChildItems.length > 0
-        ? directChildItems
-        : getDescendantItemSlots(slot, itemPaths);
+    if (requiresVincoloSegmentQuestionNode(slot, itemPaths, categories)) {
       nodes.push({
         slot,
-        type: 'prefix_ambiguity',
-        question: messages.question,
-        no_match_1: messages.no_match_1!,
-        no_match_2: messages.no_match_2!,
-        no_match_3: messages.no_match_3!,
-        parent_item: slot,
-        child_items: childItems,
+        type: 'sibling_choice',
+        prompt_hint: promptHint,
+        children: [],
       });
       continue;
     }
 
-    const children = getDirectChildSlots(slots, slot);
+    if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) {
+      nodes.push({
+        slot,
+        type: 'prefix_ambiguity',
+        prompt_hint: promptHint,
+        parent_item: slot,
+        child_items: getPrefixAmbiguityTargets(slot, itemPaths, categories),
+      });
+      continue;
+    }
+
+    const children = getSiblingChoiceChildren(slots, slot, categories) ?? [];
     nodes.push({
       slot,
       type: 'sibling_choice',
-      question: messages.question,
-      no_match_1: messages.no_match_1!,
-      no_match_2: messages.no_match_2!,
-      no_match_3: messages.no_match_3!,
+      prompt_hint: promptHint,
       children,
     });
   }
@@ -244,44 +290,84 @@ function buildLeafData(
   return out;
 }
 
-/** Serializes ontology: item paths, corpus rows (category-ordered), dialog nodes. */
-export function buildConvaiOntologyExport(input: ConvaiExportInput): ConvaiOntologyExport {
-  const { rows: segRows, leafPaths } = segmentAllDescriptions(
+function segmentCorpusDescriptions(input: ConvaiExportInput): {
+  rows: import('./tokenDictionary').RowSegmentation[];
+  leafPaths: string[];
+} {
+  if (input.loadedRefs?.length) {
+    return segmentAllDescriptionsFromLoadedRefs(input.descriptions, input.loadedRefs);
+  }
+  return segmentAllDescriptions(
     input.descriptions,
     input.dictionary.tokens,
     input.dictionary.categories ?? [],
   );
+}
+
+function segmentCorpusRow(
+  sourceText: string,
+  input: ConvaiExportInput,
+): { segments: string[]; unmatched: string[] } {
+  if (input.loadedRefs?.length) {
+    const result = segmentDescriptionMulti(sourceText, input.loadedRefs);
+    return { segments: result.segments.map((s) => s.text), unmatched: result.unmatched };
+  }
+  const result = segmentDescription(
+    sourceText,
+    input.dictionary.tokens,
+    input.dictionary.categories ?? [],
+  );
+  return { segments: result.segments, unmatched: result.unmatched };
+}
+
+function pathOrderingCategoriesForExport(input: ConvaiExportInput): TokenCategory[] {
+  if (input.loadedRefs?.length) {
+    return getPathOrderingCategories(input.loadedRefs);
+  }
+  return normalizeCategoryOrders(input.dictionary.categories ?? []);
+}
+
+/** Serializes ontology: item paths, corpus rows (category-ordered), dialog nodes. */
+export function buildConvaiOntologyExport(input: ConvaiExportInput): ConvaiOntologyExport {
+  const { rows: segRows, leafPaths } = segmentCorpusDescriptions(input);
+
+  const pathCategories = pathOrderingCategoriesForExport(input);
+  const itemPaths = input.loadedRefs?.length
+    ? normalizeItemPaths(canonicalizeItemPathsFromLoadedRefs(leafPaths, input.loadedRefs))
+    : normalizeItemPaths(canonicalizeItemPaths(leafPaths, pathCategories));
 
   const analysisRows = input.analysis?.rows ?? [];
-  const slots = analysisRows.map((r) => r.slot_filling);
-  const explicitPaths = input.analysis?.item_paths;
-  const itemPaths = slots.length > 0
-    ? reconcileItemPaths(slots, explicitPaths ?? leafPaths)
-    : normalizeItemPaths(leafPaths);
 
   const corpusByPath = new Map<string, string>();
   const corpusItems: ConvaiCorpusItem[] = segRows.map((row) => {
     if (!corpusByPath.has(row.path)) {
       corpusByPath.set(row.path, row.sourceText);
     }
-    const segmented = segmentDescription(
-      row.sourceText,
-      input.dictionary.tokens,
-      input.dictionary.categories ?? [],
-    );
+    const segmented = segmentCorpusRow(row.sourceText, input);
     return {
       path: row.path,
       source_text: row.sourceText,
-      segments: segmented.segments,
+      segments: buildConvaiCorpusSegments(segmented.segments, pathCategories),
       unmatched: row.unmatched,
     };
   });
 
+  const exportWarnings: string[] = [];
+  const storedPaths = input.analysis?.item_paths ?? [];
+  const pathsNeedCanon = input.loadedRefs?.length
+    ? itemPathsNeedCanonicalizationFromLoadedRefs(storedPaths, input.loadedRefs)
+    : itemPathsNeedCanonicalization(storedPaths, pathCategories);
+  if (storedPaths.length > 0 && pathsNeedCanon) {
+    exportWarnings.push(
+      'item_paths salvati con ordine segmenti non canonico: esportazione usa path dal corpus segmentato.',
+    );
+  }
+
   return {
-    meta: buildMeta(input),
+    meta: buildMeta(input, exportWarnings),
     item_paths: itemPaths,
     corpus_items: corpusItems,
-    interactive_nodes: buildInteractiveNodes(analysisRows, itemPaths),
+    interactive_nodes: buildInteractiveNodes(analysisRows, itemPaths, pathCategories),
     leaf_data: buildLeafData(itemPaths, analysisRows, corpusByPath),
     start_question: input.analysis?.start_question?.trim() || null,
     confirmation_preamble: input.analysis?.confirmation_preamble?.trim() || null,
@@ -313,6 +399,22 @@ export interface ConvaiSystemPromptInput {
   documentName: string;
   startQuestion: string | null;
   confirmationPreamble: string | null;
+  /** Exported categories (with type) for domain-specific constraint hints. */
+  categories?: ConvaiDictionaryCategory[];
+}
+
+function formatConstraintCategoryHints(categories: ConvaiDictionaryCategory[]): string[] {
+  const vincoli = categories
+    .filter((c) => c.type === 'vincolo')
+    .sort((a, b) => a.order - b.order);
+  if (vincoli.length === 0) return [];
+  return [
+    '',
+    'VINCOLI NEL DOMINIO (categorie type=vincolo)',
+    ...vincoli.map(
+      (c) => `- "${c.name}" (ordine ${c.order}): token ${c.tokens.join(', ') || '(nessuno)'}`,
+    ),
+  ];
 }
 
 /** Compiles the Convai agent system prompt (motor rules + dialog protocol). */
@@ -321,34 +423,61 @@ export function compileConvaiSystemPrompt(input: ConvaiSystemPromptInput): strin
     'Sei un assistente vocale per la prenotazione di prestazioni mediche.',
     `Dominio: ${input.documentName}. Lingua: italiano.`,
     '',
+    ...formatConvaiDebugTracePreamble(),
     'CONOSCENZA',
-    '- Usa SOLO i dati nella knowledge base: dizionario (token), ontologia (item_paths, corpus_items, interactive_nodes, leaf_data).',
+    '- Usa SOLO i dati nella knowledge base: dizionario (categories, tokens), ontologia (item_paths, corpus_items, interactive_nodes, leaf_data).',
     '- Non inventare prestazioni, segmenti o categorie fuori catalogo.',
+    '- Ogni token ha category_type; ogni segmento in corpus_items ha { text, category_type }.',
+    '',
+    'TIPI DI CATEGORIA',
+    '- attributo: dimensione del catalogo (tipo esame, distretto, lato…). L\'utente può disambiguare tra fratelli allo stesso livello.',
+    '- vincolo: regola di ammissibilità (es. fascia d\'età). NON è una scelta tra alternative equivalenti: filtra quali item_paths restano validi.',
     '',
     'MOTORE DI SELEZIONE (equivalente al terminologo)',
     '1. Dalla frase utente riconosci quali token del dizionario sono presenti (canonical + alias), con flessibilità morfologica italiana.',
     '2. NON costruire path nuovi: scegli solo tra item_paths definiti nell\'ontologia.',
-    '3. Per ogni item_path conta quanti segmenti/nodi del path sono evidenziati nel testo (usa i segmenti pre-ordinati in corpus_items come riferimento).',
+    '3. Per ogni item_path conta quanti segmenti/nodi del path sono evidenziati nel testo (usa corpus_items.segments come riferimento ordinato).',
     '4. Vince l\'item con il conteggio più alto.',
     '5. Se padre-item e figlio-item hanno lo stesso conteggio → preferisci il padre-item (prefix ambiguity).',
     '6. Accumula le frasi dell\'utente nel corso della conversazione prima di ricalcolare il match.',
     '',
+    'VINCOLI (segmenti con category_type = vincolo)',
+    '7. I segmenti vincolo nei path indicano regole di eligibilità, non opzioni da presentare come menu.',
+    '8. Se manca un dato necessario per un vincolo (es. età in anni), chiedilo esplicitamente prima di confermare un item terminale.',
+    '9. Valida la risposta rispetto ai token della categoria vincolo nel dizionario (es. "ho 15 anni" → fascia compatibile).',
+    '10. Dopo la validazione, escludi dagli item_paths candidati quelli il cui segmento vincolo non è compatibile.',
+    '11. NON chiedere "quale fascia?" tra token vincolo se l\'utente non ha ancora dato l\'età: chiedi prima l\'età, poi filtra.',
+    '',
+    'ATTRIBUTI E RICHIESTE GENERICHE',
+    '12. Per segmenti attributo, usa sibling_choice / prefix_ambiguity come da interactive_nodes.',
+    '13. Se la richiesta è generica e molti item_paths corrispondono (es. solo il tipo di esame), NON elencare tutto il catalogo.',
+    '14. Usa dictionary.categories (type=attributo) per guidare: indica le dimensioni ancora mancanti e 2–3 esempi concreti da corpus_items o leaf_data.source_text.',
+    '15. Chiedi una dimensione attributo alla volta, rispettando category.order.',
+    '',
+    'FORMULAZIONE VOCALE (prompt_hint)',
+    '- interactive_nodes[].prompt_hint è una bozza secca creata a design time: NON leggerla parola per parola.',
+    '- Riformulala in italiano parlato, naturale e asciutto (massimo 2 frasi).',
+    '- Mantieni invariato: dimensione da chiedere, opzioni ammesse (children / child_items), significato clinico.',
+    '- Le opzioni ammesse sono SOLO quelle strutturali nel nodo; non aggiungerne altre.',
+    '- start_question e leaf_data.confirmation_text sono anch\'essi bozze parafrasabili, non script rigidi.',
+    '',
     'NAVIGAZIONE DIALOGO',
-    '7. Nodo con un solo figlio e NON prefix_ambiguity → trasparente, prosegui senza domanda.',
-    '8. prefix_ambiguity (padre-item + figlio-item) → fai la question del PADRE in interactive_nodes.',
-    '9. sibling_choice (2+ figli) → fai la question del nodo interattivo corrispondente.',
-    '10. Item terminale → conferma con confirmation_text da leaf_data (prefisso opzionale da confirmation_preamble).',
-    '11. Parafrasa le domande in modo naturale; non cambiare il significato clinico né le opzioni.',
-    '12. Se non capisci: usa no_match_1, poi no_match_2, poi no_match_3 del nodo corrente.',
-    '13. Tieni traccia del nodo interattivo corrente (currentPath) e se stai attendendo una disambiguazione.',
+    '16. Nodo con un solo figlio e NON prefix_ambiguity → trasparente, prosegui senza domanda.',
+    '17. prefix_ambiguity (padre-item + figlio-item) → disambigua usando prompt_hint del nodo PADRE.',
+    '18. sibling_choice (2+ figli) → disambigua usando prompt_hint del nodo corrispondente.',
+    '19. Item terminale → conferma usando leaf_data.confirmation_text come bozza (prefisso opzionale da confirmation_preamble).',
+    '20. Se non capisci la risposta: ripeti con formulazione diversa e più semplice; non elencare tutto il catalogo.',
+    '21. Tieni traccia del nodo interattivo corrente (currentPath) e se stai attendendo una disambiguazione.',
+    ...formatConvaiDebugTraceLines(),
+    ...formatConstraintCategoryHints(input.categories ?? []),
   ];
 
   if (input.startQuestion?.trim()) {
-    lines.push('', 'APERTURA', `- Prima frase all\'utente (parafrasabile): ${input.startQuestion.trim()}`);
+    lines.push('', 'APERTURA', `- Bozza start_question (parafrasabile, asciutta): ${input.startQuestion.trim()}`);
   }
 
   if (input.confirmationPreamble?.trim()) {
-    lines.push('', 'CONFERMA', `- Prefisso conferma foglia: ${input.confirmationPreamble.trim()}`);
+    lines.push('', 'CONFERMA', `- Bozza confirmation_preamble (parafrasabile): ${input.confirmationPreamble.trim()}`);
   }
 
   return lines.join('\n');
@@ -371,6 +500,7 @@ export function buildConvaiFullExport(input: ConvaiExportInput): ConvaiFullExpor
     documentName: input.documentName,
     startQuestion: ontology.start_question,
     confirmationPreamble: ontology.confirmation_preamble,
+    categories: dictionary.categories,
   });
 
   const warnings = [...new Set([

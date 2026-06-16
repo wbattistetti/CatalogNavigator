@@ -9,6 +9,7 @@ import {
   formatMessagesNodesSection,
   formatSlotTree,
 } from './analysisTree';
+import type { TokenCategory } from './dictionaryTree';
 
 const DOCUMENT_TEXT_MAX = 12_000;
 
@@ -96,6 +97,7 @@ export function buildRegenMessagesSubtreeUserMessage(
   documentText?: string,
   correction = '',
   itemPaths?: string[] | null,
+  categories?: TokenCategory[],
 ): string {
   const docSection = documentText?.trim()
     ? `\n\nCONTESTO DOCUMENTO:\n${documentText.trim().slice(0, DOCUMENT_TEXT_MAX)}`
@@ -106,7 +108,7 @@ export function buildRegenMessagesSubtreeUserMessage(
     `Documento: "${documentName}"\n` +
     `Nodo radice del sottoalbero: "${rootSlot}"\n\n` +
     `STRUTTURA GERARCHICA (${slots.length} slot — NON modificare i path):\n${formatSlotTree(slots)}\n\n` +
-    formatMessagesNodesSection(slots, itemPaths) +
+    formatMessagesNodesSection(slots, itemPaths, categories) +
     docSection +
     correction
   );

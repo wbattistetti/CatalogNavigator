@@ -10,7 +10,11 @@ import {
   type DictionaryEditSession,
 } from '../lib/dictionaryEditSession';
 import type { TokenEntry } from '../lib/tokenDictionary';
-import { orderDictionaryIds } from '../lib/dictionaryTabOrder';
+import {
+  loadedDictionaryEditorIds,
+  orderDictionaryIds,
+  preferredActiveDictionaryId,
+} from '../lib/dictionaryTabOrder';
 import { replaceDictionarySessions } from '../lib/dictionarySessionStore';
 
 export interface UseDictionaryEditSessionsResult {
@@ -27,8 +31,9 @@ export interface UseDictionaryEditSessionsResult {
     validIds: Set<string>,
     defaultDictionaryId: string | null,
     dictionaries?: KbDictionary[],
+    focusDictionaryId?: string | null,
   ) => void;
-  openDictionaryEditor: (dictionaryId: string) => void;
+  openDictionaryEditor: (dictionaryId: string, metaOverride?: KbDictionary) => void;
   closeDictionaryEditor: (dictionaryId: string, options?: { force?: boolean }) => boolean;
   isEditorOpen: (dictionaryId: string) => boolean;
   focusDictionaryEditor: (dictionaryId: string) => void;
@@ -75,6 +80,13 @@ export function useDictionaryEditSessions(
     [sessions],
   );
 
+  /** Bumps when any session categories/grammars change — for bundle compile memoization. */
+  const sessionsRevision = [...sessions.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, session]) => `${id}:${session.categories.map((c) =>
+      `${c.id}:${c.grammar?.regex?.length ?? 0}`).join(',')}`)
+    .join('|');
+
   /** Pushes session state to the external store after commit (never during setState). */
   useLayoutEffect(() => {
     replaceDictionarySessions(sessions);
@@ -109,32 +121,36 @@ export function useDictionaryEditSessions(
     validIds: Set<string>,
     defaultDictionaryId: string | null,
     dictionaries?: KbDictionary[],
+    focusDictionaryId?: string | null,
   ) => {
     const pool = dictionaries ?? allLoadedDictionaries;
 
-    setOpenEditorIds((prev) => {
-      const pruned = orderDictionaryIds(pool, prev.filter((id) => validIds.has(id)));
-      if (pruned.length > 0) return pruned;
+    const poolDicts = pool.filter((d) => validIds.has(d.id));
+
+    setOpenEditorIds(() => {
+      const allLoaded = loadedDictionaryEditorIds(poolDicts);
+      if (allLoaded.length > 0) return allLoaded;
       if (defaultDictionaryId && validIds.has(defaultDictionaryId)) return [defaultDictionaryId];
-      const first = orderDictionaryIds(pool, validIds)[0];
-      return first ? [first] : [];
+      return [];
     });
 
     setActiveDictionaryId((prev) => {
+      if (focusDictionaryId && validIds.has(focusDictionaryId)) return focusDictionaryId;
       if (prev && validIds.has(prev)) return prev;
+      const preferred = preferredActiveDictionaryId(poolDicts);
+      if (preferred && validIds.has(preferred)) return preferred;
       if (defaultDictionaryId && validIds.has(defaultDictionaryId)) return defaultDictionaryId;
-      const first = orderDictionaryIds(pool, validIds)[0];
-      return first ?? null;
+      return loadedDictionaryEditorIds(poolDicts)[0] ?? null;
     });
   }, [allLoadedDictionaries]);
 
-  const openDictionaryEditor = useCallback((dictionaryId: string) => {
-    const meta = getDictionaryMeta(dictionaryId);
+  const openDictionaryEditor = useCallback((dictionaryId: string, metaOverride?: KbDictionary) => {
+    const meta = metaOverride ?? getDictionaryMeta(dictionaryId);
     if (!meta) return;
     upsertSessionFromDictionary(meta, true);
     setOpenEditorIds((prev) => {
       const next = prev.includes(dictionaryId) ? prev : [...prev, dictionaryId];
-      return orderDictionaryIds(allLoadedDictionaries, next);
+      return orderDictionaryIds(allLoadedDictionaries.length > 0 ? allLoadedDictionaries : [meta], next);
     });
     setActiveDictionaryId(dictionaryId);
   }, [getDictionaryMeta, upsertSessionFromDictionary, allLoadedDictionaries]);
@@ -168,9 +184,8 @@ export function useDictionaryEditSessions(
   );
 
   const focusDictionaryEditor = useCallback((dictionaryId: string) => {
-    if (!getDictionaryMeta(dictionaryId)) return;
     setActiveDictionaryId((prev) => (prev === dictionaryId ? prev : dictionaryId));
-  }, [getDictionaryMeta]);
+  }, []);
 
   const setEditingDictionaryId = useCallback((id: string) => {
     if (openEditorIds.includes(id)) {
@@ -204,14 +219,18 @@ export function useDictionaryEditSessions(
     patch: Partial<Pick<DictionaryEditSession, 'tokens' | 'categories'>>,
   ) => {
     setSessions((prev) => {
-      const current = prev.get(dictionaryId);
-      if (!current) return prev;
+      let current = prev.get(dictionaryId);
+      if (!current) {
+        const meta = getDictionaryMeta(dictionaryId);
+        if (!meta) return prev;
+        current = createDictionaryEditSession(meta);
+      }
       const updated = applyDictionaryEditSessionPatch(current, patch);
       const next = new Map(prev);
       next.set(dictionaryId, updated);
       return next;
     });
-  }, []);
+  }, [getDictionaryMeta]);
 
   const setEditingTokens = useCallback((tokens: TokenEntry[]) => {
     if (!activeDictionaryId) return;
@@ -254,5 +273,6 @@ export function useDictionaryEditSessions(
     setEditingCategories,
     setSessionTokens,
     setSessionCategories,
+    sessionsRevision,
   };
 }

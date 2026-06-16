@@ -2,6 +2,7 @@
  * Tests for contextual answer synonym seeding and alphabetical ordering.
  */
 import { describe, expect, it } from 'vitest';
+import type { TokenCategory } from './dictionaryTree';
 import {
   buildInteractivePanels,
   defaultChildContextualSynonyms,
@@ -59,5 +60,38 @@ describe('contextual answer synonym seeds', () => {
     expect(parent.synonyms).not.toContain('agonistica certificato idoneita');
     expect(child.synonyms).toContain('sì');
     expect(child.synonyms).not.toContain('agonistica certificato idoneita pratica sportiva');
+  });
+});
+
+describe('buildInteractivePanels category-aware', () => {
+  const cardiologicaCategories: TokenCategory[] = [
+    { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
+    { id: 'c2', name: 'tipo visita', order: 1, tokenTexts: ['prima', 'visita'] },
+    { id: 'c3', name: 'fascia', order: 2, tokenTexts: ['pediatrica'] },
+  ];
+
+  const slots = [
+    'cardiologica',
+    'cardiologica.prima',
+    'cardiologica.visita',
+    'cardiologica.pediatrica',
+  ];
+
+  it('lists only same-category siblings when categories are provided', () => {
+    const tipoPanels = buildInteractivePanels('cardiologica', slots, null, cardiologicaCategories);
+    expect(tipoPanels.map((p) => p.targetPath)).toEqual([
+      'cardiologica.prima',
+      'cardiologica.visita',
+    ]);
+    expect(tipoPanels.map((p) => p.targetPath)).not.toContain('cardiologica.pediatrica');
+  });
+
+  it('without categories falls back to all direct children', () => {
+    const panels = buildInteractivePanels('cardiologica', slots, null);
+    expect(panels.map((p) => p.targetPath)).toEqual([
+      'cardiologica.prima',
+      'cardiologica.visita',
+      'cardiologica.pediatrica',
+    ]);
   });
 });

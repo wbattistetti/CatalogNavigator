@@ -10,17 +10,23 @@ import {
   indexRowsBySlot,
   isLeafSlot,
 } from './analysisTree';
-import { validateGrammarRegex } from './grammarNormalize';
+import {
+  isCategoryGrammarsLayerReady,
+} from './categoryGrammar';
 import {
   buildPrefixDisambiguationQuestion,
-  getDescendantItemSlots,
-  getDirectChildItemSlots,
-  hasDescendantItem,
-  isItemSlot,
-  isPrefixAmbiguityNode,
   isTerminalItemSlot,
   resolveItemPaths,
 } from './itemPaths';
+import { AGE_YEARS_QUESTION } from './constraintValidation';
+import type { TokenCategory } from './dictionaryTree';
+import {
+  getPrefixAmbiguityTargets,
+  getSiblingChoiceChildren,
+  hasAttributoPrefixAmbiguity,
+  requiresCategoryAwareInteractiveNode,
+  requiresVincoloSegmentQuestionNode,
+} from './nluCategoryRules';
 
 function lastSegment(slot: string): string {
   const parts = slot.split('.');
@@ -84,24 +90,21 @@ export function isPassthroughNode(
   slots: string[],
   slot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   if (isLeafSlot(slots, slot)) return false;
-  return !requiresInteractiveNode(slots, slot, itemPathsInput);
+  return !requiresInteractiveNode(slots, slot, itemPathsInput, categories);
 }
 
-/** True when a node requires a question (sibling choice or prefix-item disambiguation). */
+/** True when a node requires a question (same-category sibling choice or direct prefix-item). */
 export function requiresInteractiveNode(
   slots: string[],
   slot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  if (isTerminalItemSlot(slot, itemPaths)) return false;
-
-  const children = getDirectChildSlots(slots, slot);
-  if (children.length >= 2) return true;
-  if (isPrefixAmbiguityNode(slots, slot, itemPaths)) return true;
-  return false;
+  return requiresCategoryAwareInteractiveNode(slots, slot, itemPaths, categories);
 }
 
 /** Applies passthrough clearing, option lists, and prefix disambiguation questions. */
@@ -109,20 +112,25 @@ export function applyNluQuestionRules(
   slots: string[],
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
   return rows.map((row) => {
     const slot = row.slot_filling;
+
+    if (requiresVincoloSegmentQuestionNode(slot, itemPaths, categories)) {
+      return {
+        ...row,
+        question: AGE_YEARS_QUESTION,
+        status: row.status ?? null,
+      };
+    }
+
     if (isTerminalItemSlot(slot, itemPaths)) return row;
 
-    const children = getDirectChildSlots(slots, slot);
-
-    if (isPrefixAmbiguityNode(slots, slot, itemPaths)) {
+    if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) {
       if (row.question?.trim()) return row;
-      const directChildItems = getDirectChildItemSlots(slot, itemPaths);
-      const targets = directChildItems.length > 0
-        ? directChildItems
-        : getDescendantItemSlots(slot, itemPaths);
+      const targets = getPrefixAmbiguityTargets(slot, itemPaths, categories);
       return {
         ...row,
         question: buildPrefixDisambiguationQuestion(slot, targets),
@@ -130,11 +138,12 @@ export function applyNluQuestionRules(
       };
     }
 
-    if (children.length === 1) {
+    const children = getSiblingChoiceChildren(slots, slot, categories);
+    if (!children || children.length < 2) {
       return { ...row, ...clearedNluFields(), status: row.status ?? null };
     }
 
-    if (children.length >= 2 && children.length <= 3) {
+    if (children.length <= 3) {
       if (row.question?.trim() && questionListsOptions(row.question, children)) return row;
       return {
         ...row,
@@ -152,6 +161,7 @@ export function resolveNavigationTarget(
   path: string,
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): { path: string; row: AnalysisRow; isLeaf: boolean } {
   const slots = rows.map((r) => r.slot_filling);
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
@@ -176,7 +186,7 @@ export function resolveNavigationTarget(
       return { path: current, row, isLeaf: true };
     }
 
-    if (requiresInteractiveNode(slots, current, itemPaths)) {
+    if (requiresInteractiveNode(slots, current, itemPaths, categories)) {
       return { path: current, row, isLeaf: false };
     }
 
@@ -196,10 +206,11 @@ export function isMessagesNodeComplete(
   slot: string,
   row: AnalysisRow,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  if (isTerminalItemSlot(slot, itemPaths)) return true;
-  if (isPassthroughNode(slots, slot, itemPaths)) {
+  if (isTerminalItemSlot(slot, itemPaths) && !row.question?.trim()) return true;
+  if (isPassthroughNode(slots, slot, itemPaths, categories)) {
     return !row.question?.trim()
       && !row.no_match_1?.trim()
       && !row.no_match_2?.trim()
@@ -213,39 +224,32 @@ export function isMessagesNodeComplete(
   );
 }
 
-/** True when a node has its own recognition grammar (every node in the tree). */
-export function isGrammarNodeComplete(_slots: string[], _slot: string, row: AnalysisRow): boolean {
-  return !!(
-    row.grammar?.regex?.trim()
-    && row.grammar.mappings
-    && Object.keys(row.grammar.mappings).length > 0
-  );
+/** @deprecated Node grammars replaced by category grammars — always true per node. */
+export function isGrammarNodeComplete(_slots: string[], _slot: string, _row: AnalysisRow): boolean {
+  return true;
 }
 
-/** True when an interactive node has answer grammar routing to children/parent-item. */
+/** @deprecated Answer grammars are generated per turn — always true per node. */
 export function isAnswerGrammarNodeComplete(
-  slots: string[],
-  slot: string,
-  row: AnalysisRow,
-  itemPathsInput?: string[] | null,
+  _slots: string[],
+  _slot: string,
+  _row: AnalysisRow,
+  _itemPathsInput?: string[] | null,
+  _categories?: TokenCategory[],
 ): boolean {
-  if (!requiresInteractiveNode(slots, slot, itemPathsInput)) return true;
-  return !!(
-    row.answer_grammar?.regex?.trim()
-    && row.answer_grammar.mappings
-    && Object.keys(row.answer_grammar.mappings).length > 0
-  );
+  return true;
 }
 
-/** True when node + answer grammars are complete for this slot. */
+/** True when category grammars are complete (recognition lives on categories, not nodes). */
 export function isGrammarsNodeComplete(
-  slots: string[],
-  slot: string,
-  row: AnalysisRow,
-  itemPathsInput?: string[] | null,
+  _slots: string[],
+  _slot: string,
+  _row: AnalysisRow,
+  _itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
-  return isGrammarNodeComplete(slots, slot, row)
-    && isAnswerGrammarNodeComplete(slots, slot, row, itemPathsInput);
+  if (!categories?.length) return false;
+  return isCategoryGrammarsLayerReady(categories);
 }
 
 /** True when a node has all required NLU fields (messages + grammars). */
@@ -254,9 +258,10 @@ export function isNluNodeComplete(
   slot: string,
   row: AnalysisRow,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
-  return isMessagesNodeComplete(slots, slot, row, itemPathsInput)
-    && isGrammarsNodeComplete(slots, slot, row, itemPathsInput);
+  return isMessagesNodeComplete(slots, slot, row, itemPathsInput, categories)
+    && isGrammarsNodeComplete(slots, slot, row, itemPathsInput, categories);
 }
 
 function isSubtreeLayerComplete(
@@ -279,9 +284,10 @@ export function isSubtreeMessagesComplete(
   rows: AnalysisRow[],
   rootSlot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   return isSubtreeLayerComplete(rows, rootSlot, (slots, slot, row) =>
-    isMessagesNodeComplete(slots, slot, row, itemPathsInput));
+    isMessagesNodeComplete(slots, slot, row, itemPathsInput, categories));
 }
 
 /** True when every slot in a subtree has complete grammars. */
@@ -289,38 +295,31 @@ export function isSubtreeGrammarsComplete(
   rows: AnalysisRow[],
   rootSlot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   return isSubtreeLayerComplete(rows, rootSlot, (slots, slot, row) =>
-    isGrammarsNodeComplete(slots, slot, row, itemPathsInput));
+    isGrammarsNodeComplete(slots, slot, row, itemPathsInput, categories));
 }
 
 /** True when every slot in a subtree has complete NLU (nothing left to generate). */
-export function isSubtreeNluComplete(rows: AnalysisRow[], rootSlot: string): boolean {
+export function isSubtreeNluComplete(
+  rows: AnalysisRow[],
+  rootSlot: string,
+  itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
+): boolean {
   return isSubtreeLayerComplete(rows, rootSlot, (slots, slot, row) =>
-    isNluNodeComplete(slots, slot, row));
+    isNluNodeComplete(slots, slot, row, itemPathsInput, categories));
 }
 
-/** True when every node has valid node grammar and interactive nodes have answer grammar. */
+/** True when every attributo category has a valid recognition grammar. */
 export function isGrammarsLayerReady(
-  rows: AnalysisRow[],
-  itemPathsInput?: string[] | null,
+  _rows: AnalysisRow[],
+  _itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
-  const slots = rows.map((r) => r.slot_filling);
-  const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const bySlot = indexRowsBySlot(rows);
-  if (slots.length === 0) return false;
-  return slots.every((slot) => {
-    const row = getRowBySlot(bySlot, slot);
-    if (!row || !isGrammarsNodeComplete(slots, slot, row, itemPaths)) return false;
-    if (!validateGrammarRegex(row.grammar!.regex, row.grammar!.mappings).valid) return false;
-    if (requiresInteractiveNode(slots, slot, itemPaths)) {
-      return validateGrammarRegex(
-        row.answer_grammar!.regex,
-        row.answer_grammar!.mappings,
-      ).valid;
-    }
-    return true;
-  });
+  if (!categories?.length) return false;
+  return isCategoryGrammarsLayerReady(categories);
 }
 
 /** True when all interactive nodes have messages (ready for grammar pass). */
@@ -328,16 +327,17 @@ export function isMessagesLayerReady(
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
   startQuestion?: string | null,
+  categories?: TokenCategory[],
 ): boolean {
   const slots = rows.map((r) => r.slot_filling);
-  const interactive = slots.filter((s) => requiresInteractiveNode(slots, s, itemPathsInput));
+  const interactive = slots.filter((s) => requiresInteractiveNode(slots, s, itemPathsInput, categories));
   if (interactive.length === 0) {
     return getAgentGenerationRoots(slots).length > 1 && !!startQuestion?.trim();
   }
   const bySlot = indexRowsBySlot(rows);
   return interactive.every((slot) => {
     const row = getRowBySlot(bySlot, slot);
-    return row && isMessagesNodeComplete(slots, slot, row, itemPathsInput);
+    return row && isMessagesNodeComplete(slots, slot, row, itemPathsInput, categories);
   });
 }
 

@@ -24,7 +24,7 @@ export function DocumentEditorTabStrip() {
   const visible = TABS.filter((t) => !t.dictionaryOnly || dictionaryMode);
 
   return (
-    <div className="flex items-end gap-0 min-h-[32px] px-1">
+    <div className="flex items-end gap-0 min-h-[32px] px-1 flex-shrink-0 min-w-0 overflow-x-auto scrollbar-thin">
       {visible.map((t) => {
         const Icon = t.icon;
         const active = splitLayout.type === 'split'
@@ -42,7 +42,7 @@ export function DocumentEditorTabStrip() {
               e.dataTransfer.effectAllowed = 'copy';
             }}
             className={`
-              flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs border rounded-t transition-colors cursor-grab active:cursor-grabbing
+              flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm border rounded-t transition-colors cursor-grab active:cursor-grabbing
               ${active
                 ? 'bg-[#0f3524] border-emerald-400/40 border-b-transparent text-emerald-50'
                 : 'bg-transparent border-transparent text-emerald-400/65 hover:bg-emerald-400/8 hover:text-emerald-300/90'

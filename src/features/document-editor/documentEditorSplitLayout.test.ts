@@ -3,6 +3,7 @@ import { EDITOR_TAB_IDS } from './editorTabIds';
 import {
   createSplitLayout,
   normalizeSplitLayout,
+  splitLayoutIncludesTab,
 } from './documentEditorSplitLayout';
 
 describe('documentEditorSplitLayout', () => {
@@ -17,6 +18,14 @@ describe('documentEditorSplitLayout', () => {
       secondary: EDITOR_TAB_IDS.agent,
       ratio: 20,
     });
+  });
+
+  it('detects tab presence in split layout', () => {
+    const split = createSplitLayout(EDITOR_TAB_IDS.ontology, EDITOR_TAB_IDS.dictionaries);
+    expect(splitLayoutIncludesTab(split, EDITOR_TAB_IDS.dictionaries)).toBe(true);
+    expect(splitLayoutIncludesTab(split, EDITOR_TAB_IDS.ontology)).toBe(true);
+    expect(splitLayoutIncludesTab(split, EDITOR_TAB_IDS.agent)).toBe(false);
+    expect(splitLayoutIncludesTab({ type: 'single' }, EDITOR_TAB_IDS.dictionaries)).toBe(false);
   });
 
   it('collapses invalid split layouts', () => {

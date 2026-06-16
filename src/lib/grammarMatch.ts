@@ -181,6 +181,40 @@ function pickWinningScore(candidates: ItemScore[], anchor: string | null): ItemS
   return sorted[0]!;
 }
 
+export interface CandidateItemMatch {
+  paths: string[];
+  maxCount: number;
+  scores: ItemScore[];
+}
+
+/** Returns all item paths tied at the maximum prefix match count. */
+export function matchCandidateItemPaths(
+  input: string,
+  rows: AnalysisRow[],
+  options?: MatchBestItemOptions,
+): CandidateItemMatch {
+  const slots = rows.map((r) => r.slot_filling);
+  const itemPaths = extractItemPathsInTree(slots, resolveItemPaths(slots, options?.itemPaths));
+  if (itemPaths.length === 0) {
+    return { paths: [], maxCount: 0, scores: [] };
+  }
+
+  const rowBySlot = new Map(rows.map((r) => [r.slot_filling, r]));
+  const tokenIndex = buildTokenGrammarIndex(options?.tokens ?? []);
+  const scores = itemPaths.map((item) =>
+    scoreItemPath(item, slots, input, rowBySlot, tokenIndex),
+  );
+  const maxCount = Math.max(...scores.map((s) => s.matchCount));
+  if (maxCount === 0) {
+    return { paths: [], maxCount: 0, scores };
+  }
+
+  const paths = scores
+    .filter((s) => s.matchCount === maxCount)
+    .map((s) => s.itemPath);
+  return { paths, maxCount, scores };
+}
+
 /**
  * Scores every corpus item by counting how many nodes on its path match the input.
  * Returns the deepest matched node on the winning item's path as navigation target.

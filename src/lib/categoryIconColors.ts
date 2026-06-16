@@ -24,6 +24,8 @@ export const CATEGORY_COLOR = {
   position: '#a3e635',
   procedure: '#e879f9',
   default: '#f59e0b',
+  /** Eligibility constraint categories (vincolo). */
+  constraint: '#fbbf24',
   noCategory: '#34d399',
   library: '#38bdf8',
 } as const;

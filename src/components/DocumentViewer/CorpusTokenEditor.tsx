@@ -3,7 +3,7 @@
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import { removeTokenFromLayout } from '../../lib/dictionaryTree';
 import type { HighlightSpan, SelectionRange, TokenEntry } from '../../lib/tokenDictionary';
@@ -19,6 +19,7 @@ import {
   findHighlightSpans,
   isCanonicalToken,
   getSelectionOffsetsInElement,
+  hasTextSelectionInElement,
   segmentDescription,
   removeAlias,
   removeCanonicalToken,
@@ -63,6 +64,8 @@ interface CorpusTokenEditorProps {
   editingDictionaryId?: string | null;
   onTokensChange: (tokens: TokenEntry[]) => void;
   onCategoriesChange: (categories: TokenCategory[]) => void;
+  /** Notifies parent when description filter changes (visible vs total rows). */
+  onRowFilterStatsChange?: (stats: { visible: number; total: number; active: boolean }) => void;
 }
 
 interface ContextMenuState {
@@ -92,6 +95,9 @@ const SelectableCorpusChip = memo(function SelectableCorpusChip({
   canonical,
   categorizable,
   label,
+  sourceStart,
+  sourceEnd,
+  showAliasHint = true,
   muted = false,
   variant = 'token',
   aliasOf,
@@ -106,6 +112,10 @@ const SelectableCorpusChip = memo(function SelectableCorpusChip({
   canonical: string;
   categorizable: boolean;
   label: string;
+  sourceStart?: number;
+  sourceEnd?: number;
+  /** When false, alias hint is title-only so text selection maps to source offsets. */
+  showAliasHint?: boolean;
   muted?: boolean;
   variant?: 'token' | 'alias';
   aliasOf?: string;
@@ -130,7 +140,7 @@ const SelectableCorpusChip = memo(function SelectableCorpusChip({
       ? 'border-2 border-emerald-300 opacity-90 cursor-grabbing shadow-[0_0_6px_rgba(52,211,153,0.45)]'
       : 'border-2 border-emerald-400 cursor-grab shadow-[0_0_6px_rgba(52,211,153,0.35)]'
     : categorizable
-      ? 'cursor-pointer'
+      ? 'cursor-text'
       : '';
 
   return (
@@ -138,9 +148,11 @@ const SelectableCorpusChip = memo(function SelectableCorpusChip({
       role={categorizable ? 'option' : undefined}
       aria-selected={categorizable ? selected : undefined}
       data-corpus-chip={categorizable ? 'true' : undefined}
+      data-source-start={sourceStart}
+      data-source-end={sourceEnd}
       onClick={categorizable ? (e) => onChipClick(e, canonical) : undefined}
       onMouseDown={categorizable ? (e) => onChipMouseDown(e, canonical) : undefined}
-      className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip select-none ${
+      className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip select-text ${
         muted
           ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-300/75'
           : isAlias
@@ -161,12 +173,14 @@ const SelectableCorpusChip = memo(function SelectableCorpusChip({
       title={iconTitle ?? (isAlias && aliasOf ? `alias of: ${aliasOf}` : undefined)}
     >
       {iconKey && iconColor && (
-        <DictionaryIcon iconKey={iconKey} iconColor={iconColor} size="xs" />
+        <span className="select-none pointer-events-none flex-shrink-0" aria-hidden>
+          <DictionaryIcon iconKey={iconKey} iconColor={iconColor} size="xs" />
+        </span>
       )}
-      <span>
+      <span className="select-text">
         {label}
-        {isAlias && aliasOf && (
-          <span className="text-sky-300/50"> ({aliasCanonicalHint(aliasOf)})</span>
+        {showAliasHint && isAlias && aliasOf && (
+          <span className="select-none text-sky-300/50"> ({aliasCanonicalHint(aliasOf)})</span>
         )}
       </span>
       {onRemove && (
@@ -216,14 +230,22 @@ function HighlightedDescription({
   const spans = useMemo(() => findHighlightSpans(text, tokens), [text, tokens]);
 
   if (spans.length === 0) {
-    return <span className="text-emerald-300/80">{text}</span>;
+    return (
+      <span className="text-emerald-300/80" data-source-start={0} data-source-end={text.length}>
+        {text}
+      </span>
+    );
   }
 
   const parts: ReactNode[] = [];
   let cursor = 0;
   spans.forEach((span, i) => {
     if (span.start > cursor) {
-      parts.push(<span key={`t-${i}`}>{text.slice(cursor, span.start)}</span>);
+      parts.push(
+        <span key={`t-${i}`} data-source-start={cursor} data-source-end={span.start}>
+          {text.slice(cursor, span.start)}
+        </span>,
+      );
     }
     const canonical = span.canonical;
     const categorizable = editableCanonicalSet.has(canonical);
@@ -239,6 +261,9 @@ function HighlightedDescription({
           canonical={canonical}
           categorizable={categorizable}
           label={text.slice(span.start, span.end)}
+          sourceStart={span.start}
+          sourceEnd={span.end}
+          showAliasHint={false}
           variant={span.isAlias ? 'alias' : 'token'}
           aliasOf={span.isAlias ? span.canonical : undefined}
           iconKey={appearance.iconKey}
@@ -253,7 +278,11 @@ function HighlightedDescription({
     cursor = span.end;
   });
   if (cursor < text.length) {
-    parts.push(<span key="tail">{text.slice(cursor)}</span>);
+    parts.push(
+      <span key="tail" data-source-start={cursor} data-source-end={text.length}>
+        {text.slice(cursor)}
+      </span>,
+    );
   }
 
   return <span className="text-emerald-300/80 leading-relaxed">{parts}</span>;
@@ -359,6 +388,7 @@ export function CorpusTokenEditor({
   editingDictionaryId = null,
   onTokensChange,
   onCategoriesChange,
+  onRowFilterStatsChange,
 }: CorpusTokenEditorProps) {
   const {
     openDictionaryTree,
@@ -370,6 +400,7 @@ export function CorpusTokenEditor({
   const projectDictionaryId = editingDictionaryId;
   const segmentationCacheEnabled = activeTab === EDITOR_TAB_IDS.ontology;
 
+  const [descriptionFilter, setDescriptionFilter] = useState('');
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const dragGhostRef = useRef<HTMLDivElement>(null);
   const [longerTokenPrompt, setLongerTokenPrompt] = useState<LongerTokenPromptState | null>(null);
@@ -441,6 +472,8 @@ export function CorpusTokenEditor({
   const handleChipClick = useCallback((e: React.MouseEvent, canonical: string) => {
     if (!editableCanonicalSet.has(canonical)) return;
     if ((e.target as HTMLElement).closest('button')) return;
+    const row = (e.currentTarget as HTMLElement).closest('[data-corpus-description-row]');
+    if (row instanceof HTMLElement && hasTextSelectionInElement(row)) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey) {
@@ -454,24 +487,25 @@ export function CorpusTokenEditor({
     if (!editableCanonicalSet.has(canonical)) return;
     if ((e.target as HTMLElement).closest('button')) return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
-    e.stopPropagation();
 
-    const snapshot = getDictionarySelectionSnapshot();
-    if (!snapshot.selected.has(canonical)) {
-      selectSingleDictionaryToken(canonical);
-    }
-
-    const texts = [...getDictionarySelectionSnapshot().selected]
-      .filter((t) => editableCanonicalSet.has(t));
-    if (texts.length === 0) return;
-
+    const row = (e.currentTarget as HTMLElement).closest('[data-corpus-description-row]');
     const originX = e.clientX;
     const originY = e.clientY;
     let active = false;
+    let texts: string[] = [];
 
     const onMove = (ev: MouseEvent) => {
+      if (row instanceof HTMLElement && hasTextSelectionInElement(row)) return;
       if (!active) {
         if (Math.hypot(ev.clientX - originX, ev.clientY - originY) < DRAG_THRESHOLD_PX) return;
+        window.getSelection()?.removeAllRanges();
+        const snapshot = getDictionarySelectionSnapshot();
+        if (!snapshot.selected.has(canonical)) {
+          selectSingleDictionaryToken(canonical);
+        }
+        texts = [...getDictionarySelectionSnapshot().selected]
+          .filter((t) => editableCanonicalSet.has(t));
+        if (texts.length === 0) return;
         active = true;
         setDictionaryTokenDragActive(true);
         showDragGhost(formatDragGhostLabel(texts), ev.clientX, ev.clientY);
@@ -508,7 +542,7 @@ export function CorpusTokenEditor({
     onChipMouseDown: startChipPointerDrag,
   }), [editableCanonicalSet, handleChipClick, startChipPointerDrag]);
 
-  const rows = useMemo(
+  const allRows = useMemo(
     () =>
       descriptions
         .map((text, rowIndex) => ({ rowIndex, text: text.trim() }))
@@ -516,6 +550,22 @@ export function CorpusTokenEditor({
         .sort((a, b) => a.text.localeCompare(b.text, 'it', { sensitivity: 'base' })),
     [descriptions],
   );
+
+  const descriptionFilterActive = descriptionFilter.trim().length > 0;
+
+  const rows = useMemo(() => {
+    const query = descriptionFilter.trim().toLowerCase();
+    if (!query) return allRows;
+    return allRows.filter((row) => row.text.toLowerCase().includes(query));
+  }, [allRows, descriptionFilter]);
+
+  useEffect(() => {
+    onRowFilterStatsChange?.({
+      visible: rows.length,
+      total: allRows.length,
+      active: descriptionFilterActive,
+    });
+  }, [rows.length, allRows.length, descriptionFilterActive, onRowFilterStatsChange]);
 
   const segmentationCache = useSegmentationCache(
     rows.map((r) => r.text),
@@ -534,6 +584,10 @@ export function CorpusTokenEditor({
     () => rows.slice(corpusRange.start, corpusRange.end),
     [rows, corpusRange.start, corpusRange.end],
   );
+
+  useEffect(() => {
+    corpusScrollRef.current?.scrollTo({ top: 0 });
+  }, [descriptionFilter, corpusScrollRef]);
 
   const cancelAliasPick = cancelDictionaryAliasPick;
 
@@ -717,13 +771,16 @@ export function CorpusTokenEditor({
 
   const handleMouseUp = (e: React.MouseEvent, sourceText: string) => {
     if (dictionaryAliasPick || e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('button, [data-corpus-chip]')) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+
+    const container = e.currentTarget as HTMLElement;
+    const hasSelection = hasTextSelectionInElement(container);
+    if ((e.target as HTMLElement).closest('[data-corpus-chip]') && !hasSelection) return;
 
     cancelPendingMenuOpen();
     if (e.detail >= 2) return;
 
     lastMouseUpAtRef.current = Date.now();
-    const container = e.currentTarget as HTMLElement;
     const { clientX, clientY } = e;
     openSelectionUi(clientX, clientY, sourceText, container);
   };
@@ -795,19 +852,52 @@ export function CorpusTokenEditor({
             }}
           >
             <div
-              className={`sticky top-0 z-10 ${CORPUS_ROW_GRID} border-b border-[#1a3a2a] bg-[#0a1510]`}
+              className={`sticky top-0 z-10 ${CORPUS_ROW_GRID} items-start border-b border-[#1a3a2a] bg-[#0a1510]`}
             >
               <span className="flex-shrink-0 px-1 py-1.5 font-mono text-[9px] text-emerald-400/70 uppercase tracking-wider text-center">
                 #
               </span>
-              <div className="min-w-0 px-3 py-1.5 font-mono text-[10px] text-emerald-300/85 uppercase tracking-wider">
-                Descrizioni
+              <div className="min-w-0 px-3 py-1.5 flex flex-col gap-1.5">
+                <span className="font-mono text-[10px] text-emerald-300/85 uppercase tracking-wider">
+                  Descrizioni
+                </span>
+                <div className="relative flex items-center">
+                  <Search
+                    className="pointer-events-none absolute left-2 w-3.5 h-3.5 text-emerald-400/45"
+                    aria-hidden
+                  />
+                  <input
+                    type="search"
+                    value={descriptionFilter}
+                    onChange={(e) => setDescriptionFilter(e.target.value)}
+                    placeholder="Filtra descrizioni…"
+                    aria-label="Filtra descrizioni"
+                    className="w-full rounded border border-[#1a3a2a] bg-[#060c08] py-1 pl-7 pr-7 font-mono text-[11px] text-emerald-100/90 placeholder:text-emerald-400/25 focus:border-emerald-400/40 focus:outline-none"
+                  />
+                  {descriptionFilterActive && (
+                    <button
+                      type="button"
+                      onClick={() => setDescriptionFilter('')}
+                      className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-emerald-400/50 hover:bg-emerald-400/10 hover:text-emerald-300"
+                      aria-label="Cancella filtro descrizioni"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="min-w-0 px-3 py-1.5 border-l border-[#1a3a2a] font-mono text-[10px] text-amber-300/85 uppercase tracking-wider">
                 Segmentazione
               </div>
             </div>
             <CorpusSelectionBanner />
+            {rows.length === 0 ? (
+              <div className="px-4 py-8 text-center font-mono text-xs text-emerald-400/35">
+                {descriptionFilterActive
+                  ? 'Nessuna descrizione corrisponde al filtro.'
+                  : 'Nessuna descrizione.'}
+              </div>
+            ) : (
             <div style={{ height: corpusRange.totalHeight, position: 'relative' }}>
               <div
                 style={{
@@ -825,6 +915,7 @@ export function CorpusTokenEditor({
                       R{rowIndex}
                     </span>
                     <div
+                      data-corpus-description-row
                       className="min-w-0 px-3 py-2"
                       onMouseDown={handleMouseDown}
                       onDoubleClick={(e) => handleDoubleClick(e, text)}
@@ -860,6 +951,7 @@ export function CorpusTokenEditor({
                 ))}
               </div>
             </div>
+            )}
           </div>
         </div>
       </div>

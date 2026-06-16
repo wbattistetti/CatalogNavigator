@@ -2,6 +2,7 @@
  * Dual-grammar helpers: node recognition (maps to self) vs answer routing (maps to children).
  */
 import type { AnalysisRow, GrammarEntry } from '../hooks/useAnalysis';
+import type { TokenCategory } from './dictionaryTree';
 import { requiresInteractiveNode } from './nluQuestionRules';
 import {
   compileSimpleGrammar,
@@ -28,7 +29,11 @@ export function grammarMapsToChildren(grammar: GrammarEntry, slot: string): bool
  * Interactive nodes with child mappings in `grammar` move that to `answer_grammar`
  * and rebuild node grammar as simple self-mapping.
  */
-export function migrateDualGrammars(rows: AnalysisRow[], itemPaths: string[]): AnalysisRow[] {
+export function migrateDualGrammars(
+  rows: AnalysisRow[],
+  itemPaths: string[],
+  categories?: TokenCategory[],
+): AnalysisRow[] {
   const slots = rows.map((r) => r.slot_filling);
 
   return rows.map((row) => {
@@ -36,7 +41,7 @@ export function migrateDualGrammars(rows: AnalysisRow[], itemPaths: string[]): A
     let grammar = row.grammar;
     let answer_grammar = row.answer_grammar ?? null;
 
-    if (!requiresInteractiveNode(slots, slot, itemPaths)) {
+    if (!requiresInteractiveNode(slots, slot, itemPaths, categories)) {
       return { ...row, answer_grammar: null };
     }
 

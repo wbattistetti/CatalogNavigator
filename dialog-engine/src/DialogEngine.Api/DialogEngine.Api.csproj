@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DialogEngine.Api</RootNamespace>
+    <Description>HTTP host for VB DialogEngine — debug Test Motore chat from Visual Studio.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DialogEngine\DialogEngine.vbproj" />
+  </ItemGroup>
+
+</Project>

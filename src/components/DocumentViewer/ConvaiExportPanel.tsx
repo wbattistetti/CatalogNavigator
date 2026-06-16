@@ -4,31 +4,55 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, Mic, X } from 'lucide-react';
+import { ConvaiDeployForm } from './ConvaiDeployForm';
+import { compileAgentBundle, serializeAgentBundle } from '../../lib/compileAgentBundle';
 import { buildConvaiFullExport } from '../../lib/convaiExport';
+import { buildStructuredConvaiFullExport } from '../../lib/convaiStructuredExport';
 import type { Analysis } from '../../lib/analysisTypes';
+import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
 import type { TokenDictionary } from '../../lib/tokenDictionary';
 
-type ConvaiTabId = 'prompt' | 'ontology' | 'dictionary' | 'unified';
+type ConvaiTabId =
+  | 'prompt'
+  | 'ontology'
+  | 'dictionary'
+  | 'unified'
+  | 'structuredKb'
+  | 'structuredPrompt'
+  | 'agentBundle'
+  | 'deploy';
 
 const TABS: { id: ConvaiTabId; label: string }[] = [
-  { id: 'prompt', label: 'System prompt' },
+  { id: 'deploy', label: 'Deploy ConvAI' },
+  { id: 'agentBundle', label: 'Agent bundle' },
+  { id: 'structuredKb', label: 'KB strutturata' },
+  { id: 'structuredPrompt', label: 'Prompt strutturato' },
+  { id: 'prompt', label: 'System prompt (JSON)' },
   { id: 'ontology', label: 'Ontologia' },
   { id: 'dictionary', label: 'Dizionario' },
   { id: 'unified', label: 'KB unificato' },
 ];
 
 const TAB_HINTS: Record<ConvaiTabId, string> = {
-  prompt: 'Incolla nel campo System prompt dell\'agente Convai.',
+  deploy: 'Crea o aggiorna agente ElevenLabs con tool webhook agent_dialog_step (gateway :3110 + ngrok).',
+  agentBundle:
+    'Bundle runtime per backend: corpus segmentato + vincoli compilati. Preview da memoria; publish su Supabase. Matching solo su slot categoria+token.',
+  structuredKb: 'Carica come documento testuale knowledge base (blocchi ITEM + categorie).',
+  structuredPrompt:
+    'Incolla nel System prompt Convai (sostituisci tutto). Dopo ogni turno deve comparire ---PARSED--- nel transcript; se manca, ricopia il prompt aggiornato.',
+  prompt: 'Incolla nel campo System prompt dell\'agente Convai (export JSON).',
   ontology: 'Carica come documento knowledge base (ontologia prestazioni).',
   dictionary: 'Carica come documento knowledge base (vocabolario token).',
   unified: 'Carica come unico documento JSON (dizionario + ontologia).',
 };
 
 export interface ConvaiExportPanelProps {
+  documentId: string;
   documentName: string;
   dictionary: TokenDictionary;
   descriptions: string[];
   analysis: Analysis | null;
+  loadedRefs?: LoadedDictionaryRef[];
   dictionaryDirty?: boolean;
   analysisDirty?: boolean;
   pathsOutOfSync?: boolean;
@@ -36,39 +60,78 @@ export interface ConvaiExportPanelProps {
 }
 
 export function ConvaiExportPanel({
+  documentId,
   documentName,
   dictionary,
   descriptions,
   analysis,
+  loadedRefs,
   dictionaryDirty,
   analysisDirty,
   pathsOutOfSync,
   onClose,
 }: ConvaiExportPanelProps) {
-  const [activeTab, setActiveTab] = useState<ConvaiTabId>('prompt');
+  const [activeTab, setActiveTab] = useState<ConvaiTabId>('deploy');
   const [copiedTab, setCopiedTab] = useState<ConvaiTabId | null>(null);
 
+  const exportInput = useMemo(() => ({
+    documentName,
+    dictionary,
+    descriptions,
+    analysis,
+    loadedRefs,
+    dictionaryDirty,
+    analysisDirty,
+    pathsOutOfSync,
+  }), [documentName, dictionary, descriptions, analysis, loadedRefs, dictionaryDirty, analysisDirty, pathsOutOfSync]);
+
   const exportData = useMemo(
-    () => buildConvaiFullExport({
-      documentName,
-      dictionary,
-      descriptions,
-      analysis,
-      dictionaryDirty,
-      analysisDirty,
-      pathsOutOfSync,
-    }),
-    [documentName, dictionary, descriptions, analysis, dictionaryDirty, analysisDirty, pathsOutOfSync],
+    () => buildConvaiFullExport(exportInput),
+    [exportInput],
   );
 
-  const tabContent: Record<ConvaiTabId, string> = useMemo(() => ({
+  const structuredExport = useMemo(
+    () => buildStructuredConvaiFullExport(exportInput),
+    [exportInput],
+  );
+
+  const agentBundleExport = useMemo(() => {
+    if (!analysis) {
+      return { json: '{\n  "error": "Analisi ontologia mancante"\n}', warnings: [] as string[] };
+    }
+    try {
+      const bundle = compileAgentBundle({
+        ...exportInput,
+        mode: 'preview',
+      });
+      return { json: serializeAgentBundle(bundle), warnings: bundle.meta.warnings };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { json: `{\n  "error": ${JSON.stringify(message)}\n}`, warnings: [] as string[] };
+    }
+  }, [exportInput, analysis]);
+
+  const tabContent: Record<Exclude<ConvaiTabId, 'deploy'>, string> = useMemo(() => ({
+    agentBundle: agentBundleExport.json,
+    structuredKb: structuredExport.structuredKbText,
+    structuredPrompt: structuredExport.structuredSystemPrompt,
     prompt: exportData.systemPrompt,
     ontology: exportData.ontologyJson,
     dictionary: exportData.dictionaryJson,
     unified: exportData.unifiedKbJson,
-  }), [exportData]);
+  }), [exportData, structuredExport, agentBundleExport.json]);
+
+  const allWarnings = useMemo(
+    () => [...new Set([
+      ...exportData.warnings,
+      ...structuredExport.warnings,
+      ...agentBundleExport.warnings,
+    ])],
+    [exportData.warnings, structuredExport.warnings, agentBundleExport.warnings],
+  );
 
   const copyTab = useCallback(async (tab: ConvaiTabId) => {
+    if (tab === 'deploy') return;
     const text = tabContent[tab];
     await navigator.clipboard.writeText(text);
     setCopiedTab(tab);
@@ -114,13 +177,21 @@ export function ConvaiExportPanel({
           </button>
         </div>
 
-        {exportData.warnings.length > 0 && (
+        {allWarnings.length > 0 && (
           <div className="flex-shrink-0 px-4 py-2 border-b border-amber-400/20 bg-amber-400/5">
             <ul className="font-mono text-[10px] text-amber-200/90 space-y-0.5">
-              {exportData.warnings.map((w) => (
+              {allWarnings.map((w) => (
                 <li key={w}>• {w}</li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {(activeTab === 'structuredKb' || activeTab === 'structuredPrompt') && structuredExport.itemCount > 0 && (
+          <div className="flex-shrink-0 px-4 py-1.5 border-b border-violet-400/15 bg-violet-400/5">
+            <p className="font-mono text-[10px] text-violet-200/80">
+              KB strutturata: {structuredExport.itemCount} ITEM esportati
+            </p>
           </div>
         )}
 
@@ -145,8 +216,9 @@ export function ConvaiExportPanel({
           <p className="font-mono text-[10px] text-emerald-400/50">{TAB_HINTS[activeTab]}</p>
           <button
             type="button"
+            disabled={activeTab === 'deploy'}
             onClick={() => void copyTab(activeTab)}
-            className="flex items-center gap-1.5 px-2.5 py-1 font-mono text-[10px] rounded border border-sky-400/35 text-sky-200/90 hover:bg-sky-400/10 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 font-mono text-[10px] rounded border border-sky-400/35 text-sky-200/90 hover:bg-sky-400/10 transition-colors disabled:opacity-30"
           >
             {copiedTab === activeTab ? (
               <>
@@ -162,9 +234,25 @@ export function ConvaiExportPanel({
           </button>
         </div>
 
-        <pre className="flex-1 min-h-0 overflow-auto px-4 py-3 font-mono text-[11px] leading-relaxed text-emerald-100/90 whitespace-pre-wrap break-words">
-          {tabContent[activeTab]}
-        </pre>
+        {activeTab === 'deploy' ? (
+          <div className="flex-1 min-h-0 overflow-auto px-4 py-3">
+            <ConvaiDeployForm
+              documentId={documentId}
+              documentName={documentName}
+              dictionary={dictionary}
+              descriptions={descriptions}
+              analysis={analysis}
+              loadedRefs={loadedRefs}
+              dictionaryDirty={dictionaryDirty}
+              analysisDirty={analysisDirty}
+              pathsOutOfSync={pathsOutOfSync}
+            />
+          </div>
+        ) : (
+          <pre className="flex-1 min-h-0 overflow-auto px-4 py-3 font-mono text-[11px] leading-relaxed text-emerald-100/90 whitespace-pre-wrap break-words">
+            {tabContent[activeTab]}
+          </pre>
+        )}
       </div>
     </div>,
     document.body,

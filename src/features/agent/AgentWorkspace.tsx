@@ -17,6 +17,8 @@ export function AgentWorkspace() {
     setTestOpen,
     convaiOpen,
     setConvaiOpen,
+    convaiNoBeOpen,
+    setConvaiNoBeOpen,
     dictState,
     agentNeedsUpdate,
     leafDescriptionMap,
@@ -28,6 +30,8 @@ export function AgentWorkspace() {
     setGrammarOverwrite,
     grammarTokens,
     handleTokenGrammarSaved,
+    pathOrderingCategories,
+    liveLoadedRefs,
   } = useDocumentEditor();
 
   const { generateMessagesOnly } = analysisApi;
@@ -50,9 +54,12 @@ export function AgentWorkspace() {
       onTestOpenChange={setTestOpen}
       convaiOpen={convaiOpen}
       onConvaiOpenChange={setConvaiOpen}
+      convaiNoBeOpen={convaiNoBeOpen}
+      onConvaiNoBeOpenChange={setConvaiNoBeOpen}
       convaiExportContext={{
         dictionary: agentDictionaryContext?.dictionary ?? null,
         descriptions: agentDictionaryContext?.descriptions ?? [],
+        loadedRefs: liveLoadedRefs,
         dictionaryDirty: dictState?.dirty ?? false,
         pathsOutOfSync: agentNeedsUpdate,
       }}
@@ -65,6 +72,7 @@ export function AgentWorkspace() {
       onGrammarOverwriteChange={setGrammarOverwrite}
       grammarTokens={grammarTokens}
       onTokenGrammarSaved={handleTokenGrammarSaved}
+      pathOrderingCategories={pathOrderingCategories}
     />
   );
 }

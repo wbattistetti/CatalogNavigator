@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/DialogEngine/DialogEngine.vbproj" />
+  <Project Path="src/DialogEngine.Api/DialogEngine.Api.csproj" />
+  <Project Path="tests/DialogEngine.Tests/DialogEngine.Tests.vbproj" />
+</Solution>

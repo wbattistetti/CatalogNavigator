@@ -2,6 +2,7 @@
  * Post-processes raw OpenAI JSON into validated analysis rows.
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
+import type { TokenCategory } from './dictionaryTree';
 import {
   expandLeafPathsToTree,
   getRowBySlot,
@@ -39,8 +40,11 @@ export function extractSlotsFromAiRows(rows: unknown[]): string[] {
 }
 
 /** Converts slot paths to taxonomy-only rows (no NLU fields). */
-export function toTaxonomyRows(slots: string[]): AnalysisRow[] {
-  return orderSlotsDepthFirst(slots).map((slot_filling) => ({
+export function toTaxonomyRows(
+  slots: string[],
+  categories?: TokenCategory[],
+): AnalysisRow[] {
+  return orderSlotsDepthFirst(slots, categories).map((slot_filling) => ({
     slot_filling,
     question: null,
     grammar: null,
@@ -58,8 +62,9 @@ function validateInternalNode(
   slot: string,
   row: AnalysisRow,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): void {
-  if (!requiresInteractiveNode(slots, slot, itemPathsInput)) return;
+  if (!requiresInteractiveNode(slots, slot, itemPathsInput, categories)) return;
   if (!row.question?.trim()) throw new Error(`Domanda mancante per nodo interno: ${slot}`);
   if (!row.grammar?.regex?.trim()) throw new Error(`Grammatica mancante per nodo interno: ${slot}`);
   if (!row.grammar.mappings || Object.keys(row.grammar.mappings).length === 0) {
@@ -155,9 +160,14 @@ function matchAiRow(
   );
 }
 
-function isMessageFreeNode(slots: string[], slot: string, itemPathsInput?: string[] | null): boolean {
+function isMessageFreeNode(
+  slots: string[],
+  slot: string,
+  itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
+): boolean {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  return isPassthroughNode(slots, slot, itemPaths) || isTerminalItemSlot(slot, itemPaths);
+  return isPassthroughNode(slots, slot, itemPaths, categories) || isTerminalItemSlot(slot, itemPaths);
 }
 
 /** Maps AI rows onto the exact input slots. Throws if any slot or required field is missing. */
@@ -165,6 +175,7 @@ export function assembleRegenRows(
   slots: string[],
   aiRows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const { byExact, byNormalized } = indexAiRows(aiRows);
 
@@ -172,7 +183,7 @@ export function assembleRegenRows(
     const matched = matchAiRow(slot, byExact, byNormalized);
     if (!matched) throw new Error(`Slot mancante nella risposta AI: ${slot}`);
 
-    if (isMessageFreeNode(slots, slot, itemPathsInput)) {
+    if (isMessageFreeNode(slots, slot, itemPathsInput, categories)) {
       return {
         slot_filling: slot,
         question: null,
@@ -186,7 +197,7 @@ export function assembleRegenRows(
       };
     }
 
-    validateInternalNode(slots, slot, matched, itemPathsInput);
+    validateInternalNode(slots, slot, matched, itemPathsInput, categories);
     return { ...matched, slot_filling: slot, status: null };
   });
 }
@@ -217,12 +228,15 @@ export interface TaxonomyBuildResult {
 }
 
 /** Builds tree rows and corpus item paths from compact catalog leaf paths. */
-export function buildTaxonomyFromItemPaths(itemPathInputs: string[]): TaxonomyBuildResult {
-  const item_paths = normalizeItemPaths(itemPathInputs);
+export function buildTaxonomyFromItemPaths(
+  itemPathInputs: string[],
+  categories?: TokenCategory[],
+): TaxonomyBuildResult {
+  const item_paths = normalizeItemPaths(itemPathInputs, categories);
   if (item_paths.length === 0) throw new Error('Nessun path item');
-  const allSlots = expandLeafPathsToTree(item_paths);
+  const allSlots = expandLeafPathsToTree(item_paths, categories);
   if (allSlots.length === 0) throw new Error('Espansione albero fallita');
-  return { rows: toTaxonomyRows(allSlots), item_paths };
+  return { rows: toTaxonomyRows(allSlots, categories), item_paths };
 }
 
 export function processTaxonomyAiResponse(rawRows: unknown[]): TaxonomyBuildResult {
@@ -239,16 +253,17 @@ export function assembleMessagesRows(
   slots: string[],
   aiRows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const { byExact, byNormalized } = indexAiRows(aiRows);
 
   return slots.map((slot) => {
-    if (isMessageFreeSlot(slots, slot, itemPathsInput)) {
+    if (isMessageFreeSlot(slots, slot, itemPathsInput, categories)) {
       return buildMessageFreeRow(slot);
     }
 
     const matched = matchAiRow(slot, byExact, byNormalized);
-    const fallback = buildInteractiveMessageFallback(slots, slot, itemPathsInput);
+    const fallback = buildInteractiveMessageFallback(slots, slot, itemPathsInput, categories);
 
     const row = ensureInteractiveNoMatch({
       slot_filling: slot,
@@ -294,13 +309,14 @@ export function processNluAiResponse(
   slots: string[],
   rawRows: unknown[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const aiRows = rawRows
     .map((r) => normalizeAiRow(r as Record<string, unknown>))
     .filter((r): r is AnalysisRow => r !== null);
 
-  const assembled = normalizeGrammarRows(assembleRegenRows(slots, aiRows, itemPathsInput));
-  return applyNluQuestionRules(slots, assembled, itemPathsInput);
+  const assembled = normalizeGrammarRows(assembleRegenRows(slots, aiRows, itemPathsInput, categories));
+  return applyNluQuestionRules(slots, assembled, itemPathsInput, categories);
 }
 
 /**
@@ -310,9 +326,10 @@ export function processNluAiResponse(
 export function applyDeterministicMessagesLayer(
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const slots = rows.map((r) => r.slot_filling);
-  const messages = processMessagesAiResponse(slots, [], itemPathsInput);
+  const messages = processMessagesAiResponse(slots, [], itemPathsInput, categories);
   const bySlot = indexRowsBySlot(messages);
   return rows.map((row) => {
     const msg = getRowBySlot(bySlot, row.slot_filling);
@@ -332,13 +349,14 @@ export function processMessagesAiResponse(
   slots: string[],
   rawRows: unknown[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const aiRows = rawRows
     .map((r) => normalizeAiRow(r as Record<string, unknown>))
     .filter((r): r is AnalysisRow => r !== null);
 
-  const assembled = assembleMessagesRows(slots, aiRows, itemPathsInput);
-  return applyNluQuestionRules(slots, assembled, itemPathsInput);
+  const assembled = assembleMessagesRows(slots, aiRows, itemPathsInput, categories);
+  return applyNluQuestionRules(slots, assembled, itemPathsInput, categories);
 }
 
 /** Processes grammars-only AI response. */

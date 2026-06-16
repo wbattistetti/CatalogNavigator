@@ -1,128 +1,95 @@
 /**
- * Rule-based grammar generation: recognition grammars live on tokens;
- * answer grammars stay on interactive tree nodes.
+ * Rule-based grammar generation: one recognition grammar per dictionary category.
+ * Tree node grammars (grammar / answer_grammar) are no longer generated.
  */
-import type { AnalysisRow, GrammarEntry } from '../hooks/useAnalysis';
-import { validateGrammarRegex } from './grammarNormalize';
-import {
-  buildInteractivePanels,
-  compileInteractiveGrammar,
-  seedDefaultPanels,
-} from './grammarSynonyms';
-import { resolveItemPaths } from './itemPaths';
-import { requiresInteractiveNode } from './nluQuestionRules';
-import {
-  applyTemplateGrammarsToTokens,
-  syncRowGrammarsFromTokens,
-} from './tokenGrammar';
+import type { AnalysisRow } from '../hooks/useAnalysis';
+import type { TokenCategory } from './dictionaryTree';
+import { applyCategoryGrammars } from './categoryGrammar';
 import type { TokenEntry } from './tokenDictionary';
 
-function isAnswerGrammarComplete(row: AnalysisRow): boolean {
-  return !!(
-    row.answer_grammar?.regex?.trim()
-    && row.answer_grammar.mappings
-    && Object.keys(row.answer_grammar.mappings).length > 0
-  );
-}
-
-function buildAnswerGrammarForSlot(
-  slot: string,
-  slots: string[],
-  itemPaths: string[],
-): GrammarEntry | null {
-  if (!requiresInteractiveNode(slots, slot, itemPaths)) return null;
-  let panels = buildInteractivePanels(slot, slots, itemPaths);
-  panels = seedDefaultPanels(panels, slot);
-  return compileInteractiveGrammar(panels);
-}
-
-function shouldReplaceAnswerGrammar(
-  row: AnalysisRow,
-  slots: string[],
-  itemPaths: string[],
-  overwriteExisting: boolean,
-): boolean {
-  if (!requiresInteractiveNode(slots, row.slot_filling, itemPaths)) return false;
-  if (overwriteExisting) return true;
-  if (!isAnswerGrammarComplete(row)) return true;
-  const validation = validateGrammarRegex(
-    row.answer_grammar!.regex,
-    row.answer_grammar!.mappings,
-  );
-  return !validation.valid;
-}
-
-function applyAnswerGrammarToRow(
-  row: AnalysisRow,
-  slots: string[],
-  itemPaths: string[],
-  overwriteExisting: boolean,
-): AnalysisRow {
-  if (!shouldReplaceAnswerGrammar(row, slots, itemPaths, overwriteExisting)) {
-    if (!requiresInteractiveNode(slots, row.slot_filling, itemPaths)) {
-      return { ...row, answer_grammar: null };
-    }
-    return row;
-  }
-  return {
+/** Clears legacy node-level grammars from analysis rows. */
+export function clearRowGrammars(rows: AnalysisRow[]): AnalysisRow[] {
+  return rows.map((row) => ({
     ...row,
-    answer_grammar: buildAnswerGrammarForSlot(row.slot_filling, slots, itemPaths),
-    status: row.status ?? null,
-  };
+    grammar: null,
+    answer_grammar: null,
+  }));
 }
 
-/** Applies answer grammars to interactive nodes only. */
-export function applyAnswerGrammarsToRows(
-  rows: AnalysisRow[],
-  overwriteExisting = false,
-  itemPathsInput?: string[] | null,
-): AnalysisRow[] {
-  const slots = rows.map((r) => r.slot_filling);
-  const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  return rows.map((row) => applyAnswerGrammarToRow(row, slots, itemPaths, overwriteExisting));
+export interface CategoryGrammarGenerationResult {
+  rows: AnalysisRow[];
+  tokens: TokenEntry[];
+  categories: TokenCategory[];
 }
 
 /**
- * Fills token grammars then syncs rows (recognition) and applies answer grammars (nodes).
+ * Compiles category grammars from token synonym data and clears node grammars.
  */
+export function applyCategoryGrammarsWithTokens(
+  rows: AnalysisRow[],
+  tokens: TokenEntry[],
+  overwriteExisting = false,
+  _itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
+): CategoryGrammarGenerationResult {
+  const nextCategories = applyCategoryGrammars(categories ?? [], tokens, overwriteExisting);
+  return {
+    rows: clearRowGrammars(rows),
+    tokens,
+    categories: nextCategories,
+  };
+}
+
+/** @deprecated Use applyCategoryGrammarsWithTokens. */
 export function applyTemplateGrammarsWithTokens(
   rows: AnalysisRow[],
   tokens: TokenEntry[],
   overwriteExisting = false,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): { rows: AnalysisRow[]; tokens: TokenEntry[] } {
-  const nextTokens = applyTemplateGrammarsToTokens(tokens, overwriteExisting);
-  let nextRows = syncRowGrammarsFromTokens(rows, nextTokens);
-  nextRows = applyAnswerGrammarsToRows(nextRows, overwriteExisting, itemPathsInput);
-  return { rows: nextRows, tokens: nextTokens };
+  const result = applyCategoryGrammarsWithTokens(
+    rows, tokens, overwriteExisting, itemPathsInput, categories,
+  );
+  return { rows: result.rows, tokens: result.tokens };
 }
 
-/** @deprecated Use applyTemplateGrammarsWithTokens when dictionary is available. */
+/** @deprecated Category grammars replace per-node answer grammars. */
+export function applyAnswerGrammarsToRows(
+  rows: AnalysisRow[],
+  _overwriteExisting = false,
+  _itemPathsInput?: string[] | null,
+  _categories?: TokenCategory[],
+): AnalysisRow[] {
+  return clearRowGrammars(rows);
+}
+
+/** @deprecated Use applyCategoryGrammarsWithTokens. */
 export function applyTemplateGrammars(
   rows: AnalysisRow[],
   overwriteExisting = false,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
-  return applyAnswerGrammarsToRows(rows, overwriteExisting, itemPathsInput);
+  return applyCategoryGrammarsWithTokens(rows, [], overwriteExisting, itemPathsInput, categories).rows;
 }
 
-/** @deprecated Use applyTemplateGrammarsWithTokens when dictionary is available. */
+/** @deprecated Use applyCategoryGrammarsWithTokens. */
 export function applyTemplateGrammarsToSlots(
   rows: AnalysisRow[],
   targetSlots: string[],
   overwriteExisting = false,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
-  const slots = rows.map((r) => r.slot_filling);
-  const itemPaths = resolveItemPaths(slots, itemPathsInput);
   const targets = new Set(targetSlots);
   return rows.map((row) => {
     if (!targets.has(row.slot_filling)) return row;
-    return applyAnswerGrammarToRow(row, slots, itemPaths, overwriteExisting);
+    return { ...row, grammar: null, answer_grammar: null };
   });
 }
 
-/** @deprecated Token grammars replace per-slot node templates. */
+/** @deprecated Use findCategoriesMissingGrammar from categoryGrammar. */
 export function countMissingTemplateGrammars(rows: AnalysisRow[]): number {
-  return rows.filter((r) => !r.grammar?.regex?.trim()).length;
+  return rows.filter((r) => r.grammar?.regex?.trim()).length;
 }

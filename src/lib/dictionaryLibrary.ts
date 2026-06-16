@@ -2,7 +2,7 @@
  * CRUD and project wiring for library / project-scoped dictionaries.
  */
 import type { TokenCategory } from './dictionaryTree';
-import { loadSavedCategories, syncCategoriesWithTokens } from './dictionaryTree';
+import { loadSavedCategories, normalizeCategoryType, syncCategoriesWithTokens } from './dictionaryTree';
 import {
   defaultIconForIndustry,
   validateDictionaryMeta,
@@ -57,7 +57,9 @@ function rowToDictionary(row: Record<string, unknown>): KbDictionary {
     project_id: row.project_id != null ? String(row.project_id) : null,
     icon_key: String(row.icon_key ?? 'BookOpen'),
     icon_color: String(row.icon_color ?? '#38bdf8'),
-    categories: Array.isArray(row.categories) ? (row.categories as TokenCategory[]) : [],
+    categories: loadSavedCategories(
+      { categories: Array.isArray(row.categories) ? (row.categories as TokenCategory[]) : [] },
+    ),
     tokens: Array.isArray(row.tokens) ? (row.tokens as TokenEntry[]) : [],
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
@@ -246,9 +248,15 @@ export async function updateDictionary(
       text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
     }));
     payload.categories = normalized.categories.map(({
-      id: catId, name, order, tokenTexts, iconKey, iconColor,
+      id: catId, name, order, tokenTexts, type, iconKey, iconColor,
     }) => ({
-      id: catId, name, order, tokenTexts, iconKey, iconColor,
+      id: catId,
+      name,
+      order,
+      tokenTexts,
+      type: normalizeCategoryType(type),
+      iconKey,
+      iconColor,
     }));
   }
 

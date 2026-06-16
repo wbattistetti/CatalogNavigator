@@ -7,8 +7,8 @@ export interface GrammarEntry {
   mappings: Record<string, string>;
 }
 
-/** Which inline grammar editor is open: node recognition vs question-answer routing. */
-export type GrammarEditMode = 'node' | 'answer';
+/** Which inline grammar editor is open: node, category recognition, or question-answer routing. */
+export type GrammarEditMode = 'node' | 'category' | 'answer';
 
 export interface GrammarEditTarget {
   slot: string;

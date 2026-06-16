@@ -20,8 +20,8 @@ export function serializeDictionarySnapshot(
     tokens: tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
       text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
     })),
-    categories: categories.map(({ id, name, order, tokenTexts }) => ({
-      id, name, order, tokenTexts,
+    categories: categories.map(({ id, name, order, tokenTexts, type }) => ({
+      id, name, order, tokenTexts, type,
     })),
   });
 }

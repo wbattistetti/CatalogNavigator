@@ -3,7 +3,13 @@
  * Categories are UI/ordering metadata only — they do not prefix paths.
  */
 import { enrichCategoryIcons } from './categoryIconCatalog';
+import type { VincoloResolutionPipeline } from './vincoloResolutionPipeline';
 import type { TokenEntry } from './tokenDictionary';
+
+/** Catalog dimension (disambiguation) vs eligibility constraint (e.g. age rules). */
+export type CategoryType = 'attributo' | 'vincolo';
+
+export const DEFAULT_CATEGORY_TYPE: CategoryType = 'attributo';
 
 export interface TokenCategory {
   id: string;
@@ -12,10 +18,80 @@ export interface TokenCategory {
   order: number;
   /** Token phrases assigned to this category (display order within category). */
   tokenTexts: string[];
+  /**
+   * attributo = catalog dimension (specialty, exam, body part…).
+   * vincolo = eligibility rule (e.g. age band) — not a user choice among siblings.
+   */
+  type?: CategoryType;
+  /** Recognition grammar: one group per canonical value in this category. */
+  grammar?: GrammarEntry | null;
+  /** Vincolo only: resolution pipeline executed by VB at runtime (value + unit). */
+  resolution?: VincoloResolutionPipeline | null;
+  /** Vincolo only: expected normalized value kind for catalog filtering. */
+  valueKind?: 'age_years' | null;
   /** Lucide icon key (assigned once at category creation). */
   iconKey?: string;
   /** Glossy-console accent color (hex). */
   iconColor?: string;
+}
+
+/** Normalizes persisted category type; unknown values default to attributo. */
+export function normalizeCategoryType(type: string | undefined | null): CategoryType {
+  return type === 'vincolo' ? 'vincolo' : DEFAULT_CATEGORY_TYPE;
+}
+
+function normalizeCategoryNameForMatch(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ');
+}
+
+/** Heuristic: category names that denote eligibility constraints (e.g. age bands). */
+export function isLikelyConstraintCategoryName(name: string): boolean {
+  const n = normalizeCategoryNameForMatch(name);
+  if (!n) return false;
+  if (n.includes('vincol')) return true;
+  if (n.includes('prerequisit') || n.includes('requisit')) return true;
+  if (n.includes('fascia') && (n.includes('eta') || n.includes('anni'))) return true;
+  if (n === 'eta' || n.startsWith('eta ')) return true;
+  return false;
+}
+
+/**
+ * Category type for Convai structured KB export: explicit vincolo, else name heuristic
+ * (e.g. "fascia di età" → vincolo even before editor toggle is saved).
+ */
+export function resolveCategoryTypeForExport(
+  category: Pick<TokenCategory, 'name' | 'type'>,
+): CategoryType {
+  if (normalizeCategoryType(category.type) === 'vincolo') return 'vincolo';
+  if (isLikelyConstraintCategoryName(category.name)) return 'vincolo';
+  return DEFAULT_CATEGORY_TYPE;
+}
+
+/** Category semantic type for a token (uncategorized → attributo). */
+export function getCategoryTypeForToken(
+  tokenText: string,
+  categories: TokenCategory[],
+): CategoryType {
+  const id = getCategoryIdForToken(tokenText, categories);
+  if (!id) return DEFAULT_CATEGORY_TYPE;
+  const cat = categories.find((c) => c.id === id);
+  return normalizeCategoryType(cat?.type);
+}
+
+/** Updates the semantic type of one category. */
+export function setCategoryType(
+  categories: TokenCategory[],
+  categoryId: string,
+  type: CategoryType,
+): TokenCategory[] {
+  return categories.map((cat) =>
+    cat.id === categoryId ? { ...cat, type: normalizeCategoryType(type) } : cat,
+  );
 }
 
 export interface DictionaryLayout {
@@ -46,11 +122,16 @@ function newCategoryId(): string {
   return `cat_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Normalizes category list so order is 0..n-1 without gaps. */
+/** Sorts by `order` then renumbers 0..n-1. */
 export function normalizeCategoryOrders(categories: TokenCategory[]): TokenCategory[] {
   return [...categories]
     .sort((a, b) => a.order - b.order)
     .map((cat, index) => ({ ...cat, order: index }));
+}
+
+/** Renumbers `order` to match the current array sequence (no sort). */
+export function renumberCategoryOrders(categories: TokenCategory[]): TokenCategory[] {
+  return categories.map((cat, index) => ({ ...cat, order: index }));
 }
 
 /** Returns category id containing this token text, or null if at root. */
@@ -86,9 +167,23 @@ export function getCategorySortOrder(
   return cat?.order ?? UNCATEGORIZED_SORT_ORDER;
 }
 
+/** Compares two path tokens by category.order (vincolo uses the same order as attributo), then label. */
+export function compareTokenSegmentOrder(
+  tokenA: string,
+  tokenB: string,
+  categories: TokenCategory[],
+): number {
+  const ordered = normalizeCategoryOrders(categories);
+  const orderA = getCategorySortOrder(tokenA, ordered);
+  const orderB = getCategorySortOrder(tokenB, ordered);
+  if (orderA !== orderB) return orderA - orderB;
+
+  return localeSort(tokenA, tokenB);
+}
+
 /**
- * Reorders matched segments by category order, then text position within same category.
- * Uncategorized tokens are placed last (still sorted by text position among themselves).
+ * Reorders matched segments by category.order (vincolo included); uncategorized last.
+ * Within the same category order, preserves text position in the source phrase.
  */
 export function orderSegmentsByCategories(
   matches: SegmentMatch[],
@@ -96,9 +191,8 @@ export function orderSegmentsByCategories(
 ): string[] {
   if (matches.length === 0) return [];
   const sorted = [...matches].sort((a, b) => {
-    const orderA = getCategorySortOrder(a.text, categories);
-    const orderB = getCategorySortOrder(b.text, categories);
-    if (orderA !== orderB) return orderA - orderB;
+    const byCategory = compareTokenSegmentOrder(a.text, b.text, categories);
+    if (byCategory !== 0) return byCategory;
     return a.wordStartIndex - b.wordStartIndex;
   });
   return sorted.map((m) => m.text);
@@ -173,23 +267,29 @@ export function addTokenToCategorySorted(
   );
 }
 
-/** Reorders a category to a new index in the normalized list. */
+/**
+ * Reorders a category to a new insertion slot (0..length).
+ * Slot N inserts before the category currently at index N; length appends at end.
+ */
 export function reorderCategoryToIndex(
   categories: TokenCategory[],
   categoryId: string,
-  targetIndex: number,
+  insertionIndex: number,
 ): TokenCategory[] {
   const sorted = normalizeCategoryOrders(categories);
   const fromIndex = sorted.findIndex((c) => c.id === categoryId);
   if (fromIndex < 0) return sorted;
 
-  const clamped = Math.max(0, Math.min(targetIndex, sorted.length - 1));
-  if (fromIndex === clamped) return sorted;
+  const insertion = Math.max(0, Math.min(insertionIndex, sorted.length));
+  if (insertion === fromIndex) return sorted;
 
   const next = [...sorted];
   const [moved] = next.splice(fromIndex, 1);
-  next.splice(clamped, 0, moved!);
-  return normalizeCategoryOrders(next);
+  let toIndex = insertion;
+  if (fromIndex < insertion) toIndex -= 1;
+  toIndex = Math.max(0, Math.min(toIndex, next.length));
+  next.splice(toIndex, 0, moved!);
+  return renumberCategoryOrders(next);
 }
 
 /** Creates a category; selected tokens are moved into it. */
@@ -205,7 +305,13 @@ export function createCategoryWithTokens(
   const order = next.length;
   const id = newCategoryId();
   const unique = [...new Set(tokenTexts)];
-  const withIcon = enrichCategoryIcons({ id, name: trimmed, order, tokenTexts: unique });
+  const withIcon = enrichCategoryIcons({
+    id,
+    name: trimmed,
+    order,
+    tokenTexts: unique,
+    type: DEFAULT_CATEGORY_TYPE,
+  });
   next = [...next, withIcon];
   return normalizeCategoryOrders(next);
 }
@@ -309,6 +415,7 @@ export function loadSavedCategories(
       name: cat.name?.trim() || 'Categoria',
       order: typeof cat.order === 'number' ? cat.order : 0,
       tokenTexts: Array.isArray(cat.tokenTexts) ? [...cat.tokenTexts] : [],
+      type: normalizeCategoryType(cat.type),
       iconKey: cat.iconKey,
       iconColor: cat.iconColor,
     })),

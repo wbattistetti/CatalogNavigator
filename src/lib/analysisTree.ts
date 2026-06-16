@@ -2,12 +2,14 @@
  * Tree utilities for slot-filling analysis rows (ordering, merge, validation).
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
-import { validateGrammarRegex } from './grammarNormalize';
+import { compareTokenSegmentOrder, type TokenCategory } from './dictionaryTree';
+import { findCategoriesMissingGrammar, isCategoryGrammarsLayerReady } from './categoryGrammar';
 import {
   isPrefixAmbiguityNode,
   isTerminalItemSlot,
   resolveItemPaths,
 } from './itemPaths';
+import { requiresCategoryAwareInteractiveNode, getSiblingChoiceChildren } from './nluCategoryRules';
 
 /** Unicode dash variants (e.g. pet‑tc from Word/PDF) → ASCII hyphen. */
 const UNICODE_DASHES = /[\u2010\u2011\u2012\u2013\u2014\u2212]/g;
@@ -68,6 +70,37 @@ export function getRowBySlot(rowsBySlot: Map<string, AnalysisRow>, slot: string)
   return rowsBySlot.get(slot) ?? rowsBySlot.get(normalizeSlotKey(slot));
 }
 
+function lastPathSegment(slot: string): string {
+  const parts = slot.split('.');
+  return parts[parts.length - 1] ?? slot;
+}
+
+const localeSortSlots = (a: string, b: string) => a.localeCompare(b, 'it');
+
+/**
+ * Compares sibling slots for tree display: category tier/order on the last segment, then path.
+ * Falls back to alphabetical when categories are missing.
+ */
+export function compareSiblingSlots(
+  slotA: string,
+  slotB: string,
+  categories?: TokenCategory[],
+): number {
+  if (categories?.length) {
+    const byCategory = compareTokenSegmentOrder(
+      lastPathSegment(slotA),
+      lastPathSegment(slotB),
+      categories,
+    );
+    if (byCategory !== 0) return byCategory;
+  }
+  return localeSortSlots(slotA, slotB);
+}
+
+function sortSiblingSlots(slots: string[], categories?: TokenCategory[]): string[] {
+  return [...slots].sort((a, b) => compareSiblingSlots(a, b, categories));
+}
+
 /** Returns direct child slot paths of a parent within a slot list. */
 export function getDirectChildSlots(slots: string[], parentSlot: string): string[] {
   const prefix = parentSlot ? `${parentSlot}.` : '';
@@ -85,10 +118,13 @@ export function isLeafSlot(slots: string[], slot: string): boolean {
 }
 
 /** Root slots used for incremental NLU generation (forest roots, or first-level children if single mega-root). */
-export function getAgentGenerationRoots(slots: string[]): string[] {
-  const forest = getDirectChildSlots(slots, '').sort((a, b) => a.localeCompare(b, 'it'));
+export function getAgentGenerationRoots(
+  slots: string[],
+  categories?: TokenCategory[],
+): string[] {
+  const forest = sortSiblingSlots(getDirectChildSlots(slots, ''), categories);
   if (forest.length !== 1) return forest;
-  const children = getDirectChildSlots(slots, forest[0]!).sort((a, b) => a.localeCompare(b, 'it'));
+  const children = sortSiblingSlots(getDirectChildSlots(slots, forest[0]!), categories);
   return children.length > 1 ? children : forest;
 }
 
@@ -106,8 +142,11 @@ function formatRootOptionsList(labels: string[]): string {
  * Builds the global opening question that disambiguates among forest root nodes.
  * Used as start_question — separate from per-node questions in the tree.
  */
-export function buildDefaultStartQuestion(slots: string[]): string {
-  const roots = getAgentGenerationRoots(slots);
+export function buildDefaultStartQuestion(
+  slots: string[],
+  categories?: TokenCategory[],
+): string {
+  const roots = getAgentGenerationRoots(slots, categories);
   const labels = roots.map((r) => humanizeSegment(lastPathSegment(r)));
   if (labels.length === 0) {
     return 'Buongiorno, quale esame o prestazione desidera prenotare?';
@@ -142,8 +181,11 @@ export function collectDirectChildSlots(rows: AnalysisRow[], parentSlot: string)
 }
 
 /** Sorts rows in tree order (parents before children). */
-export function sortAnalysisRows(rows: AnalysisRow[]): AnalysisRow[] {
-  const slots = sortSlotsTreeOrder(rows.map((r) => r.slot_filling));
+export function sortAnalysisRows(
+  rows: AnalysisRow[],
+  categories?: TokenCategory[],
+): AnalysisRow[] {
+  const slots = sortSlotsTreeOrder(rows.map((r) => r.slot_filling), categories);
   const bySlot = new Map(rows.map((r) => [r.slot_filling, r]));
   return slots.map((s) => {
     const row = bySlot.get(s);
@@ -348,25 +390,28 @@ export function isInteractiveMessageSlot(
   slots: string[],
   slot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  if (isTerminalItemSlot(slot, itemPaths)) return false;
-  const children = getDirectChildSlots(slots, slot);
-  if (children.length >= 2) return true;
-  if (isPrefixAmbiguityNode(slots, slot, itemPaths)) return true;
-  return false;
+  return requiresCategoryAwareInteractiveNode(slots, slot, itemPaths, categories);
 }
 
 /** Paths that require an AI (or fallback) disambiguation question. */
 export function getInteractiveMessageSlots(
   slots: string[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): string[] {
-  return slots.filter((s) => isInteractiveMessageSlot(slots, s, itemPathsInput));
+  return slots.filter((s) => isInteractiveMessageSlot(slots, s, itemPathsInput, categories));
 }
 
-function isInteractiveSlot(slots: string[], slot: string, itemPathsInput?: string[] | null): boolean {
-  return isInteractiveMessageSlot(slots, slot, itemPathsInput);
+function isInteractiveSlot(
+  slots: string[],
+  slot: string,
+  itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
+): boolean {
+  return isInteractiveMessageSlot(slots, slot, itemPathsInput, categories);
 }
 
 /** Returns internal nodes that are missing required NLU fields. */
@@ -374,8 +419,9 @@ export function findInvalidInternalNodes(
   slots: string[],
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): string[] {
-  return findInvalidMessagesNodes(slots, rows, itemPathsInput);
+  return findInvalidMessagesNodes(slots, rows, itemPathsInput, categories);
 }
 
 /** Returns interactive nodes missing questions or re-prompts. */
@@ -383,11 +429,12 @@ export function findInvalidMessagesNodes(
   slots: string[],
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): string[] {
   const bySlot = indexRowsBySlot(rows);
   const invalid: string[] = [];
   for (const slot of slots) {
-    if (!isInteractiveSlot(slots, slot, itemPathsInput)) continue;
+    if (!isInteractiveSlot(slots, slot, itemPathsInput, categories)) continue;
     const row = getRowBySlot(bySlot, slot);
     if (!row?.question?.trim()
       || !row.no_match_1?.trim()
@@ -404,9 +451,11 @@ export function getGrammarTargetSlots(
   subtreeSlots: string[],
   rows: AnalysisRow[],
   overwriteExisting: boolean,
+  itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): string[] {
   if (overwriteExisting) return subtreeSlots;
-  return findInvalidGrammarNodes(subtreeSlots, rows);
+  return findInvalidGrammarNodes(subtreeSlots, rows, itemPathsInput, categories);
 }
 
 /** True when a row has an agent question message. */
@@ -414,37 +463,20 @@ export function rowHasMessage(row: AnalysisRow): boolean {
   return !!row.question?.trim();
 }
 
-/** Returns nodes missing or syntactically invalid node/answer grammars. */
+/** Returns attributo category names missing or with invalid grammars. */
+export function findInvalidCategoryGrammars(categories: TokenCategory[]): string[] {
+  return findCategoriesMissingGrammar(categories);
+}
+
+/** @deprecated Use findInvalidCategoryGrammars — node grammars are no longer used. */
 export function findInvalidGrammarNodes(
-  slots: string[],
-  rows: AnalysisRow[],
-  itemPathsInput?: string[] | null,
+  _slots: string[],
+  _rows: AnalysisRow[],
+  _itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): string[] {
-  const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const bySlot = indexRowsBySlot(rows);
-  const invalid: string[] = [];
-  for (const slot of slots) {
-    const row = getRowBySlot(bySlot, slot);
-    if (!row) {
-      invalid.push(slot);
-      continue;
-    }
-    const nodeOk = !!(
-      row.grammar?.regex?.trim()
-      && row.grammar.mappings
-      && Object.keys(row.grammar.mappings).length > 0
-      && validateGrammarRegex(row.grammar.regex, row.grammar.mappings).valid
-    );
-    const needsAnswer = isInteractiveSlot(slots, slot, itemPaths);
-    const answerOk = !needsAnswer || !!(
-      row.answer_grammar?.regex?.trim()
-      && row.answer_grammar.mappings
-      && Object.keys(row.answer_grammar.mappings).length > 0
-      && validateGrammarRegex(row.answer_grammar.regex, row.answer_grammar.mappings).valid
-    );
-    if (!nodeOk || !answerOk) invalid.push(slot);
-  }
-  return invalid;
+  if (!categories?.length) return ['categories'];
+  return findInvalidCategoryGrammars(categories);
 }
 
 /** True when at least one interactive node has a question (or multi-root start question). */
@@ -460,30 +492,14 @@ export function hasMessagesContent(
   );
 }
 
-/** True when all nodes have grammars and interactive nodes have messages (ready for test). */
-export function hasAgentContent(rows: AnalysisRow[]): boolean {
+/** True when category grammars and interactive messages are ready for agent test. */
+export function hasAgentContent(rows: AnalysisRow[], categories?: TokenCategory[]): boolean {
   const slots = rows.map((r) => r.slot_filling);
   if (slots.length === 0) return false;
+  if (categories?.length && !isCategoryGrammarsLayerReady(categories)) return false;
+
   const interactive = slots.filter((s) => isInteractiveSlot(slots, s));
   const bySlot = indexRowsBySlot(rows);
-  const itemPaths = resolveItemPaths(slots);
-  const allGrammars = slots.every((slot) => {
-    const row = getRowBySlot(bySlot, slot);
-    if (!row?.grammar?.regex?.trim()
-      || !row.grammar.mappings
-      || Object.keys(row.grammar.mappings).length === 0) {
-      return false;
-    }
-    if (isInteractiveSlot(slots, slot, itemPaths)) {
-      return !!(
-        row.answer_grammar?.regex?.trim()
-        && row.answer_grammar.mappings
-        && Object.keys(row.answer_grammar.mappings).length > 0
-      );
-    }
-    return true;
-  });
-  if (!allGrammars) return false;
   if (interactive.length === 0) return true;
   return interactive.every((slot) => {
     const row = getRowBySlot(bySlot, slot);
@@ -497,32 +513,34 @@ export function hasAgentContent(rows: AnalysisRow[]): boolean {
   });
 }
 
-/** Sorts slot paths parent-before-child, alphabetical per level. */
-export function sortSlotsTreeOrder(slots: string[]): string[] {
+/** Sorts slot path strings for storage (depth first, then category order among siblings). */
+export function sortSlotsTreeOrder(
+  slots: string[],
+  categories?: TokenCategory[],
+): string[] {
   return [...slots].sort((a, b) => {
     const depthDiff = a.split('.').length - b.split('.').length;
     if (depthDiff !== 0) return depthDiff;
-    return a.localeCompare(b, 'it');
+    return compareSiblingSlots(a, b, categories);
   });
 }
 
 /** DFS tree walk: each parent immediately followed by its subtree (forest order). */
-export function orderSlotsDepthFirst(slots: string[]): string[] {
+export function orderSlotsDepthFirst(
+  slots: string[],
+  categories?: TokenCategory[],
+): string[] {
   const slotList = [...new Set(slots)];
   const ordered: string[] = [];
 
   const walk = (node: string) => {
     ordered.push(node);
-    for (const child of getDirectChildSlots(slotList, node).sort((a, b) =>
-      a.localeCompare(b, 'it'),
-    )) {
+    for (const child of sortSiblingSlots(getDirectChildSlots(slotList, node), categories)) {
       walk(child);
     }
   };
 
-  for (const root of getDirectChildSlots(slotList, '').sort((a, b) =>
-    a.localeCompare(b, 'it'),
-  )) {
+  for (const root of sortSiblingSlots(getDirectChildSlots(slotList, ''), categories)) {
     walk(root);
   }
 
@@ -551,8 +569,11 @@ export function isSlotHiddenByCollapse(slot: string, collapsed: ReadonlySet<stri
 }
 
 /** Reorders analysis rows in DFS tree order for display and persistence. */
-export function orderAnalysisRowsDepthFirst(rows: AnalysisRow[]): AnalysisRow[] {
-  const ordered = orderSlotsDepthFirst(rows.map((r) => r.slot_filling));
+export function orderAnalysisRowsDepthFirst(
+  rows: AnalysisRow[],
+  categories?: TokenCategory[],
+): AnalysisRow[] {
+  const ordered = orderSlotsDepthFirst(rows.map((r) => r.slot_filling), categories);
   const bySlot = new Map(rows.map((r) => [r.slot_filling, r]));
   return ordered.map((slot) => {
     const row = bySlot.get(slot);
@@ -561,26 +582,38 @@ export function orderAnalysisRowsDepthFirst(rows: AnalysisRow[]): AnalysisRow[] 
   });
 }
 
+function listDisambiguationChildren(
+  slots: string[],
+  slot: string,
+  categories?: TokenCategory[],
+): string[] {
+  if (categories?.length) {
+    return getSiblingChoiceChildren(slots, slot, categories) ?? [];
+  }
+  return getDirectChildSlots(slots, slot);
+}
+
 /** Prompt section: only interactive paths — AI generates one row per listed path. */
 export function formatInteractiveMessagesPrompt(
   slots: string[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): string {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const interactive = getInteractiveMessageSlots(slots, itemPathsInput);
+  const interactive = getInteractiveMessageSlots(slots, itemPathsInput, categories);
 
   if (interactive.length === 0) {
     return 'Nessun nodo richiede domanda di disambiguazione in questo sottoalbero.\n';
   }
 
   const lines = interactive.map((slot) => {
-    const children = getDirectChildSlots(slots, slot);
+    const children = listDisambiguationChildren(slots, slot, categories);
     const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
       ? ' (disambiguazione: semplice vs estensione figlio-item)'
       : children.length <= 3
         ? ' (elenca opzioni nella domanda)'
         : ' (domanda aperta)';
-    return `- ${slot}\n  figli diretti: ${children.join(', ')}${childNote}`;
+    return `- ${slot}\n  opzioni disambiguazione: ${children.join(', ')}${childNote}`;
   });
 
   return (
@@ -592,23 +625,22 @@ export function formatInteractiveMessagesPrompt(
 }
 
 /** Describes which nodes require messages (questions + re-prompts). */
-export function formatMessagesNodesSection(slots: string[], itemPathsInput?: string[] | null): string {
+export function formatMessagesNodesSection(
+  slots: string[],
+  itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
+): string {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths));
+  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths, categories));
   const terminalItems = slots.filter((s) => isTerminalItemSlot(s, itemPaths));
 
   return (
-    formatInteractiveMessagesPrompt(slots, itemPathsInput) +
+    formatInteractiveMessagesPrompt(slots, itemPathsInput, categories) +
     `\nNODI TRASPARENTI (${passthrough.length}) — compilati automaticamente, NON inviare all'AI:\n` +
     `${passthrough.map((s) => `- ${s}`).join('\n')}\n\n` +
     `ITEM TERMINALI (${terminalItems.length}) — compilati automaticamente, NON inviare all'AI:\n` +
     `${terminalItems.map((s) => `- ${s}`).join('\n')}`
   );
-}
-
-function lastPathSegment(slot: string): string {
-  const parts = slot.split('.');
-  return parts[parts.length - 1] ?? slot;
 }
 
 /** Describes every node for per-node synonym grammar generation. */
@@ -636,20 +668,24 @@ export function formatGrammarsNodesSection(slots: string[], rows: AnalysisRow[])
 }
 
 /** Describes which nodes require questions vs which are leaves. */
-export function formatInternalNodesSection(slots: string[], itemPathsInput?: string[] | null): string {
+export function formatInternalNodesSection(
+  slots: string[],
+  itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
+): string {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const internal = slots.filter((s) => isInteractiveSlot(slots, s, itemPaths));
-  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths));
+  const internal = slots.filter((s) => isInteractiveSlot(slots, s, itemPaths, categories));
+  const passthrough = slots.filter((s) => !isLeafSlot(slots, s) && !isInteractiveSlot(slots, s, itemPaths, categories));
   const terminalItems = slots.filter((s) => isTerminalItemSlot(s, itemPaths));
 
   const internalLines = internal.map((slot) => {
-    const children = getDirectChildSlots(slots, slot);
+    const children = listDisambiguationChildren(slots, slot, categories);
     const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
       ? ' (item con figlio-item → disambiguazione semplice vs estensione)'
       : children.length <= 3
         ? ' (2-3 figli → elenca opzioni nella domanda)'
         : ' (>=4 figli → domanda aperta)';
-    return `- ${slot}\n  figli diretti: ${children.join(', ')}${childNote}`;
+    return `- ${slot}\n  opzioni disambiguazione: ${children.join(', ')}${childNote}`;
   });
 
   const passthroughLines = passthrough.map((s) => `- ${s}`);
@@ -678,9 +714,12 @@ export function normalizeCompactPath(path: string): string {
 
 /**
  * Expands compact leaf paths to a full tree by adding all ancestor prefixes.
- * Sort order: parents before children, alphabetical per depth.
+ * Sort order: parents before children; siblings by dictionary category.order.
  */
-export function expandLeafPathsToTree(leafPaths: string[]): string[] {
+export function expandLeafPathsToTree(
+  leafPaths: string[],
+  categories?: TokenCategory[],
+): string[] {
   const allPaths = new Set<string>();
   for (const raw of leafPaths) {
     const normalized = normalizeCompactPath(raw);
@@ -690,7 +729,7 @@ export function expandLeafPathsToTree(leafPaths: string[]): string[] {
       allPaths.add(parts.slice(0, depth).join('.'));
     }
   }
-  return sortSlotsTreeOrder([...allPaths]);
+  return sortSlotsTreeOrder([...allPaths], categories);
 }
 
 /** Returns only leaf paths from a full slot list. */
@@ -707,4 +746,22 @@ export function formatSlotTree(slots: string[]): string {
       return `${'  '.repeat(depth)}${slot}`;
     })
     .join('\n');
+}
+
+/** Forest root depth: 0 with multiple top-level roots, 1 when a single wrapper root exists. */
+export function analysisForestLevel(rows: AnalysisRow[]): number {
+  const rootNodes = rows.filter((r) => !r.slot_filling.includes('.'));
+  return rootNodes.length === 1 ? 1 : 0;
+}
+
+/** Slot path of the forest root that owns `slot` (top-level branch). */
+export function analysisForestRootSlot(slot: string, forestLevel: number): string {
+  const parts = slot.split('.');
+  return parts.slice(0, forestLevel + 1).join('.');
+}
+
+/** Rows at forest-root depth (branches shown as separate trees in the UI). */
+export function analysisForestRootRows(rows: AnalysisRow[]): AnalysisRow[] {
+  const forestLevel = analysisForestLevel(rows);
+  return rows.filter((r) => r.slot_filling.split('.').length - 1 === forestLevel);
 }

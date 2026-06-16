@@ -19,7 +19,7 @@ function DictionaryDockWatermark() {
     <div className="flex items-center justify-center h-full font-mono text-xs text-emerald-300/85 px-6 text-center">
       Nessun dizionario caricato nel progetto.
       Usa <span className="text-amber-300 mx-1">Nuovo</span> o
-      <span className="text-sky-300 mx-1">Carica</span> nella barra in alto.
+      <span className="text-sky-300 mx-1">Carica dizionario da libreria</span> nella barra in alto.
     </div>
   );
 }

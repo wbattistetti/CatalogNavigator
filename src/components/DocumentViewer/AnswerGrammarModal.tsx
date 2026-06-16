@@ -113,6 +113,7 @@ export function AnswerGrammarModal({
   itemPaths,
   grammar,
   question,
+  categories,
   onSave,
   onClose,
 }: {
@@ -121,12 +122,13 @@ export function AnswerGrammarModal({
   itemPaths: string[];
   grammar: GrammarEntry | null;
   question: string | null;
+  categories?: import('../../lib/dictionaryTree').TokenCategory[];
   onSave: (grammar: GrammarEntry) => void;
   onClose: () => void;
 }) {
   const initial = useMemo(
-    () => buildGrammarEditorState(slot, slots, itemPaths, grammar, 'answer'),
-    [slot, slots, itemPaths, grammar],
+    () => buildGrammarEditorState(slot, slots, itemPaths, grammar, 'answer', categories),
+    [slot, slots, itemPaths, grammar, categories],
   );
 
   const grammarSync = grammar?.regex ?? '';
@@ -137,12 +139,12 @@ export function AnswerGrammarModal({
   const highlightRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const next = buildGrammarEditorState(slot, slots, itemPaths, grammar, 'answer');
+    const next = buildGrammarEditorState(slot, slots, itemPaths, grammar, 'answer', categories);
     setPanels(next.panels);
     setError(null);
     setAddDrafts({});
     setHighlight(null);
-  }, [slot, grammarSync, slots, itemPaths, grammar]);
+  }, [slot, grammarSync, slots, itemPaths, grammar, categories]);
 
   useLayoutEffect(() => {
     if (!highlight) return;

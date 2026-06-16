@@ -1,0 +1,10 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>DialogEngine</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <Description>Deterministic agent dialog turn processor (slot-based matching on AgentBundle).</Description>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

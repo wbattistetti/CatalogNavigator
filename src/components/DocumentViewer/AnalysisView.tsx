@@ -4,7 +4,7 @@ import {
   Sparkles, Loader2, AlertCircle, AlertTriangle, ChevronRight, ChevronDown,
   List, GitBranch, Wand2, X, ThumbsUp, ThumbsDown, HelpCircle,
   Pencil, Check, Zap, FlaskConical, Trash2, RefreshCw, Braces, Plus,
-  Layers, Bot, Save, RotateCcw, MessageCircle, Filter,
+  Layers, Bot, Save, RotateCcw, MessageCircle, Filter, Search,
 } from 'lucide-react';
 import type {
   GrammarEditMode,
@@ -18,6 +18,7 @@ import { resolveItemPaths } from '../../lib/itemPaths';
 import type { KbDocument } from '../../lib/supabase';
 import { ChatPanel } from './ChatPanel';
 import { ConvaiExportPanel } from './ConvaiExportPanel';
+import { ConvaiNoBeExportPanel } from './ConvaiNoBeExportPanel';
 import { AnswerGrammarModal } from './AnswerGrammarModal';
 import {
   AnswerGrammarSynonymTooltip,
@@ -25,8 +26,11 @@ import {
 } from './AnswerGrammarSynonymTooltip';
 import { buildGrammarEditorState } from '../../lib/grammarSynonyms';
 import { yieldToUi } from '../../lib/yieldToUi';
-import { SlotLabelDisplay, SlotPathDisplay } from './SlotPathDisplay';
+import { SlotCategoryLabelDisplay, SlotLabelDisplay, SlotPathDisplay } from './SlotPathDisplay';
 import {
+  analysisForestLevel,
+  analysisForestRootRows,
+  analysisForestRootSlot,
   collectDirectChildSlots,
   getInteractiveMessageSlots,
   isSlotHiddenByCollapse,
@@ -34,6 +38,8 @@ import {
   rowHasMessage,
   slotsWithDirectChildren,
 } from '../../lib/analysisTree';
+import { compileAgentBundle } from '../../lib/compileAgentBundle';
+import type { TokenCategory } from '../../lib/dictionaryTree';
 import {
   buildRowFieldStatusUpdate,
   computeMessageReviewStats,
@@ -58,9 +64,12 @@ interface AnalysisViewProps {
   onTestOpenChange?: (open: boolean) => void;
   convaiOpen?: boolean;
   onConvaiOpenChange?: (open: boolean) => void;
+  convaiNoBeOpen?: boolean;
+  onConvaiNoBeOpenChange?: (open: boolean) => void;
   convaiExportContext?: {
     dictionary: import('../../lib/tokenDictionary').TokenDictionary | null;
     descriptions: string[];
+    loadedRefs?: import('../../lib/multiDictionarySegment').LoadedDictionaryRef[];
     dictionaryDirty?: boolean;
     pathsOutOfSync?: boolean;
   } | null;
@@ -75,17 +84,80 @@ interface AnalysisViewProps {
   onGrammarOverwriteChange?: (overwrite: boolean) => void;
   /** Dictionary tokens — source of truth for recognition grammars. */
   grammarTokens?: import('../../lib/tokenDictionary').TokenEntry[];
-  /** Called after a token grammar is saved from the agent tree. */
-  onTokenGrammarSaved?: (tokens: import('../../lib/tokenDictionary').TokenEntry[]) => void;
+  /** Called after category grammars are generated. */
+  onTokenGrammarSaved?: (result: {
+    tokens: import('../../lib/tokenDictionary').TokenEntry[];
+    categories: TokenCategory[];
+  }) => void;
   /** Dictionary workflow — tree mounts deterministically before messages. */
   dictionaryMode?: boolean;
   agentDictionaryContext?: import('../../features/document-editor/useDocumentEditorController').AgentDictionaryContext | null;
   onGenerateDialogueMessages?: () => void | Promise<void>;
+  /** Merged dictionary categories for sibling tree ordering. */
+  pathOrderingCategories?: TokenCategory[];
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type EditField = 'question' | 'no_match_1' | 'no_match_2' | 'no_match_3' | 'confirmation_text';
+
+/** Which no-match columns are visible in the message table (toggled from the toolbar). */
+interface NoMatchColumnVisibility {
+  show1: boolean;
+  show2: boolean;
+  show3: boolean;
+}
+
+const DEFAULT_NO_MATCH_COLUMNS: NoMatchColumnVisibility = {
+  show1: false,
+  show2: false,
+  show3: false,
+};
+
+function countNoMatchColumns(visibility: NoMatchColumnVisibility): number {
+  return (visibility.show1 ? 1 : 0) + (visibility.show2 ? 1 : 0) + (visibility.show3 ? 1 : 0);
+}
+
+function countTreeTableColumns(visibility: NoMatchColumnVisibility): number {
+  return 1 + 1 + countNoMatchColumns(visibility);
+}
+
+/** Toolbar toggles for optional no-match columns. */
+function NoMatchColumnToggles({
+  visibility,
+  onChange,
+}: {
+  visibility: NoMatchColumnVisibility;
+  onChange: (next: NoMatchColumnVisibility) => void;
+}) {
+  const items = [
+    { key: 'show1' as const, label: '1° no match' },
+    { key: 'show2' as const, label: '2° no match' },
+    { key: 'show3' as const, label: '3° no match' },
+  ];
+  return (
+    <div className="flex items-center gap-1 flex-shrink-0">
+      {items.map(({ key, label }) => {
+        const active = visibility[key];
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange({ ...visibility, [key]: !active })}
+            title={active ? `Nascondi colonna ${label}` : `Mostra colonna ${label}`}
+            className={`px-2 py-1 font-mono text-xs rounded border transition-colors whitespace-nowrap ${
+              active
+                ? 'text-orange-200 border-orange-400/45 bg-orange-400/15'
+                : 'text-emerald-400/45 border-[#1a3a2a] hover:border-emerald-400/30 hover:text-emerald-400/75'
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function isGrammarEditOpen(
   target: GrammarEditTarget | null,
@@ -139,7 +211,7 @@ function MessageSourceBadge({ source, validated }: { source?: MessageSource; val
   if (source !== 'ai' || validated) return null;
   return (
     <span
-      className="inline-flex items-center flex-shrink-0 mr-1 px-1 py-px rounded font-mono text-[8px] font-bold uppercase tracking-wide text-violet-300/90 bg-violet-400/15"
+      className="inline-flex items-center flex-shrink-0 mr-1 px-1 py-px rounded font-mono text-sm font-bold uppercase tracking-wide text-violet-300/90 bg-violet-400/15"
       title="Redazione IA — da validare"
     >
       IA
@@ -166,7 +238,7 @@ function DirtyRegenChip({ isDirty, isRegening }: { isDirty: boolean; isRegening:
   if (!isDirty && !isRegening) return null;
   if (isRegening) {
     return (
-      <span className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400/60 font-mono text-[9px] font-bold uppercase tracking-wider">
+      <span className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400/60 font-mono text-sm font-bold uppercase tracking-wider">
         <RefreshCw className="w-2.5 h-2.5 animate-spin" />
         Ricalcolo…
       </span>
@@ -175,7 +247,7 @@ function DirtyRegenChip({ isDirty, isRegening }: { isDirty: boolean; isRegening:
   return (
     <span
       title="Struttura cambiata — usa la toolbar (↻) per ricalcolare domande e grammatiche"
-      className="flex-shrink-0 px-1.5 py-0.5 rounded border border-amber-400/50 bg-amber-400/10 text-amber-400 font-mono text-[9px] font-bold uppercase tracking-wider animate-pulse"
+      className="flex-shrink-0 px-1.5 py-0.5 rounded border border-amber-400/50 bg-amber-400/10 text-amber-400 font-mono text-sm font-bold uppercase tracking-wider animate-pulse"
     >
       Da ricalcolare
     </span>
@@ -386,12 +458,12 @@ function DataCell({
             if (e.key === 'Escape') onCancel();
           }}
           rows={2}
-          className="w-full bg-[#0a1510] border border-emerald-400/40 rounded px-2 py-1 font-sans text-xs text-emerald-200 placeholder-emerald-400/20 resize-none focus:outline-none focus:border-emerald-400/70 transition-colors"
+          className="w-full bg-[#0a1510] border border-emerald-400/40 rounded px-2 py-1 font-sans text-sm text-emerald-200 placeholder-emerald-400/20 resize-none focus:outline-none focus:border-emerald-400/70 transition-colors"
         />
         <div className="flex items-center gap-1 mt-1">
           <button
             onClick={onSave}
-            className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-400/20 border border-emerald-400/40 rounded text-emerald-400 hover:bg-emerald-400/30 transition-colors font-mono text-[10px]"
+            className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-400/20 border border-emerald-400/40 rounded text-emerald-400 hover:bg-emerald-400/30 transition-colors font-mono text-sm"
           >
             <Check className="w-3 h-3" />Salva
           </button>
@@ -411,16 +483,16 @@ function DataCell({
   };
 
   return (
-    <td className={`group relative overflow-visible px-3 py-1.5 border-r border-[#1a3a2a] align-top ${tdClass ?? ''}`}>
+    <td className={`group relative overflow-visible px-3 py-1.5 border-r border-[#1a3a2a] align-top min-w-0 ${tdClass ?? ''}`}>
       <div className="flex flex-wrap items-baseline gap-x-0 gap-y-0.5">
         {displayValue
           ? (
-            <span className={`font-sans text-xs leading-relaxed transition-colors ${textColor}`}>
+            <span className={`font-sans text-sm leading-relaxed transition-colors break-words min-w-0 ${textColor}`}>
               <MessageSourceBadge source={source ?? fieldMeta?.source} validated={validated} />
               {displayValue}
             </span>
           )
-          : <span className="text-emerald-400/15 font-mono text-[10px]">—</span>}
+          : <span className="text-emerald-400/15 font-mono text-sm">—</span>}
         {editingField === null && displayValue && onFieldStatusChange && (
           <CellActions
             status={cellStatus}
@@ -464,7 +536,7 @@ function PathEditor({
         }}
         title="Modifica il path — usa . per spezzare i livelli"
         placeholder="es. esami.funzionali.spirometria.broncodilatatore"
-        className="bg-[#0a1510] border border-emerald-400/50 rounded px-1.5 py-0.5 font-mono text-xs text-emerald-200 focus:outline-none focus:border-emerald-400/80 min-w-[200px] w-full max-w-lg transition-colors"
+        className="bg-[#0a1510] border border-emerald-400/50 rounded px-1.5 py-0.5 font-mono text-sm text-emerald-200 focus:outline-none focus:border-emerald-400/80 min-w-[200px] w-full max-w-lg transition-colors"
       />
       <div className="flex items-center gap-1">
         <button onClick={onConfirm} className="p-0.5 text-emerald-400/60 hover:text-emerald-400 transition-colors" title="Conferma">
@@ -504,6 +576,8 @@ const TreeNode = memo(function TreeNode({
   onGrammarEditCancel,
   onAnswerGrammarTooltipShow,
   onAnswerGrammarTooltipHide,
+  noMatchColumns,
+  pathOrderingCategories = [],
 }: {
   row: AnalysisRow;
   originalIndex: number;
@@ -515,6 +589,7 @@ const TreeNode = memo(function TreeNode({
   grammarEditTarget: GrammarEditTarget | null;
   allSlots: string[];
   itemPaths: string[];
+  noMatchColumns: NoMatchColumnVisibility;
   onToggleGrammarEdit: (slot: string, mode: GrammarEditMode) => void;
   onGrammarSave: (slot: string, mode: GrammarEditMode, grammar: GrammarEntry) => void;
   onGrammarEditCancel: () => void;
@@ -528,6 +603,7 @@ const TreeNode = memo(function TreeNode({
   isDirty: boolean;
   isRegening: boolean;
   onRegenRoot: (root: string) => void;
+  pathOrderingCategories?: TokenCategory[];
 }) {
   const isAnswerGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'answer');
   const showGrammarTooltip = (anchor: GrammarTooltipAnchor) => {
@@ -636,11 +712,17 @@ const TreeNode = memo(function TreeNode({
               onConfirm={confirmPathEdit}
               onCancel={() => setEditingPath(false)}
             />
+          ) : pathOrderingCategories.length > 0 ? (
+            <SlotCategoryLabelDisplay
+              path={row.slot_filling}
+              categories={pathOrderingCategories}
+              className={slotTextColor}
+            />
           ) : (
             <SlotLabelDisplay path={row.slot_filling} className={slotTextColor} />
           )}
           {!editingPath && isStart && (
-            <span className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-amber-300 font-mono text-[9px] font-bold uppercase tracking-wider">
+            <span className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-amber-300 font-mono text-sm font-bold uppercase tracking-wider">
               <Zap className="w-2.5 h-2.5" />START
             </span>
           )}
@@ -677,7 +759,7 @@ const TreeNode = memo(function TreeNode({
                 if (e.key === 'Escape') { setAddMode(null); setAddDraft(''); }
               }}
               placeholder={addMode === 'child' ? 'nome figlio…' : 'nome sibling…'}
-              className="bg-[#0a1510] border border-emerald-400/40 rounded px-1.5 py-0.5 font-mono text-xs text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/70 w-36 transition-colors"
+              className="bg-[#0a1510] border border-emerald-400/40 rounded px-1.5 py-0.5 font-mono text-sm text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/70 w-36 transition-colors"
             />
             <button onClick={confirmAdd} className="p-0.5 text-emerald-400/60 hover:text-emerald-400 transition-colors">
               <Check className="w-3 h-3" />
@@ -705,18 +787,18 @@ const TreeNode = memo(function TreeNode({
               }}
               rows={2}
               data-cell-question-text
-              className="w-full bg-[#0a1510] border border-emerald-400/40 rounded px-2 py-1 font-sans text-xs text-emerald-200 resize-none focus:outline-none focus:border-emerald-400/70"
+              className="w-full bg-[#0a1510] border border-emerald-400/40 rounded px-2 py-1 font-sans text-sm text-emerald-200 resize-none focus:outline-none focus:border-emerald-400/70"
             />
           ) : row.question ? (
             <span
               data-cell-question-text
-              className={`font-sans text-xs leading-relaxed ${cellTextColor(questionStatus, slotHover)}`}
+              className={`font-sans text-sm leading-relaxed ${cellTextColor(questionStatus, slotHover)}`}
             >
               <MessageSourceBadge source={questionMeta.source} validated={questionStatus === 'approved'} />
               {row.question.trim()}
             </span>
           ) : (
-            <span className="text-emerald-400/15 font-mono text-[10px]">—</span>
+            <span className="text-emerald-400/15 font-mono text-sm">—</span>
           )}
           {editingField === null && row.question?.trim() && (
             <CellActions
@@ -752,50 +834,55 @@ const TreeNode = memo(function TreeNode({
           onStartEdit={startEdit}
         />
       )}
-      <DataCell
-        field="no_match_1"
-        value={row.no_match_1}
-        {...messageCellStatusProps(row, 'no_match_1', patchRow)}
-        editingField={editingField}
-        draftValue={draftValue}
-        onDraftChange={setDraftValue}
-        onSave={saveEdit}
-        onCancel={cancelEdit}
-        onStartEdit={startEdit}
-      />
-      <DataCell
-        field="no_match_2"
-        value={row.no_match_2}
-        {...messageCellStatusProps(row, 'no_match_2', patchRow)}
-        editingField={editingField}
-        draftValue={draftValue}
-        onDraftChange={setDraftValue}
-        onSave={saveEdit}
-        onCancel={cancelEdit}
-        onStartEdit={startEdit}
-      />
-      <DataCell
-        field="no_match_3"
-        value={row.no_match_3}
-        {...messageCellStatusProps(row, 'no_match_3', patchRow)}
-        editingField={editingField}
-        draftValue={draftValue}
-        onDraftChange={setDraftValue}
-        onSave={saveEdit}
-        onCancel={cancelEdit}
-        onStartEdit={startEdit}
-      />
+      {noMatchColumns.show1 && (
+        <DataCell
+          field="no_match_1"
+          value={row.no_match_1}
+          {...messageCellStatusProps(row, 'no_match_1', patchRow)}
+          editingField={editingField}
+          draftValue={draftValue}
+          onDraftChange={setDraftValue}
+          onSave={saveEdit}
+          onCancel={cancelEdit}
+          onStartEdit={startEdit}
+        />
+      )}
+      {noMatchColumns.show2 && (
+        <DataCell
+          field="no_match_2"
+          value={row.no_match_2}
+          {...messageCellStatusProps(row, 'no_match_2', patchRow)}
+          editingField={editingField}
+          draftValue={draftValue}
+          onDraftChange={setDraftValue}
+          onSave={saveEdit}
+          onCancel={cancelEdit}
+          onStartEdit={startEdit}
+        />
+      )}
+      {noMatchColumns.show3 && (
+        <DataCell
+          field="no_match_3"
+          value={row.no_match_3}
+          {...messageCellStatusProps(row, 'no_match_3', patchRow)}
+          editingField={editingField}
+          draftValue={draftValue}
+          onDraftChange={setDraftValue}
+          onSave={saveEdit}
+          onCancel={cancelEdit}
+          onStartEdit={startEdit}
+        />
+      )}
     </tr>
   );
 });
 
 // ── Tree table ────────────────────────────────────────────────────────────────
 
-const COL_HEADERS = ['Albero', 'Domanda', '1° no match', '2° no match', '3° no match'];
-
 function TreeTable({
   rows,
   showOnlyMessageNodes = false,
+  noMatchColumns = DEFAULT_NO_MATCH_COLUMNS,
   onUpdateRow,
   onDeleteRow,
   onAddRow,
@@ -810,9 +897,11 @@ function TreeTable({
   onGrammarEditCancel,
   onAnswerGrammarTooltipShow,
   onAnswerGrammarTooltipHide,
+  pathOrderingCategories = [],
 }: {
   rows: AnalysisRow[];
   showOnlyMessageNodes?: boolean;
+  noMatchColumns?: NoMatchColumnVisibility;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
   onAddRow: (slot: string) => void;
@@ -827,14 +916,19 @@ function TreeTable({
   onGrammarEditCancel: () => void;
   onAnswerGrammarTooltipShow: (slot: string, anchor: GrammarTooltipAnchor) => void;
   onAnswerGrammarTooltipHide: () => void;
+  pathOrderingCategories?: TokenCategory[];
 }) {
+  const tableColSpan = countTreeTableColumns(noMatchColumns);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const collapsedKey = useMemo(() => [...collapsed].sort().join('\0'), [collapsed]);
 
   const orderedRows = useMemo(() => {
-    const ordered = orderAnalysisRowsDepthFirst(rows);
+    const ordered = orderAnalysisRowsDepthFirst(
+      rows,
+      pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
+    );
     return showOnlyMessageNodes ? ordered.filter(rowHasMessage) : ordered;
-  }, [rows, showOnlyMessageNodes]);
+  }, [rows, showOnlyMessageNodes, pathOrderingCategories]);
   const indexBySlot = useMemo(
     () => new Map(rows.map((r, i) => [r.slot_filling, i])),
     [rows],
@@ -848,8 +942,12 @@ function TreeTable({
   const singleRoot = rootNodes.length === 1 ? rootNodes[0]!.slot_filling : null;
   const allSlots = useMemo(() => rows.map((r) => r.slot_filling), [rows]);
   const interactiveSlotSet = useMemo(
-    () => new Set(getInteractiveMessageSlots(allSlots, itemPaths)),
-    [allSlots, itemPaths],
+    () => new Set(getInteractiveMessageSlots(
+      allSlots,
+      itemPaths,
+      pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
+    )),
+    [allSlots, itemPaths, pathOrderingCategories],
   );
   const dirtyRootSet = useMemo(() => new Set(dirtyRoots), [dirtyRoots]);
   const regeningRootSet = useMemo(() => new Set(regeningRoots), [regeningRoots]);
@@ -895,15 +993,33 @@ function TreeTable({
     <table className="w-full border-collapse text-left overflow-visible">
       <thead className="sticky top-0 z-10 bg-[#080e0a]">
         <tr className="border-b border-[#1a3a2a]">
-          {COL_HEADERS.map((h, i) => (
-            <th
-              key={i}
-              className={`px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 ${i < COL_HEADERS.length - 1 ? 'border-r border-[#1a3a2a]' : ''}`}
-              style={i === 0 ? { minWidth: 280 } : i === 1 ? { minWidth: 200 } : i > 1 ? { minWidth: 150 } : undefined}
-            >
-              {h}
+          <th
+            className="px-3 py-2 font-mono text-sm uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]"
+            style={{ minWidth: 280 }}
+          >
+            Albero
+          </th>
+          <th
+            className={`px-3 py-2 font-mono text-sm uppercase tracking-widest text-emerald-400/50 ${countNoMatchColumns(noMatchColumns) > 0 ? 'border-r border-[#1a3a2a]' : ''}`}
+            style={{ minWidth: 200 }}
+          >
+            Domanda
+          </th>
+          {noMatchColumns.show1 && (
+            <th className="px-3 py-2 font-mono text-sm uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]" style={{ minWidth: 150 }}>
+              1° no match
             </th>
-          ))}
+          )}
+          {noMatchColumns.show2 && (
+            <th className="px-3 py-2 font-mono text-sm uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]" style={{ minWidth: 150 }}>
+              2° no match
+            </th>
+          )}
+          {noMatchColumns.show3 && (
+            <th className="px-3 py-2 font-mono text-sm uppercase tracking-widest text-emerald-400/50" style={{ minWidth: 150 }}>
+              3° no match
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -911,7 +1027,7 @@ function TreeTable({
           <Fragment key={item.originalIndex}>
             {item.needsSeparator && (
               <tr aria-hidden="true">
-                <td colSpan={5} className="p-0 h-px bg-[#1a3a2a]" />
+                <td colSpan={tableColSpan} className="p-0 h-px bg-[#1a3a2a]" />
               </tr>
             )}
             <TreeNode
@@ -925,6 +1041,7 @@ function TreeTable({
               grammarEditTarget={grammarEditTarget}
               allSlots={allSlots}
               itemPaths={itemPaths}
+              noMatchColumns={noMatchColumns}
               onToggleGrammarEdit={onToggleGrammarEdit}
               onGrammarSave={onGrammarSave}
               onGrammarEditCancel={onGrammarEditCancel}
@@ -938,6 +1055,7 @@ function TreeTable({
               isDirty={dirtyRootSet.has(item.row.slot_filling)}
               isRegening={regeningRootSet.has(item.row.slot_filling)}
               onRegenRoot={onRegenRoot}
+              pathOrderingCategories={pathOrderingCategories}
             />
           </Fragment>
         ))}
@@ -948,7 +1066,59 @@ function TreeTable({
 
 // ── Split layout: tree left · messages right ─────────────────────────────────
 
-const MSG_HEADERS = ['Domanda', '1° no match', '2° no match', '3° no match', 'Conferma selezione'];
+const TREE_COLUMN_MIN_PX = 180;
+const TREE_COLUMN_MAX_PX = 560;
+const TREE_COLUMN_DEFAULT_PX = 280;
+const TREE_COLUMN_WIDTH_KEY = 'analysis-tree-column-width';
+
+function readStoredTreeColumnWidth(): number {
+  try {
+    const raw = localStorage.getItem(TREE_COLUMN_WIDTH_KEY);
+    const n = raw ? Number(raw) : NaN;
+    if (Number.isFinite(n)) {
+      return Math.min(TREE_COLUMN_MAX_PX, Math.max(TREE_COLUMN_MIN_PX, Math.round(n)));
+    }
+  } catch {
+    /* ignore */
+  }
+  return TREE_COLUMN_DEFAULT_PX;
+}
+
+function TreeRootFilterInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const active = value.trim().length > 0;
+  return (
+    <div className="relative flex items-center mt-1.5">
+      <Search
+        className="pointer-events-none absolute left-2 w-3.5 h-3.5 text-emerald-400/45"
+        aria-hidden
+      />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Filtra radici…"
+        aria-label="Filtra nodi radice"
+        className="w-full rounded border border-[#1a3a2a] bg-[#060c08] py-1 pl-7 pr-7 font-mono text-sm text-emerald-100/90 placeholder:text-emerald-400/25 focus:border-emerald-400/40 focus:outline-none"
+      />
+      {active && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-emerald-400/50 hover:bg-emerald-400/10 hover:text-emerald-300"
+          aria-label="Cancella filtro radici"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 const SplitMessageRow = memo(function SplitMessageRow({
   row,
@@ -983,6 +1153,9 @@ const SplitMessageRow = memo(function SplitMessageRow({
   onAnswerGrammarTooltipShow,
   onAnswerGrammarTooltipHide,
   treeOnly = false,
+  treeColumnWidth = TREE_COLUMN_DEFAULT_PX,
+  noMatchColumns = DEFAULT_NO_MATCH_COLUMNS,
+  pathOrderingCategories = [],
 }: {
   row: AnalysisRow;
   originalIndex: number;
@@ -1016,6 +1189,9 @@ const SplitMessageRow = memo(function SplitMessageRow({
   isRegening: boolean;
   onRegenRoot: (root: string) => void;
   treeOnly?: boolean;
+  treeColumnWidth?: number;
+  noMatchColumns?: NoMatchColumnVisibility;
+  pathOrderingCategories?: TokenCategory[];
 }) {
   const isAnswerGrammarOpen = isGrammarEditOpen(grammarEditTarget, row.slot_filling, 'answer');
   const parentSlot = row.slot_filling.split('.').slice(0, -1).join('.');
@@ -1089,8 +1265,8 @@ const SplitMessageRow = memo(function SplitMessageRow({
   return (
     <tr className={`relative hover:z-30 ${rowBg} hover:brightness-110`}>
       <td
-        className={`group relative overflow-visible w-[260px] max-w-[260px] px-2 py-1.5 border-r border-[#1a3a2a] align-top cursor-pointer ${treeBg} ${isSelected ? 'ring-1 ring-inset ring-sky-400/50 bg-sky-400/[0.06]' : ''}`}
-        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        className={`group relative overflow-visible px-2 py-1.5 border-r border-[#1a3a2a] align-top cursor-pointer ${treeBg} ${isSelected ? 'ring-1 ring-inset ring-sky-400/50 bg-sky-400/[0.06]' : ''}`}
+        style={{ width: treeColumnWidth, minWidth: treeColumnWidth, maxWidth: treeColumnWidth, paddingLeft: `${8 + depth * 14}px` }}
         onMouseEnter={() => onTreeHover(row.slot_filling)}
         onMouseLeave={() => onTreeHover(null)}
         onClick={() => onSelectSlot(row.slot_filling)}
@@ -1121,6 +1297,13 @@ const SplitMessageRow = memo(function SplitMessageRow({
                 onCancel={() => setEditingPath(false)}
               />
             </div>
+          ) : pathOrderingCategories.length > 0 ? (
+            <SlotCategoryLabelDisplay
+              path={row.slot_filling}
+              categories={pathOrderingCategories}
+              bold={row.slot_filling === singleRoot}
+              className={row.slot_filling === singleRoot ? 'text-amber-300' : ''}
+            />
           ) : (
             <SlotLabelDisplay
               path={row.slot_filling}
@@ -1160,7 +1343,7 @@ const SplitMessageRow = memo(function SplitMessageRow({
                 if (e.key === 'Escape') { setAddMode(null); setAddDraft(''); }
               }}
               placeholder={addMode === 'child' ? 'nome figlio…' : 'nome sibling…'}
-              className="bg-[#0a1510] border border-emerald-400/40 rounded px-1.5 py-0.5 font-mono text-xs text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/70 w-36 transition-colors"
+              className="bg-[#0a1510] border border-emerald-400/40 rounded px-1.5 py-0.5 font-mono text-sm text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/70 w-36 transition-colors"
             />
             <button onClick={confirmAdd} className="p-0.5 text-emerald-400/60 hover:text-emerald-400 transition-colors">
               <Check className="w-3 h-3" />
@@ -1188,18 +1371,18 @@ const SplitMessageRow = memo(function SplitMessageRow({
             }}
             rows={2}
             data-cell-question-text
-            className="w-full bg-[#0a1510] border border-emerald-400/40 rounded px-2 py-1 font-sans text-xs text-emerald-200 resize-none focus:outline-none focus:border-emerald-400/70"
+            className="w-full bg-[#0a1510] border border-emerald-400/40 rounded px-2 py-1 font-sans text-sm text-emerald-200 resize-none focus:outline-none focus:border-emerald-400/70"
           />
         ) : row.question ? (
           <span
             data-cell-question-text
-            className={`font-sans text-xs leading-relaxed ${cellTextColor(questionStatus, slotHover)}`}
+            className={`font-sans text-sm leading-relaxed ${cellTextColor(questionStatus, slotHover)}`}
           >
             <MessageSourceBadge source={questionMeta.source} validated={questionStatus === 'approved'} />
             {row.question.trim()}
           </span>
         ) : (
-          <span className="text-emerald-400/15 font-mono text-[10px]">—</span>
+          <span className="text-emerald-400/15 font-mono text-sm">—</span>
         )}
         {editingField === null && row.question?.trim() && (
           <CellActions
@@ -1222,14 +1405,20 @@ const SplitMessageRow = memo(function SplitMessageRow({
         )}
         </div>
       </td>
-      <DataCell field="no_match_1" value={row.no_match_1} {...messageCellStatusProps(row, 'no_match_1', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
-      <DataCell field="no_match_2" value={row.no_match_2} {...messageCellStatusProps(row, 'no_match_2', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
-      <DataCell field="no_match_3" value={row.no_match_3} {...messageCellStatusProps(row, 'no_match_3', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
+      {noMatchColumns.show1 && (
+        <DataCell field="no_match_1" value={row.no_match_1} {...messageCellStatusProps(row, 'no_match_1', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
+      )}
+      {noMatchColumns.show2 && (
+        <DataCell field="no_match_2" value={row.no_match_2} {...messageCellStatusProps(row, 'no_match_2', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
+      )}
+      {noMatchColumns.show3 && (
+        <DataCell field="no_match_3" value={row.no_match_3} {...messageCellStatusProps(row, 'no_match_3', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} />
+      )}
       {isLeaf ? (
         <DataCell field="confirmation_text" value={row.confirmation_text} {...messageCellStatusProps(row, 'confirmation_text', patchRow)} editingField={editingField} draftValue={draftValue} onDraftChange={setDraftValue} onSave={saveEdit} onCancel={() => setEditingField(null)} onStartEdit={startEdit} tdClass="border-r-0" />
       ) : (
         <td className="px-3 py-1.5 border-r-0 align-middle">
-          <span className="text-emerald-400/10 font-mono text-[10px]">—</span>
+          <span className="text-emerald-400/10 font-mono text-sm">—</span>
         </td>
       )}
         </>
@@ -1258,31 +1447,31 @@ function AgentConfigBar({
   return (
     <div className="flex-shrink-0 px-4 py-3 border-b border-[#1a3a2a] bg-[#0a1510] grid grid-cols-1 lg:grid-cols-2 gap-3">
       <label className="flex flex-col gap-1 min-w-0">
-        <span className="font-mono text-[10px] uppercase tracking-widest text-emerald-400/50">Domanda di start</span>
+        <span className="font-mono text-sm uppercase tracking-widest text-emerald-400/50">Domanda di start</span>
         <textarea
           value={startQuestion}
           onChange={(e) => onStartQuestionChange(e.target.value)}
           placeholder="Es: Buongiorno, di quale esame ha bisogno?"
           rows={2}
-          className="w-full bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2 font-sans text-xs text-emerald-200 placeholder-emerald-400/20 resize-none focus:outline-none focus:border-emerald-400/40"
+          className="w-full bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2 font-sans text-sm text-emerald-200 placeholder-emerald-400/20 resize-none focus:outline-none focus:border-emerald-400/40"
         />
       </label>
       <div className="flex flex-col gap-2 min-w-0">
         <label className="flex flex-col gap-1 min-w-0">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-emerald-400/50">Preambolo di conferma</span>
+          <span className="font-mono text-sm uppercase tracking-widest text-emerald-400/50">Preambolo di conferma</span>
           <input
             type="text"
             value={confirmationPreamble}
             onChange={(e) => onPreambleChange(e.target.value)}
             placeholder="Quindi confermo:"
-            className="w-full bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2 font-sans text-xs text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/40"
+            className="w-full bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2 font-sans text-sm text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/40"
           />
         </label>
         <button
           type="button"
           onClick={onGenerateConfirmations}
           disabled={!canGenerate || generatingConfirmations}
-          className="self-start flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] font-semibold text-emerald-900 bg-amber-400 rounded hover:bg-amber-300 transition-colors disabled:opacity-40"
+          className="self-start flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-amber-400 rounded hover:bg-amber-300 transition-colors disabled:opacity-40"
         >
           {generatingConfirmations ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
           {generatingConfirmations ? 'Generazione conferme…' : 'Genera conferme IA'}
@@ -1340,7 +1529,7 @@ function AgentDialoguePrompt({
           <p className="font-mono text-sm font-semibold text-emerald-200/95">
             Generazione messaggi di dialogo…
           </p>
-          <p className="font-mono text-[11px] text-emerald-400/60 leading-relaxed">
+          <p className="font-mono text-sm text-emerald-400/60 leading-relaxed">
             {progressLabel ?? 'Preparazione in corso, attendi qualche istante.'}
           </p>
         </div>
@@ -1397,7 +1586,7 @@ function DialogueGenerationOverlay({
         <p className="font-mono text-sm font-semibold text-emerald-200/95">
           Generazione messaggi di dialogo…
         </p>
-        <p className="font-mono text-[11px] text-emerald-400/60 leading-relaxed">
+        <p className="font-mono text-sm text-emerald-400/60 leading-relaxed">
           {progressLabel}
         </p>
       </div>
@@ -1416,6 +1605,7 @@ function DialogueGenerationOverlay({
 const SplitAgentTable = memo(function SplitAgentTable({
   rows,
   showOnlyMessageNodes = false,
+  noMatchColumns = DEFAULT_NO_MATCH_COLUMNS,
   selectedSlot,
   onSelectSlot,
   onUpdateRow,
@@ -1433,9 +1623,13 @@ const SplitAgentTable = memo(function SplitAgentTable({
   onAnswerGrammarTooltipShow,
   onAnswerGrammarTooltipHide,
   treeOnly = false,
+  treeColumnWidth: treeColumnWidthProp,
+  onTreeColumnWidthChange,
+  pathOrderingCategories = [],
 }: {
   rows: AnalysisRow[];
   showOnlyMessageNodes?: boolean;
+  noMatchColumns?: NoMatchColumnVisibility;
   selectedSlot: string | null;
   onSelectSlot: (slot: string) => void;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
@@ -1453,23 +1647,90 @@ const SplitAgentTable = memo(function SplitAgentTable({
   onAnswerGrammarTooltipShow: (slot: string, anchor: GrammarTooltipAnchor) => void;
   onAnswerGrammarTooltipHide: () => void;
   treeOnly?: boolean;
+  /** When set (e.g. taxonomy-only left panel), parent controls column width. */
+  treeColumnWidth?: number;
+  onTreeColumnWidthChange?: (width: number) => void;
+  pathOrderingCategories?: TokenCategory[];
 }) {
+  const visibleNoMatchCount = countNoMatchColumns(noMatchColumns);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [hoveredSlot, setHoveredSlot] = useState<string | null>(null);
+  const [rootFilter, setRootFilter] = useState('');
+  const [internalTreeWidth, setInternalTreeWidth] = useState(readStoredTreeColumnWidth);
+  const [treeResizing, setTreeResizing] = useState(false);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const collapsedKey = useMemo(() => [...collapsed].sort().join('\0'), [collapsed]);
 
+  const treeColumnWidth = treeColumnWidthProp ?? internalTreeWidth;
+  const setTreeColumnWidth = onTreeColumnWidthChange ?? setInternalTreeWidth;
+  const rootFilterActive = rootFilter.trim().length > 0;
+
   const orderedRows = useMemo(() => {
-    const ordered = orderAnalysisRowsDepthFirst(rows);
+    const ordered = orderAnalysisRowsDepthFirst(
+      rows,
+      pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
+    );
     return showOnlyMessageNodes ? ordered.filter(rowHasMessage) : ordered;
-  }, [rows, showOnlyMessageNodes]);
+  }, [rows, showOnlyMessageNodes, pathOrderingCategories]);
   const indexBySlot = useMemo(() => new Map(rows.map((r, i) => [r.slot_filling, i])), [rows]);
   const parentSlots = useMemo(() => slotsWithDirectChildren(rows), [rows]);
   const rootNodes = useMemo(() => rows.filter((r) => !r.slot_filling.includes('.')), [rows]);
   const singleRoot = rootNodes.length === 1 ? rootNodes[0]!.slot_filling : null;
+  const forestLevel = useMemo(() => analysisForestLevel(rows), [rows]);
+
+  const matchingForestRoots = useMemo(() => {
+    const query = rootFilter.trim().toLowerCase();
+    if (!query) return null;
+    return new Set(
+      analysisForestRootRows(rows)
+        .filter((r) => {
+          const label = r.slot_filling.split('.').pop() ?? r.slot_filling;
+          return label.toLowerCase().includes(query) || r.slot_filling.toLowerCase().includes(query);
+        })
+        .map((r) => r.slot_filling),
+    );
+  }, [rows, rootFilter]);
+
+  const onTreeSashPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    setTreeResizing(true);
+    const startX = e.clientX;
+    const startWidth = treeColumnWidth;
+    let lastWidth = startWidth;
+
+    const onMove = (ev: PointerEvent) => {
+      lastWidth = Math.min(TREE_COLUMN_MAX_PX, Math.max(TREE_COLUMN_MIN_PX, startWidth + ev.clientX - startX));
+      setTreeColumnWidth(lastWidth);
+    };
+
+    const onUp = () => {
+      setTreeResizing(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (!onTreeColumnWidthChange) {
+        try {
+          localStorage.setItem(TREE_COLUMN_WIDTH_KEY, String(Math.round(lastWidth)));
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [treeColumnWidth, setTreeColumnWidth, onTreeColumnWidthChange]);
+
+  useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [rootFilter]);
   const allSlots = useMemo(() => rows.map((r) => r.slot_filling), [rows]);
   const interactiveSlotSet = useMemo(
-    () => new Set(getInteractiveMessageSlots(allSlots, itemPaths)),
-    [allSlots, itemPaths],
+    () => new Set(getInteractiveMessageSlots(
+      allSlots,
+      itemPaths,
+      pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
+    )),
+    [allSlots, itemPaths, pathOrderingCategories],
   );
   const terminalItemSet = useMemo(() => new Set(itemPaths), [itemPaths]);
   const dirtyRootSet = useMemo(() => new Set(dirtyRoots), [dirtyRoots]);
@@ -1494,38 +1755,93 @@ const SplitAgentTable = memo(function SplitAgentTable({
     return orderedRows.map((row) => {
       const originalIndex = indexBySlot.get(row.slot_filling) ?? -1;
       const depth = row.slot_filling.split('.').length - 1;
+      const isCollapsedHidden = isSlotHiddenByCollapse(row.slot_filling, collapsedSet);
+      const isRootFilterHidden = matchingForestRoots !== null
+        && !matchingForestRoots.has(analysisForestRootSlot(row.slot_filling, forestLevel));
       return {
         row,
         originalIndex,
         depth,
-        isHidden: isSlotHiddenByCollapse(row.slot_filling, collapsedSet),
+        isHidden: isCollapsedHidden || isRootFilterHidden,
         isCollapsed: collapsedSet.has(row.slot_filling),
         hasChildren: parentSlots.has(row.slot_filling),
       };
     });
-  }, [orderedRows, indexBySlot, parentSlots, collapsedKey]);
+  }, [orderedRows, indexBySlot, parentSlots, collapsedKey, matchingForestRoots, forestLevel]);
+
+  const visibleRowCount = useMemo(
+    () => displayRows.filter((item) => !item.isHidden).length,
+    [displayRows],
+  );
 
   return (
     <div className="flex flex-col h-full min-h-0 min-w-0 bg-[#080e0a]">
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+      <div
+        ref={tableScrollRef}
+        className={`relative flex-1 min-h-0 overflow-y-auto overflow-x-auto scrollbar-thin ${treeResizing ? 'select-none' : ''}`}
+      >
+        {!treeOnly && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-valuenow={treeColumnWidth}
+            onPointerDown={onTreeSashPointerDown}
+            className="absolute top-0 bottom-0 z-30 w-1 cursor-col-resize bg-[#1a3a2a]/80 hover:bg-emerald-400/45 transition-colors"
+            style={{ left: treeColumnWidth - 2 }}
+          />
+        )}
         <table className="w-full border-collapse text-left overflow-visible">
           <thead className="sticky top-0 z-20 bg-[#080e0a]">
             <tr className="border-b border-[#1a3a2a]">
-              <th className={`${treeOnly ? 'w-full' : 'w-[260px] min-w-[260px]'} px-3 py-2 border-r border-[#1a3a2a] font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 text-left`}>
-                Albero
+              <th
+                className={`${treeOnly ? 'w-full' : ''} px-3 py-2 border-r border-[#1a3a2a] font-mono text-xs uppercase tracking-widest text-emerald-400/50 text-left align-top`}
+                style={treeOnly ? undefined : { width: treeColumnWidth, minWidth: treeColumnWidth, maxWidth: treeColumnWidth }}
+              >
+                <span>Albero</span>
+                <TreeRootFilterInput value={rootFilter} onChange={setRootFilter} />
               </th>
-              {!treeOnly && MSG_HEADERS.map((h, i) => (
-                <th
-                  key={h}
-                  className={`px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 whitespace-nowrap ${i < MSG_HEADERS.length - 1 ? 'border-r border-[#1a3a2a]' : ''}`}
-                >
-                  {h}
-                </th>
-              ))}
+              {!treeOnly && (
+                <>
+                  <th className={`px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 ${visibleNoMatchCount > 0 ? 'border-r border-[#1a3a2a]' : ''}`} style={{ minWidth: 140 }}>
+                    Domanda
+                  </th>
+                  {noMatchColumns.show1 && (
+                    <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]">
+                      1° no match
+                    </th>
+                  )}
+                  {noMatchColumns.show2 && (
+                    <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]">
+                      2° no match
+                    </th>
+                  )}
+                  {noMatchColumns.show3 && (
+                    <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]">
+                      3° no match
+                    </th>
+                  )}
+                  <th
+                    className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50"
+                    title="Conferma selezione"
+                  >
+                    Conferma
+                  </th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((item) => (
+            {visibleRowCount === 0 && rootFilterActive ? (
+              <tr>
+                <td
+                  colSpan={treeOnly ? 1 : 2 + visibleNoMatchCount + 1}
+                  className="px-4 py-8 text-center font-mono text-sm text-emerald-400/35"
+                >
+                  Nessuna radice corrisponde al filtro.
+                </td>
+              </tr>
+            ) : (
+            displayRows.map((item) => (
               <Fragment key={item.originalIndex}>
                 {!item.isHidden && (
                   <SplitMessageRow
@@ -1561,10 +1877,14 @@ const SplitAgentTable = memo(function SplitAgentTable({
                     onAnswerGrammarTooltipShow={onAnswerGrammarTooltipShow}
                     onAnswerGrammarTooltipHide={onAnswerGrammarTooltipHide}
                     treeOnly={treeOnly}
+                    treeColumnWidth={treeColumnWidth}
+                    noMatchColumns={noMatchColumns}
+                    pathOrderingCategories={pathOrderingCategories}
                   />
                 )}
               </Fragment>
-            ))}
+            ))
+            )}
           </tbody>
         </table>
       </div>
@@ -1592,6 +1912,7 @@ function FlatRow({
   onToggleGrammarEdit,
   onGrammarSave,
   onGrammarEditCancel,
+  noMatchColumns = DEFAULT_NO_MATCH_COLUMNS,
 }: {
   row: AnalysisRow;
   rowIndex: number;
@@ -1607,6 +1928,7 @@ function FlatRow({
   grammarEditTarget: GrammarEditTarget | null;
   allSlots: string[];
   itemPaths: string[];
+  noMatchColumns?: NoMatchColumnVisibility;
   onToggleGrammarEdit: (slot: string, mode: GrammarEditMode) => void;
   onGrammarSave: (slot: string, mode: GrammarEditMode, grammar: GrammarEntry) => void;
   onGrammarEditCancel: () => void;
@@ -1674,7 +1996,7 @@ function FlatRow({
     <Fragment>
       {needsSeparator && (
         <tr aria-hidden="true">
-          <td colSpan={5} className="p-0 h-px bg-[#1a3a2a]" />
+          <td colSpan={countTreeTableColumns(noMatchColumns)} className="p-0 h-px bg-[#1a3a2a]" />
         </tr>
       )}
       <tr className={`relative hover:z-30 transition-colors hover:brightness-110 ${rowBg}`}>
@@ -1692,7 +2014,7 @@ function FlatRow({
               <SlotPathDisplay path={row.slot_filling} className={slotTextColor} emphasizeLeaf />
             )}
             {!editingPath && isStart && (
-              <span className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-amber-300 font-mono text-[9px] font-bold uppercase tracking-wider">
+              <span className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-amber-300 font-mono text-sm font-bold uppercase tracking-wider">
                 <Zap className="w-2.5 h-2.5" />START
               </span>
             )}
@@ -1726,7 +2048,7 @@ function FlatRow({
                   if (e.key === 'Escape') { setAddMode(null); setAddDraft(''); }
                 }}
                 placeholder={addMode === 'child' ? 'nome figlio…' : 'nome sibling…'}
-                className="bg-[#0a1510] border border-emerald-400/40 rounded px-1.5 py-0.5 font-mono text-xs text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/70 w-36 transition-colors"
+                className="bg-[#0a1510] border border-emerald-400/40 rounded px-1.5 py-0.5 font-mono text-sm text-emerald-200 placeholder-emerald-400/20 focus:outline-none focus:border-emerald-400/70 w-36 transition-colors"
               />
               <button onClick={confirmAdd} className="p-0.5 text-emerald-400/60 hover:text-emerald-400 transition-colors">
                 <Check className="w-3 h-3" />
@@ -1748,39 +2070,45 @@ function FlatRow({
           onCancel={cancelEdit}
           onStartEdit={startEdit}
         />
-        <DataCell
-          field="no_match_1"
-          value={row.no_match_1}
-          {...messageCellStatusProps(row, 'no_match_1', patchRow)}
-          editingField={editingField}
-          draftValue={draftValue}
-          onDraftChange={setDraftValue}
-          onSave={saveEdit}
-          onCancel={cancelEdit}
-          onStartEdit={startEdit}
-        />
-        <DataCell
-          field="no_match_2"
-          value={row.no_match_2}
-          {...messageCellStatusProps(row, 'no_match_2', patchRow)}
-          editingField={editingField}
-          draftValue={draftValue}
-          onDraftChange={setDraftValue}
-          onSave={saveEdit}
-          onCancel={cancelEdit}
-          onStartEdit={startEdit}
-        />
-        <DataCell
-          field="no_match_3"
-          value={row.no_match_3}
-          {...messageCellStatusProps(row, 'no_match_3', patchRow)}
-          editingField={editingField}
-          draftValue={draftValue}
-          onDraftChange={setDraftValue}
-          onSave={saveEdit}
-          onCancel={cancelEdit}
-          onStartEdit={startEdit}
-        />
+        {noMatchColumns.show1 && (
+          <DataCell
+            field="no_match_1"
+            value={row.no_match_1}
+            {...messageCellStatusProps(row, 'no_match_1', patchRow)}
+            editingField={editingField}
+            draftValue={draftValue}
+            onDraftChange={setDraftValue}
+            onSave={saveEdit}
+            onCancel={cancelEdit}
+            onStartEdit={startEdit}
+          />
+        )}
+        {noMatchColumns.show2 && (
+          <DataCell
+            field="no_match_2"
+            value={row.no_match_2}
+            {...messageCellStatusProps(row, 'no_match_2', patchRow)}
+            editingField={editingField}
+            draftValue={draftValue}
+            onDraftChange={setDraftValue}
+            onSave={saveEdit}
+            onCancel={cancelEdit}
+            onStartEdit={startEdit}
+          />
+        )}
+        {noMatchColumns.show3 && (
+          <DataCell
+            field="no_match_3"
+            value={row.no_match_3}
+            {...messageCellStatusProps(row, 'no_match_3', patchRow)}
+            editingField={editingField}
+            draftValue={draftValue}
+            onDraftChange={setDraftValue}
+            onSave={saveEdit}
+            onCancel={cancelEdit}
+            onStartEdit={startEdit}
+          />
+        )}
       </tr>
     </Fragment>
   );
@@ -1791,6 +2119,7 @@ function FlatRow({
 function FlatTable({
   rows,
   showOnlyMessageNodes = false,
+  noMatchColumns = DEFAULT_NO_MATCH_COLUMNS,
   onUpdateRow,
   onDeleteRow,
   onAddRow,
@@ -1803,9 +2132,11 @@ function FlatTable({
   onToggleGrammarEdit,
   onGrammarSave,
   onGrammarEditCancel,
+  pathOrderingCategories = [],
 }: {
   rows: AnalysisRow[];
   showOnlyMessageNodes?: boolean;
+  noMatchColumns?: NoMatchColumnVisibility;
   onUpdateRow: (idx: number, updates: Partial<AnalysisRow>) => void;
   onDeleteRow: (idx: number) => void;
   onAddRow: (slot: string) => void;
@@ -1818,11 +2149,15 @@ function FlatTable({
   onToggleGrammarEdit: (slot: string, mode: GrammarEditMode) => void;
   onGrammarSave: (slot: string, mode: GrammarEditMode, grammar: GrammarEntry) => void;
   onGrammarEditCancel: () => void;
+  pathOrderingCategories?: TokenCategory[];
 }) {
   const orderedRows = useMemo(() => {
-    const ordered = orderAnalysisRowsDepthFirst(rows);
+    const ordered = orderAnalysisRowsDepthFirst(
+      rows,
+      pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
+    );
     return showOnlyMessageNodes ? ordered.filter(rowHasMessage) : ordered;
-  }, [rows, showOnlyMessageNodes]);
+  }, [rows, showOnlyMessageNodes, pathOrderingCategories]);
   const indexBySlot = useMemo(
     () => new Map(rows.map((r, i) => [r.slot_filling, i])),
     [rows],
@@ -1840,15 +2175,30 @@ function FlatTable({
     <table className="w-full border-collapse text-left overflow-visible">
       <thead className="sticky top-0 z-10 bg-[#080e0a]">
         <tr className="border-b border-[#1a3a2a]">
-          {['Path Completo', 'Domanda', '1° no match', '2° no match', '3° no match'].map((h, i) => (
-            <th
-              key={i}
-              className={`px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-emerald-400/50 ${i < 4 ? 'border-r border-[#1a3a2a]' : ''} ${i === 0 ? 'whitespace-nowrap' : ''}`}
-              style={i === 1 ? { minWidth: 200 } : i > 1 ? { minWidth: 150 } : undefined}
-            >
-              {h}
+          <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]">
+            Path Completo
+          </th>
+          <th
+            className={`px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 ${countNoMatchColumns(noMatchColumns) > 0 ? 'border-r border-[#1a3a2a]' : ''}`}
+            style={{ minWidth: 200 }}
+          >
+            Domanda
+          </th>
+          {noMatchColumns.show1 && (
+            <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]" style={{ minWidth: 150 }}>
+              1° no match
             </th>
-          ))}
+          )}
+          {noMatchColumns.show2 && (
+            <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50 border-r border-[#1a3a2a]" style={{ minWidth: 150 }}>
+              2° no match
+            </th>
+          )}
+          {noMatchColumns.show3 && (
+            <th className="px-3 py-2 font-mono text-xs uppercase tracking-widest text-emerald-400/50" style={{ minWidth: 150 }}>
+              3° no match
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -1879,6 +2229,7 @@ function FlatTable({
               onToggleGrammarEdit={onToggleGrammarEdit}
               onGrammarSave={onGrammarSave}
               onGrammarEditCancel={onGrammarEditCancel}
+              noMatchColumns={noMatchColumns}
             />
             );
           });
@@ -1921,13 +2272,13 @@ function AffinaPanel({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Wand2 className="w-3.5 h-3.5 text-amber-400/70" />
-          <span className="font-mono text-xs text-amber-400/80 font-semibold">Affina tassonomia</span>
+          <span className="font-mono text-sm text-amber-400/80 font-semibold">Affina tassonomia</span>
         </div>
         <button onClick={onClose} className="text-emerald-400/30 hover:text-emerald-400/70 transition-colors">
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
-      <p className="font-mono text-[11px] text-emerald-400/50 leading-relaxed">
+      <p className="font-mono text-sm text-emerald-400/50 leading-relaxed">
         Descrivi come modificare la <strong className="text-emerald-400/70 font-normal">struttura ad albero</strong>.
         L&apos;affinamento usa solo i path esistenti — <strong className="text-emerald-400/70 font-normal">non rilegge il documento</strong>.
         {hasAgent && (
@@ -1940,7 +2291,7 @@ function AffinaPanel({
             key={s}
             type="button"
             onClick={() => appendSuggestion(s)}
-            className="px-2 py-0.5 rounded border border-[#1a3a2a] bg-[#0a1510] font-mono text-[10px] text-emerald-400/50 hover:text-emerald-400/80 hover:border-emerald-400/30 transition-colors text-left"
+            className="px-2 py-0.5 rounded border border-[#1a3a2a] bg-[#0a1510] font-mono text-sm text-emerald-400/50 hover:text-emerald-400/80 hover:border-emerald-400/30 transition-colors text-left"
           >
             {s.length > 52 ? `${s.slice(0, 52)}…` : s}
           </button>
@@ -1952,12 +2303,12 @@ function AffinaPanel({
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Es: spezza di più ginocchio destro in ginocchio + destro; manca esami.ecografie.addome completo…"
         rows={4}
-        className="w-full bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2 font-mono text-xs text-emerald-200/80 placeholder-emerald-400/20 resize-none focus:outline-none focus:border-emerald-400/40 transition-colors"
+        className="w-full bg-[#0a1510] border border-[#1a3a2a] rounded px-3 py-2 font-mono text-sm text-emerald-200/80 placeholder-emerald-400/20 resize-none focus:outline-none focus:border-emerald-400/40 transition-colors"
       />
       <button
         onClick={() => onSubmit(notes)}
         disabled={!canSubmit}
-        className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
+        className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
       >
         {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
         {generating ? 'Affinamento in corso…' : 'Applica affinamento'}
@@ -1983,6 +2334,8 @@ export function AnalysisView({
   onTestOpenChange,
   convaiOpen: convaiOpenProp,
   onConvaiOpenChange,
+  convaiNoBeOpen: convaiNoBeOpenProp,
+  onConvaiNoBeOpenChange,
   convaiExportContext = null,
   leafDescriptionMap = null,
   selectedSlot = null,
@@ -1996,6 +2349,7 @@ export function AnalysisView({
   dictionaryMode = false,
   agentDictionaryContext = null,
   onGenerateDialogueMessages,
+  pathOrderingCategories = [],
 }: AnalysisViewProps) {
   const {
     analysis, loading, initialLoadDone, saving, analysisDirty, generating, generatingPhase, agentGenProgress,
@@ -2006,6 +2360,7 @@ export function AnalysisView({
     updateRow, deleteRow, addRow, restructurePath, dirtyRoots, regeningRoots, regenSubtreeFull, regenGrammarsSubtree,
   } = analysisApi;
   const [showOnlyMessageNodes, setShowOnlyMessageNodes] = useState(false);
+  const [noMatchColumns, setNoMatchColumns] = useState<NoMatchColumnVisibility>(DEFAULT_NO_MATCH_COLUMNS);
   const [grammarOverwriteLocal, setGrammarOverwriteLocal] = useState(false);
   const grammarOverwrite = externalToolbar
     ? grammarOverwriteProp
@@ -2017,6 +2372,9 @@ export function AnalysisView({
   const canRunGrammarGeneration = hasTaxonomy && !generating
     && (grammarOverwrite || missingGrammarCount > 0);
   const [viewMode, setViewMode] = useState<ViewMode>('tree');
+  const [taxonomyTreeWidth, setTaxonomyTreeWidth] = useState(readStoredTreeColumnWidth);
+  const [taxonomyResizing, setTaxonomyResizing] = useState(false);
+  const taxonomySplitRef = useRef<HTMLDivElement>(null);
   const [grammarEditTargetLocal, setGrammarEditTargetLocal] = useState<GrammarEditTarget | null>(null);
   const grammarEditTarget = grammarEditTargetProp ?? grammarEditTargetLocal;
   const setGrammarEditTarget = onGrammarEditTargetChange ?? setGrammarEditTargetLocal;
@@ -2028,6 +2386,8 @@ export function AnalysisView({
   const setTestOpen = onTestOpenChange ?? setTestOpenLocal;
   const convaiOpen = convaiOpenProp ?? false;
   const setConvaiOpen = onConvaiOpenChange ?? (() => {});
+  const convaiNoBeOpen = convaiNoBeOpenProp ?? false;
+  const setConvaiNoBeOpen = onConvaiNoBeOpenChange ?? (() => {});
 
   const rows: AnalysisRow[] = analysis?.rows ?? [];
   const itemPaths = useMemo(
@@ -2035,6 +2395,39 @@ export function AnalysisView({
     [rows, analysis?.item_paths],
   );
   const hasData = rows.length > 0;
+
+  const testAgentBundle = useMemo(() => {
+    const dictionary = convaiExportContext?.dictionary ?? agentDictionaryContext?.dictionary;
+    const descriptions = convaiExportContext?.descriptions
+      ?? agentDictionaryContext?.descriptions
+      ?? [];
+    if (!dictionary || !analysis?.rows?.length) return null;
+    try {
+      return compileAgentBundle({
+        documentName: doc.name,
+        documentId: doc.id,
+        mode: 'preview',
+        dictionary,
+        descriptions,
+        analysis,
+        leafDescriptionMap: leafDescriptionMap ?? undefined,
+        loadedRefs: convaiExportContext?.loadedRefs,
+        dictionaryDirty: convaiExportContext?.dictionaryDirty,
+        analysisDirty,
+        pathsOutOfSync: convaiExportContext?.pathsOutOfSync,
+      });
+    } catch {
+      return null;
+    }
+  }, [
+    convaiExportContext,
+    agentDictionaryContext,
+    analysis,
+    leafDescriptionMap,
+    doc.name,
+    doc.id,
+    analysisDirty,
+  ]);
 
   useEffect(() => {
     onHasData?.(hasData);
@@ -2102,6 +2495,33 @@ export function AnalysisView({
 
   const canGenerateDialogue = !!onGenerateDialogueMessages && hasTaxonomy && !isDialogueGenerating;
 
+  const onTaxonomySashPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    setTaxonomyResizing(true);
+    const startX = e.clientX;
+    const startWidth = taxonomyTreeWidth;
+    let lastWidth = startWidth;
+
+    const onMove = (ev: PointerEvent) => {
+      lastWidth = Math.min(TREE_COLUMN_MAX_PX, Math.max(TREE_COLUMN_MIN_PX, startWidth + ev.clientX - startX));
+      setTaxonomyTreeWidth(lastWidth);
+    };
+
+    const onUp = () => {
+      setTaxonomyResizing(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      try {
+        localStorage.setItem(TREE_COLUMN_WIDTH_KEY, String(Math.round(lastWidth)));
+      } catch {
+        /* ignore */
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [taxonomyTreeWidth]);
+
   const generatingLabel =
     generatingPhase === 'taxonomy'
       ? 'Sto costruendo la tassonomia…'
@@ -2136,9 +2556,10 @@ export function AnalysisView({
       itemPaths,
       row.answer_grammar,
       'answer',
+      pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
     );
     return state.panels;
-  }, [grammarTooltip, rows, itemPaths]);
+  }, [grammarTooltip, rows, itemPaths, pathOrderingCategories]);
 
   const grammarEditRow = grammarEditTarget
     ? rows.find((r) => r.slot_filling === grammarEditTarget.slot)
@@ -2172,20 +2593,26 @@ export function AnalysisView({
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const reviewStats = useMemo(
-    () => (hasData && hasMessages ? computeMessageReviewStats(rows, itemPaths) : null),
-    [hasData, hasMessages, rows, itemPaths],
+    () => (hasData && hasMessages
+      ? computeMessageReviewStats(
+        rows,
+        itemPaths,
+        pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined,
+      )
+      : null),
+    [hasData, hasMessages, rows, itemPaths, pathOrderingCategories],
   );
   const approvedCount = reviewStats?.validated ?? 0;
   const rejectedCount = reviewStats?.rejected ?? 0;
   const uncertainCount = reviewStats?.uncertain ?? 0;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex-shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
-        <div className="flex items-center gap-3">
+    <div className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden">
+      <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 border-b border-[#1a3a2a] bg-[#0a1510] min-w-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-emerald-400/60" />
-            <span className="font-mono text-xs text-emerald-400/60">
+            <span className="font-mono text-sm text-emerald-400/60">
               {hasData
                 ? taxonomyOnly
                   ? `${rows.length} nodi · Tassonomia`
@@ -2198,13 +2625,13 @@ export function AnalysisView({
             </span>
           </div>
           {analysisDirty && (
-            <span className="flex items-center gap-1 font-mono text-[10px] text-amber-400/90 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10">
+            <span className="flex items-center gap-1 font-mono text-xs text-amber-400/90 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 whitespace-nowrap">
               <AlertTriangle className="w-3 h-3 flex-shrink-0" />
               modifiche non salvate
             </span>
           )}
           {reviewStats && reviewStats.total > 0 && (
-            <span className="font-mono text-[10px] text-emerald-400/70">
+            <span className="font-mono text-xs text-emerald-400/70">
               {reviewStats.total} messaggi ·{' '}
               <span className="text-emerald-300/90">{reviewStats.validated} validati ({reviewStats.validatedPct}%)</span>
               {' · '}
@@ -2218,7 +2645,7 @@ export function AnalysisView({
             </span>
           )}
           {hasData && (
-            <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wider border ${
+            <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-xs font-bold uppercase tracking-wider border whitespace-nowrap ${
               agentReady
                 ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-400'
                 : messagesReady
@@ -2237,7 +2664,7 @@ export function AnalysisView({
             </span>
           )}
           {hasData && (approvedCount > 0 || rejectedCount > 0 || uncertainCount > 0) && !reviewStats && (
-            <div className="flex items-center gap-2 font-mono text-[10px]">
+            <div className="flex items-center gap-2 font-mono text-xs">
               {approvedCount > 0 && <span className="text-emerald-400/70">{approvedCount} validati</span>}
               {rejectedCount > 0 && <span className="text-red-400/70">{rejectedCount} rifiutati</span>}
               {uncertainCount > 0 && <span className="text-amber-400/70">{uncertainCount} incerti</span>}
@@ -2245,33 +2672,37 @@ export function AnalysisView({
           )}
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap justify-end">
+        <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0 max-w-full">
           {hasData && hasMessages && (
             <>
+              <NoMatchColumnToggles
+                visibility={noMatchColumns}
+                onChange={setNoMatchColumns}
+              />
               <button
                 type="button"
                 onClick={() => setShowOnlyMessageNodes((v) => !v)}
-                title={showOnlyMessageNodes ? 'Mostra tutte le celle' : 'Mostra solo celle con messaggi'}
-                className={`flex items-center gap-1 px-2 py-1 font-mono text-[10px] rounded border transition-colors ${
+                title={showOnlyMessageNodes ? 'Mostra tutte le celle' : 'Mostra solo nodi con domanda'}
+                className={`flex items-center gap-1 px-2 py-1 font-mono text-xs rounded border transition-colors whitespace-nowrap ${
                   showOnlyMessageNodes
                     ? 'text-amber-300 border-amber-400/40 bg-amber-400/10'
                     : 'text-emerald-400/50 border-[#1a3a2a] hover:border-emerald-400/30 hover:text-emerald-400/80'
                 }`}
               >
                 <Filter className="w-3 h-3" />
-                {showOnlyMessageNodes ? 'Mostra tutte le celle' : 'Mostra solo celle con messaggi'}
+                {showOnlyMessageNodes ? 'Tutte' : 'Solo domande'}
               </button>
               <button
                 type="button"
                 onClick={() => void reviewMessagesWithAi(doc.name, documentText ?? '').catch(() => {})}
                 disabled={generating || !hasTaxonomy}
-                className="flex items-center gap-1.5 px-2.5 py-1 font-mono text-[10px] rounded border border-violet-400/30 text-violet-200/90 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 px-2.5 py-1 font-mono text-xs rounded border border-violet-400/30 text-violet-200/90 hover:bg-violet-400/10 transition-colors disabled:opacity-40 whitespace-nowrap"
                 title="Rigenera i messaggi con IA e li marca come da validare"
               >
                 {generating && generatingPhase === 'messages'
                   ? <Loader2 className="w-3 h-3 animate-spin" />
                   : <Sparkles className="w-3 h-3" />}
-                Revisiona i messaggi con IA
+                Revisiona IA
               </button>
             </>
           )}
@@ -2283,7 +2714,7 @@ export function AnalysisView({
                   type="button"
                   onClick={() => void saveAnalysis()}
                   disabled={!analysisDirty || saving || generating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
+                  className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
                 >
                   {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   {saving ? 'Salvataggio…' : 'Salva analisi'}
@@ -2293,7 +2724,7 @@ export function AnalysisView({
                     type="button"
                     onClick={() => void discardAnalysisChanges()}
                     disabled={saving || generating}
-                    className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
+                    className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
                   >
                     <RotateCcw className="w-3 h-3" />
                     Annulla
@@ -2323,7 +2754,7 @@ export function AnalysisView({
               <button
                 onClick={() => setAffinaOpen(!affinaOpen)}
                 disabled={generating}
-                className="flex items-center gap-1 px-2 py-1 font-mono text-[10px] text-amber-400/60 border border-amber-400/25 rounded hover:border-amber-400/50 hover:text-amber-400/90 transition-colors disabled:opacity-30"
+                className="flex items-center gap-1 px-2 py-1 font-mono text-sm text-amber-400/60 border border-amber-400/25 rounded hover:border-amber-400/50 hover:text-amber-400/90 transition-colors disabled:opacity-30"
               >
                 <Wand2 className="w-3 h-3" />Affina
               </button>
@@ -2332,7 +2763,7 @@ export function AnalysisView({
               <button
                 onClick={handleGenerateAgent}
                 disabled={!canRun}
-                className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
               >
                 {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
                 {generatingPhase === 'messages' ? 'Generazione…' : 'Genera messaggi'}
@@ -2344,8 +2775,8 @@ export function AnalysisView({
                   onClick={() => void (async () => {
                     const overwrite = grammarOverwrite;
                     try {
-                      const next = await generateGrammars(grammarTokens, documentText ?? '', doc.name, overwrite);
-                      if (next) onTokenGrammarSaved?.(next);
+                      const result = await generateGrammars(grammarTokens, documentText ?? '', doc.name, overwrite);
+                      if (result) onTokenGrammarSaved?.(result);
                       if (overwrite) setGrammarOverwriteMode(false);
                     } catch { /* error in hook */ }
                   })()}
@@ -2353,7 +2784,7 @@ export function AnalysisView({
                   title={grammarOverwrite
                     ? 'Sovrascrive tutte le grammatiche (istantaneo)'
                     : 'Genera grammatiche dai path (istantaneo)'}
-                  className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
+                  className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
                 >
                   <Braces className="w-3.5 h-3.5" />
                   {grammarOverwrite
@@ -2373,7 +2804,7 @@ export function AnalysisView({
                   })()}
                   disabled={!canRun || !canRunGrammarGeneration}
                   title="Affina grammatiche con IA (lento)"
-                  className="flex items-center gap-1 px-2 py-1.5 font-mono text-[10px] rounded border border-violet-400/30 text-violet-300/80 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
+                  className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm rounded border border-violet-400/30 text-violet-300/80 hover:bg-violet-400/10 transition-colors disabled:opacity-40"
                 >
                   {generating && generatingPhase === 'grammars' ? <Loader2 className="w-3 h-3 animate-spin" /> : 'IA'}
                 </button>
@@ -2399,7 +2830,7 @@ export function AnalysisView({
                 onClick={initiateTaxonomy}
                 disabled={!canRun}
                 title="Rigenera la tassonomia da zero (cancella l'agente)"
-                className="flex items-center gap-1 px-2 py-1 font-mono text-[10px] text-emerald-400/50 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/80 transition-colors disabled:opacity-30"
+                className="flex items-center gap-1 px-2 py-1 font-mono text-sm text-emerald-400/50 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/80 transition-colors disabled:opacity-30"
               >
                 <Layers className="w-3 h-3" />Rigenera tassonomia
               </button>
@@ -2410,7 +2841,7 @@ export function AnalysisView({
                 title={agentReady
                   ? 'Apri chat di test'
                   : 'Apri chat (genera le grammatiche per il riconoscimento risposte)'}
-                className={`flex items-center gap-1 px-2 py-1 font-mono text-[10px] border rounded transition-colors ${
+                className={`flex items-center gap-1 px-2 py-1 font-mono text-sm border rounded transition-colors ${
                   testOpen
                     ? 'text-emerald-300 border-emerald-400/50 bg-emerald-400/10'
                     : agentReady
@@ -2425,7 +2856,7 @@ export function AnalysisView({
               <button
                 onClick={initiateTaxonomy}
                 disabled={!canRun}
-                className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
               >
                 {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
                 {generatingPhase === 'taxonomy' ? 'Generazione…' : 'Genera tassonomia'}
@@ -2446,7 +2877,7 @@ export function AnalysisView({
       )}
 
       {taxonomyOnly && !generating && !affinaOpen && !externalToolbar && (
-        <div className="flex-shrink-0 px-4 py-2 border-b border-amber-400/20 bg-amber-400/5 font-mono text-[11px] text-amber-400/80">
+        <div className="flex-shrink-0 px-4 py-2 border-b border-amber-400/20 bg-amber-400/5 font-mono text-sm text-amber-400/80">
           Tassonomia pronta ({rows.length} nodi). Usa <strong className="font-normal">Affina</strong> per raffinare la struttura, poi <strong className="font-normal">Genera messaggi</strong> e infine <strong className="font-normal">Crea grammatiche</strong>.
         </div>
       )}
@@ -2459,7 +2890,7 @@ export function AnalysisView({
       )}
 
       {generating && (generatingPhase === 'messages' || generatingPhase === 'grammars') && hasData && externalToolbar && (
-        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-1.5 border-b border-emerald-400/15 bg-emerald-400/5 font-mono text-[10px] text-emerald-400/70">
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-1.5 border-b border-emerald-400/15 bg-emerald-400/5 font-mono text-sm text-emerald-400/70">
           <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
           {agentGenProgress
             ? `${generatingPhase === 'grammars' ? 'Grammatiche' : 'Messaggi'} — ramo ${agentGenProgress.current}/${agentGenProgress.total}`
@@ -2468,13 +2899,13 @@ export function AnalysisView({
       )}
 
       {error && !generating && !hasData && (
-        <div className="flex items-center gap-2 mx-4 mt-3 px-3 py-2 rounded border border-red-400/30 bg-red-400/5 text-red-400 font-mono text-xs">
+        <div className="flex items-center gap-2 mx-4 mt-3 px-3 py-2 rounded border border-red-400/30 bg-red-400/5 text-red-400 font-mono text-sm">
           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
           {error}
         </div>
       )}
       {regenError && (
-        <div className="flex items-center gap-2 mx-4 mt-2 px-3 py-2 rounded border border-amber-400/30 bg-amber-400/5 text-amber-400 font-mono text-xs">
+        <div className="flex items-center gap-2 mx-4 mt-2 px-3 py-2 rounded border border-amber-400/30 bg-amber-400/5 text-amber-400 font-mono text-sm">
           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
           Ricalcolo fallito: {regenError}
         </div>
@@ -2519,12 +2950,21 @@ export function AnalysisView({
           )}
           <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
           {showAgentTaxonomyLayout ? (
-            <>
-              <div className="w-[280px] flex-shrink-0 min-h-0 border-r border-[#1a3a2a] overflow-hidden">
+            <div
+              ref={taxonomySplitRef}
+              className={`flex flex-1 min-h-0 min-w-0 overflow-hidden ${taxonomyResizing ? 'select-none' : ''}`}
+            >
+              <div
+                className="flex-shrink-0 min-h-0 overflow-hidden"
+                style={{ width: taxonomyTreeWidth }}
+              >
                 <SplitAgentTable
                   treeOnly
+                  treeColumnWidth={taxonomyTreeWidth}
+                  onTreeColumnWidthChange={setTaxonomyTreeWidth}
                   rows={rows}
                   showOnlyMessageNodes={showOnlyMessageNodes}
+                  noMatchColumns={noMatchColumns}
                   selectedSlot={selectedSlot}
                   onSelectSlot={handleSelectSlot}
                   onUpdateRow={updateRow}
@@ -2541,15 +2981,23 @@ export function AnalysisView({
                   onGrammarEditCancel={closeGrammarEdit}
                   onAnswerGrammarTooltipShow={showAnswerGrammarTooltip}
                   onAnswerGrammarTooltipHide={hideAnswerGrammarTooltip}
+                  pathOrderingCategories={pathOrderingCategories}
                 />
               </div>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-valuenow={taxonomyTreeWidth}
+                onPointerDown={onTaxonomySashPointerDown}
+                className="w-1 flex-shrink-0 cursor-col-resize bg-[#1a3a2a] hover:bg-emerald-400/45 transition-colors"
+              />
               <AgentDialoguePrompt
                 onGenerate={handleGenerateDialogueMessages}
                 generating={isDialogueGenerating}
                 disabled={!canGenerateDialogue}
                 progress={agentGenProgress}
               />
-            </>
+            </div>
           ) : (
           <>
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -2557,6 +3005,7 @@ export function AnalysisView({
               <SplitAgentTable
                 rows={rows}
                 showOnlyMessageNodes={showOnlyMessageNodes}
+                noMatchColumns={noMatchColumns}
                 selectedSlot={selectedSlot}
                 onSelectSlot={handleSelectSlot}
                 onUpdateRow={updateRow}
@@ -2573,11 +3022,13 @@ export function AnalysisView({
                 onGrammarEditCancel={closeGrammarEdit}
                 onAnswerGrammarTooltipShow={showAnswerGrammarTooltip}
                 onAnswerGrammarTooltipHide={hideAnswerGrammarTooltip}
+                pathOrderingCategories={pathOrderingCategories}
               />
             ) : viewMode === 'tree' ? (
               <TreeTable
                 rows={rows}
                 showOnlyMessageNodes={showOnlyMessageNodes}
+                noMatchColumns={noMatchColumns}
                 onUpdateRow={updateRow}
                 onDeleteRow={deleteRow}
                 onAddRow={addRow}
@@ -2592,11 +3043,13 @@ export function AnalysisView({
                 onGrammarEditCancel={closeGrammarEdit}
                 onAnswerGrammarTooltipShow={showAnswerGrammarTooltip}
                 onAnswerGrammarTooltipHide={hideAnswerGrammarTooltip}
+                pathOrderingCategories={pathOrderingCategories}
               />
             ) : (
               <FlatTable
                 rows={rows}
                 showOnlyMessageNodes={showOnlyMessageNodes}
+                noMatchColumns={noMatchColumns}
                 onUpdateRow={updateRow}
                 onDeleteRow={deleteRow}
                 onAddRow={addRow}
@@ -2609,18 +3062,13 @@ export function AnalysisView({
                 onToggleGrammarEdit={toggleGrammarEdit}
                 onGrammarSave={handleGrammarSaveForSlot}
                 onGrammarEditCancel={closeGrammarEdit}
+                pathOrderingCategories={pathOrderingCategories}
               />
             )}
           </div>
           {testOpen && (
             <ChatPanel
-              rows={rows}
-              agentConfig={{
-                start_question: analysis?.start_question ?? null,
-                confirmation_preamble: analysis?.confirmation_preamble ?? null,
-                item_paths: analysis?.item_paths ?? null,
-                tokens: grammarTokens,
-              }}
+              agentBundle={testAgentBundle}
               onClose={() => setTestOpen(false)}
             />
           )}
@@ -2644,6 +3092,7 @@ export function AnalysisView({
           itemPaths={itemPaths}
           grammar={grammarEditRow.answer_grammar}
           question={grammarEditRow.question}
+          categories={pathOrderingCategories.length > 0 ? pathOrderingCategories : undefined}
           onSave={(grammar) => handleGrammarSaveForSlot(grammarEditTarget.slot, 'answer', grammar)}
           onClose={closeGrammarEdit}
         />
@@ -2651,14 +3100,31 @@ export function AnalysisView({
 
       {convaiOpen && convaiExportContext?.dictionary && (
         <ConvaiExportPanel
+          documentId={doc.id}
           documentName={doc.name}
           dictionary={convaiExportContext.dictionary}
           descriptions={convaiExportContext.descriptions}
           analysis={analysis}
+          loadedRefs={convaiExportContext.loadedRefs}
           dictionaryDirty={convaiExportContext.dictionaryDirty}
           analysisDirty={analysisDirty}
           pathsOutOfSync={convaiExportContext.pathsOutOfSync}
           onClose={() => setConvaiOpen(false)}
+        />
+      )}
+
+      {convaiNoBeOpen && convaiExportContext?.dictionary && (
+        <ConvaiNoBeExportPanel
+          documentId={doc.id}
+          documentName={doc.name}
+          dictionary={convaiExportContext.dictionary}
+          descriptions={convaiExportContext.descriptions}
+          analysis={analysis}
+          loadedRefs={convaiExportContext.loadedRefs}
+          dictionaryDirty={convaiExportContext.dictionaryDirty}
+          analysisDirty={analysisDirty}
+          pathsOutOfSync={convaiExportContext.pathsOutOfSync}
+          onClose={() => setConvaiNoBeOpen(false)}
         />
       )}
     </div>

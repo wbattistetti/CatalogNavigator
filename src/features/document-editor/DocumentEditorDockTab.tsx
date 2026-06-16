@@ -26,7 +26,7 @@ export function DocumentEditorDockTab(props: IDockviewPanelHeaderProps) {
 
   return (
     <div
-      className={`flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] min-w-0 h-full ${
+      className={`flex items-center gap-1.5 px-2 py-1 font-mono text-sm min-w-0 h-full ${
         active ? 'text-emerald-50' : 'text-emerald-400/65'
       }`}
     >

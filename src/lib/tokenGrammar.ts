@@ -139,15 +139,26 @@ export function syncRowGrammarsFromTokens(
   });
 }
 
+/** Resolves a dictionary token for a tree segment (case/dash insensitive). */
+export function resolveCanonicalTokenEntry(
+  tokens: TokenEntry[],
+  slotTokenText: string,
+): TokenEntry | undefined {
+  const canonical = tokens.filter(isCanonicalToken);
+  const direct = canonical.find((t) => t.text === slotTokenText);
+  if (direct) return direct;
+  const key = normalizeSlotKey(slotTokenText);
+  return canonical.find((t) => normalizeSlotKey(t.text) === key);
+}
+
 /** Canonical tokens in the tree that lack a valid grammar. */
 export function findTokensMissingGrammar(
   slots: string[],
   tokens: TokenEntry[],
 ): string[] {
   const needed = collectUniqueTokensFromSlots(slots);
-  const byText = new Map(tokens.filter(isCanonicalToken).map((t) => [t.text, t]));
   return needed.filter((text) => {
-    const entry = byText.get(text);
+    const entry = resolveCanonicalTokenEntry(tokens, text);
     return !entry || !isTokenGrammarComplete(entry);
   });
 }

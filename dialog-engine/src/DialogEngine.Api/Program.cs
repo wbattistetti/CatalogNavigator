@@ -1,0 +1,378 @@
+/**
+
+ * ASP.NET host for the VB DialogEngine library (sole runtime for agent turns).
+
+ */
+
+using System.Text.Json;
+
+using System.Text.Json.Serialization;
+
+using DialogEngine;
+
+using DialogEngine.Models;
+
+
+
+var builder = WebApplication.CreateBuilder(args);
+
+
+
+builder.WebHost.UseUrls(
+
+    builder.Configuration["Urls"]
+
+    ?? Environment.GetEnvironmentVariable("DIALOG_ENGINE_URLS")
+
+    ?? "http://127.0.0.1:5190");
+
+
+
+builder.Services.AddCors(options =>
+
+{
+
+    options.AddDefaultPolicy(policy => policy
+
+        .SetIsOriginAllowed(origin =>
+
+        {
+
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+
+            return uri.Host is "localhost" or "127.0.0.1";
+
+        })
+
+        .AllowAnyHeader()
+
+        .AllowAnyMethod());
+
+});
+
+
+
+var app = builder.Build();
+
+app.UseCors();
+
+
+
+var jsonOptions = new JsonSerializerOptions
+
+{
+
+    PropertyNameCaseInsensitive = true,
+
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+
+};
+
+
+
+static AgentTurnInput ParseTurnInput(JsonElement root)
+
+{
+
+    var incoming = new List<Concept>();
+
+    if (root.TryGetProperty("incomingConcepts", out var conceptsEl) && conceptsEl.ValueKind == JsonValueKind.Array)
+
+    {
+
+        foreach (var item in conceptsEl.EnumerateArray())
+
+        {
+
+            var category = item.TryGetProperty("category", out var catEl) ? catEl.GetString()?.Trim() : null;
+
+            var value = item.TryGetProperty("value", out var valEl) ? valEl.GetString()?.Trim() : null;
+
+            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(value)) continue;
+
+            var kind = item.TryGetProperty("kind", out var kindEl) ? kindEl.GetString()?.Trim() : null;
+
+            var unit = item.TryGetProperty("unit", out var unitEl) ? unitEl.GetString()?.Trim() : null;
+
+            incoming.Add(new Concept { Category = category, Value = value, Kind = kind, Unit = unit });
+
+        }
+
+    }
+
+    else if (root.TryGetProperty("incomingSlots", out var slotsEl) && slotsEl.ValueKind == JsonValueKind.Array)
+
+    {
+
+        foreach (var item in slotsEl.EnumerateArray())
+
+        {
+
+            var category = item.TryGetProperty("categoryName", out var catEl) ? catEl.GetString()?.Trim() : null;
+
+            var value = item.TryGetProperty("value", out var valEl) ? valEl.GetString()?.Trim() : null;
+
+            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(value)) continue;
+
+            incoming.Add(new Concept { Category = category, Value = value });
+
+        }
+
+    }
+
+
+
+    var transcript = root.TryGetProperty("transcript", out var txEl) ? txEl.GetString()?.Trim() : null;
+
+    var confirmImplicit = root.TryGetProperty("confirmImplicitConcepts", out var ciEl) && ciEl.GetBoolean();
+
+
+
+    return new AgentTurnInput
+
+    {
+
+        IncomingConcepts = incoming,
+
+        Transcript = transcript,
+
+        ConfirmImplicitConcepts = confirmImplicit,
+
+    };
+
+}
+
+
+
+static AgentTurnResult RunTurn(AgentBundle bundle, AgentSessionState state, AgentTurnInput turn)
+
+{
+
+    if (turn.IncomingConcepts.Count > 0)
+
+        return AgentTurnEngine.ProcessAgentTurn(bundle, state, turn);
+
+    if (!string.IsNullOrWhiteSpace(turn.Transcript))
+
+        return AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, turn.Transcript);
+
+    return AgentTurnEngine.ProcessAgentTurn(bundle, state, turn);
+
+}
+
+
+
+app.MapGet("/health", () => Results.Json(new { ok = true, engine = "vb-dialog" }));
+
+
+
+app.MapPost("/api/runtime/agent-turn", async (HttpRequest request) =>
+
+{
+
+    try
+
+    {
+
+        using var doc = await JsonDocument.ParseAsync(request.Body);
+
+        var root = doc.RootElement;
+
+
+
+        if (!root.TryGetProperty("bundle", out var bundleEl))
+
+            return Results.Json(new { ok = false, error = "bundle mancante." }, statusCode: 400);
+
+
+
+        var bundle = BundleJson.LoadBundle(bundleEl.GetRawText());
+
+        if (bundle.Catalog?.Items is null || bundle.Catalog.Items.Count == 0)
+
+            return Results.Json(new { ok = false, error = "bundle.catalog.items vuoto." }, statusCode: 400);
+
+
+
+        var reset = root.TryGetProperty("reset", out var resetEl) && resetEl.GetBoolean();
+
+        AgentSessionState state;
+
+        if (reset || !root.TryGetProperty("state", out var stateEl) || stateEl.ValueKind is JsonValueKind.Null)
+
+            state = AgentTurnEngine.InitAgentSession();
+
+        else
+
+            state = TurnJson.LoadSessionState(stateEl);
+
+
+
+        var turn = ParseTurnInput(root);
+
+        var result = RunTurn(bundle, state, turn);
+
+
+
+        var conversationId = root.TryGetProperty("conversationId", out var convEl) ? convEl.GetString()?.Trim() : null;
+
+        var documentId = root.TryGetProperty("documentId", out var docEl) ? docEl.GetString()?.Trim() : null;
+
+
+
+        if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(documentId))
+
+        {
+
+            var http = HttpResponseBuilder.BuildAgentDialogStepHttpResponse(conversationId, documentId, result);
+
+            return Results.Json(http, jsonOptions);
+
+        }
+
+
+
+        return Results.Json(new
+
+        {
+
+            ok = true,
+
+            instruction = result.Instruction,
+
+            parsed = result.Parsed,
+
+            spokenHint = result.SpokenHint,
+
+            candidateCount = result.CandidateCount,
+
+            candidatePaths = result.SurvivingPaths,
+
+            nextState = result.NextState,
+
+        }, jsonOptions);
+
+    }
+
+    catch (Exception ex)
+
+    {
+
+        return Results.Json(new { ok = false, error = ex.Message }, statusCode: 500);
+
+    }
+
+});
+
+
+
+app.MapPost("/api/test/text-turn", async (HttpRequest request) =>
+
+{
+
+    try
+
+    {
+
+        using var doc = await JsonDocument.ParseAsync(request.Body);
+
+        var root = doc.RootElement;
+
+
+
+        var userText = root.TryGetProperty("userText", out var textEl)
+
+            ? textEl.GetString()?.Trim() ?? string.Empty
+
+            : string.Empty;
+
+
+
+        if (string.IsNullOrWhiteSpace(userText))
+
+            return Results.Json(new { ok = false, error = "userText mancante." }, statusCode: 400);
+
+
+
+        if (!root.TryGetProperty("bundle", out var bundleEl))
+
+            return Results.Json(new { ok = false, error = "bundle mancante." }, statusCode: 400);
+
+
+
+        var bundle = BundleJson.LoadBundle(bundleEl.GetRawText());
+
+        if (bundle.Catalog?.Items is null || bundle.Catalog.Items.Count == 0)
+
+            return Results.Json(new { ok = false, error = "bundle.catalog.items vuoto." }, statusCode: 400);
+
+
+
+        var reset = root.TryGetProperty("reset", out var resetEl) && resetEl.GetBoolean();
+
+        AgentSessionState state;
+
+        if (reset || !root.TryGetProperty("state", out var stateEl) || stateEl.ValueKind is JsonValueKind.Null)
+
+            state = AgentTurnEngine.InitAgentSession();
+
+        else
+
+            state = TurnJson.LoadSessionState(stateEl);
+
+
+
+        var result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, userText);
+
+
+
+        return Results.Json(new
+
+        {
+
+            ok = true,
+
+            spokenHint = result.SpokenHint,
+
+            selectedPath = result.NextState.SelectedPath,
+
+            nextState = result.NextState,
+
+            instruction = result.Instruction,
+
+            parsed = result.Parsed,
+
+            candidateCount = result.CandidateCount,
+
+            candidatePaths = result.SurvivingPaths,
+
+            debug = new
+
+            {
+
+                log = HttpResponseBuilder.FormatInstructionLog(result.Instruction),
+
+                parsedBlock = AgentTurnEngine.FormatAgentParsedBlock(result.Parsed, result.Instruction),
+
+            },
+
+        }, jsonOptions);
+
+    }
+
+    catch (Exception ex)
+
+    {
+
+        return Results.Json(new { ok = false, error = ex.Message }, statusCode: 500);
+
+    }
+
+});
+
+
+
+app.Run();
+

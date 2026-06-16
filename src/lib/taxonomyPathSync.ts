@@ -4,8 +4,15 @@
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import { buildTaxonomyFromItemPaths } from './analyzeAiPostProcess';
-import { invalidateNluAtSlots, mergeTaxonomyWithExistingNlu } from './nluQuestionRules';
+import { applyNluQuestionRules, invalidateNluAtSlots, mergeTaxonomyWithExistingNlu } from './nluQuestionRules';
 import { normalizeItemPaths } from './itemPaths';
+import type { TokenCategory } from './dictionaryTree';
+import { getPathOrderingCategories } from './pathCanonicalize';
+import type { LoadedDictionaryRef } from './multiDictionarySegment';
+import {
+  canonicalizeItemPaths,
+  canonicalizeItemPathsFromLoadedRefs,
+} from './pathCanonicalize';
 
 export interface TaxonomySyncSummary {
   addedItemPaths: number;
@@ -20,6 +27,32 @@ export interface TaxonomySyncResult {
   dirtyRoots: string[];
   pathsUnchanged: boolean;
   summary: TaxonomySyncSummary;
+}
+
+export interface TaxonomySyncOptions {
+  /** Canonicalize path segment order from single-dictionary categories. */
+  categories?: TokenCategory[];
+  /** Canonicalize path segment order from multi-dictionary ownership. */
+  loadedRefs?: LoadedDictionaryRef[];
+}
+
+function resolvePathOrderingCategories(options?: TaxonomySyncOptions): TokenCategory[] | undefined {
+  if (options?.loadedRefs?.length) return getPathOrderingCategories(options.loadedRefs);
+  if (options?.categories?.length) return options.categories;
+  return undefined;
+}
+
+function canonicalizePathsForSync(
+  paths: string[],
+  options?: TaxonomySyncOptions,
+): string[] {
+  if (options?.loadedRefs?.length) {
+    return normalizeItemPaths(canonicalizeItemPathsFromLoadedRefs(paths, options.loadedRefs));
+  }
+  if (options?.categories?.length) {
+    return normalizeItemPaths(canonicalizeItemPaths(paths, options.categories));
+  }
+  return normalizeItemPaths(paths);
 }
 
 function setsEqual(a: string[], b: string[]): boolean {
@@ -98,13 +131,15 @@ export function syncTaxonomyFromLeafPaths(
   newLeafPaths: string[],
   existingRows?: AnalysisRow[] | null,
   existingItemPaths?: string[] | null,
+  options?: TaxonomySyncOptions,
 ): TaxonomySyncResult {
-  const item_paths = normalizeItemPaths(newLeafPaths);
+  const item_paths = canonicalizePathsForSync(newLeafPaths, options);
   if (item_paths.length === 0) {
     throw new Error('Nessun path item dal corpus');
   }
 
-  const oldItemPaths = normalizeItemPaths(existingItemPaths ?? []);
+  const rawOldItemPaths = normalizeItemPaths(existingItemPaths ?? []);
+  const oldItemPaths = canonicalizePathsForSync(existingItemPaths ?? [], options);
   const emptySummary: TaxonomySyncSummary = {
     addedItemPaths: 0,
     removedItemPaths: 0,
@@ -112,7 +147,12 @@ export function syncTaxonomyFromLeafPaths(
     removedSlots: 0,
   };
 
-  if (existingRows?.length && setsEqual(item_paths, oldItemPaths)) {
+  const storedPathsAlreadyCanonical = setsEqual(rawOldItemPaths, oldItemPaths);
+  if (
+    existingRows?.length
+    && setsEqual(item_paths, oldItemPaths)
+    && storedPathsAlreadyCanonical
+  ) {
     return {
       rows: existingRows,
       item_paths: oldItemPaths,
@@ -122,7 +162,11 @@ export function syncTaxonomyFromLeafPaths(
     };
   }
 
-  const { rows: builtRows, item_paths: builtItems } = buildTaxonomyFromItemPaths(item_paths);
+  const pathOrderingCategories = resolvePathOrderingCategories(options);
+  const { rows: builtRows, item_paths: builtItems } = buildTaxonomyFromItemPaths(
+    item_paths,
+    pathOrderingCategories,
+  );
   const merged = mergeTaxonomyWithExistingNlu(builtRows, existingRows);
 
   const oldSlots = new Set(existingRows?.map((row) => row.slot_filling) ?? []);
@@ -141,9 +185,17 @@ export function syncTaxonomyFromLeafPaths(
     ? findDirtyRootsFromSlotDiff(oldSlots, newSlots)
     : [];
 
-  const rows = dirtyRoots.length > 0
+  const invalidated = dirtyRoots.length > 0
     ? invalidateNluAtSlots(merged, dirtyRoots)
     : merged;
+
+  const slotList = invalidated.map((row) => row.slot_filling);
+  const rows = applyNluQuestionRules(
+    slotList,
+    invalidated,
+    builtItems,
+    pathOrderingCategories,
+  );
 
   return {
     rows,

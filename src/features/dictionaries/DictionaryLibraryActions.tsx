@@ -108,10 +108,10 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
 
   const loadedIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const d of dicts.projectDicts) ids.add(d.id);
+    if (dicts.projectDictionaryId) ids.add(dicts.projectDictionaryId);
     for (const d of linkedLoaded) ids.add(d.id);
     return ids;
-  }, [dicts.projectDicts, linkedLoaded]);
+  }, [dicts.projectDictionaryId, linkedLoaded]);
 
   const libraryInSystem = useMemo(
     () => dicts.available.filter((d) => d.scope === 'library'),
@@ -122,6 +122,14 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
     () => libraryInSystem.filter((d) => !loadedIds.has(d.id)),
     [libraryInSystem, loadedIds],
   );
+
+  const hasProjectDictionary = dicts.projectDictionaryId != null;
+
+  useEffect(() => {
+    if (hasProjectDictionary && newScope === 'project') {
+      setNewScope('library');
+    }
+  }, [hasProjectDictionary, newScope]);
 
   useEffect(() => {
     if (!creating) return;
@@ -158,13 +166,13 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
     setBusy(true);
     setLocalError(null);
     try {
-      await dicts.unloadLibraryDictionary(dictionaryId);
+      await ctx.handleUnloadLibraryDictionary(dictionaryId);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Scollegamento fallito');
     } finally {
       setBusy(false);
     }
-  }, [dicts]);
+  }, [ctx]);
 
   const handleCreate = async () => {
     setBusy(true);
@@ -235,14 +243,16 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
                     <option key={i.id} value={i.id}>{i.label}</option>
                   ))}
                 </select>
-                <ScopeRadio
-                  scope="project"
-                  current={newScope}
-                  onSelect={() => setNewScope('project')}
-                  icon={FolderKanban}
-                  label="Progetto"
-                  iconColor="#34d399"
-                />
+                {!hasProjectDictionary && (
+                  <ScopeRadio
+                    scope="project"
+                    current={newScope}
+                    onSelect={() => setNewScope('project')}
+                    icon={FolderKanban}
+                    label="Progetto"
+                    iconColor="#34d399"
+                  />
+                )}
                 <ScopeRadio
                   scope="library"
                   current={newScope}
@@ -301,10 +311,16 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
           type="button"
           disabled={busy}
           onClick={() => setLibraryOpen((v) => !v)}
-          className={`${btnClass} border-sky-400/50 text-sky-200 hover:bg-sky-400/15 disabled:opacity-40`}
+          title="Collega un dizionario dalla libreria al progetto"
+          className={`${btnClass} border-sky-400/50 text-sky-200 hover:bg-sky-400/15 disabled:opacity-40 ${
+            compact ? 'max-w-[9rem]' : ''
+          }`}
         >
-          Carica
-          <ChevronDown className={`w-3 h-3 transition-transform ${libraryOpen ? 'rotate-180' : ''}`} />
+          <Library className="w-3 h-3 flex-shrink-0" />
+          <span className={compact ? 'truncate' : 'whitespace-nowrap'}>
+            {compact ? 'Da libreria' : 'Carica dizionario da libreria'}
+          </span>
+          <ChevronDown className={`w-3 h-3 flex-shrink-0 transition-transform ${libraryOpen ? 'rotate-180' : ''}`} />
         </button>
         {libraryOpen && (
           <div className="absolute left-0 top-full mt-1 z-[100] min-w-[16rem] max-w-[22rem] max-h-72 overflow-y-auto rounded border border-[#1a3a2a] bg-[#0a1510] shadow-xl py-1">
@@ -314,18 +330,33 @@ export function DictionaryLibraryActions({ dicts: dictsProp, compact = false }: 
                   Nel progetto (tokenizzazione)
                 </div>
                 {linkedLoaded.map((d) => (
-                  <button
+                  <div
                     key={d.id}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void handleUnloadLibrary(d.id)}
-                    className={`w-full flex items-center gap-2 pl-3 pr-3 py-1.5 ${DICT_UI_TEXT} text-emerald-200/80 hover:bg-red-400/10 text-left disabled:opacity-40`}
+                    className={`flex items-center gap-0.5 pl-1 pr-1 ${DICT_UI_TEXT}`}
                   >
-                    <Unlink className="w-3 h-3 text-red-400/70 flex-shrink-0" />
-                    <DictionaryIcon iconKey={d.icon_key} iconColor={d.icon_color} size="xs" />
-                    <span className="truncate flex-1">{d.name}</span>
-                    <span className="text-red-400/60">Scollega</span>
-                  </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        dicts.openDictionaryEditor(d.id);
+                        setLibraryOpen(false);
+                      }}
+                      className="flex-1 min-w-0 flex items-center gap-2 pl-2 pr-2 py-1.5 text-emerald-200/90 hover:bg-sky-400/10 text-left disabled:opacity-40"
+                      title="Apri tab dizionario"
+                    >
+                      <DictionaryIcon iconKey={d.icon_key} iconColor={d.icon_color} size="xs" />
+                      <span className="truncate flex-1">{d.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void handleUnloadLibrary(d.id)}
+                      className="flex-shrink-0 p-1.5 rounded text-red-400/60 hover:bg-red-400/10 hover:text-red-400 disabled:opacity-40"
+                      title="Scollega dal progetto"
+                    >
+                      <Unlink className="w-3 h-3" />
+                    </button>
+                  </div>
                 ))}
                 {(loadGroups.length > 0) && (
                   <div className="border-t border-[#1a3a2a] my-1" />

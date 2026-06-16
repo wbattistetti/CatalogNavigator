@@ -19,6 +19,7 @@ import {
 } from './documentEditorContextDef';
 import {
   normalizeSplitLayout,
+  splitLayoutIncludesTab,
   type EditorSplitLayout,
 } from './documentEditorSplitLayout';
 
@@ -31,8 +32,8 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
   const didAutoOntology = useRef(false);
 
   const projectDictionaryId = useMemo(
-    () => controller.dicts.projectDicts[0]?.id ?? controller.dicts.editingDictionaryId,
-    [controller.dicts.projectDicts, controller.dicts.editingDictionaryId],
+    () => controller.dicts.projectDictionaryId ?? controller.dicts.editingDictionaryId,
+    [controller.dicts.projectDictionaryId, controller.dicts.editingDictionaryId],
   );
 
   const visibleTabs = useMemo(() => {
@@ -84,11 +85,17 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
     if (!id) return;
     controller.dicts.openDictionaryEditor(id);
     controller.dicts.focusDictionaryEditor(id);
-    setActiveTab(EDITOR_TAB_IDS.dictionaries);
+
+    const dictionariesAlreadyVisible = splitLayoutIncludesTab(splitLayout, EDITOR_TAB_IDS.dictionaries);
+    if (!dictionariesAlreadyVisible) {
+      setActiveTabState(EDITOR_TAB_IDS.dictionaries);
+      setSplitLayoutState({ type: 'single' });
+    }
+
     if (opts?.focusToken) {
       setDictionaryTreeFocus({ dictionaryId: id, tokenText: opts.focusToken });
     }
-  }, [controller.dicts, projectDictionaryId, setActiveTab]);
+  }, [controller.dicts, projectDictionaryId, splitLayout]);
 
   const clearDictionaryTreeFocus = useCallback(() => {
     setDictionaryTreeFocus(null);

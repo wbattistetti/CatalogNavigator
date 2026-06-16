@@ -2,7 +2,7 @@
  * Tokenization workflow: corpus editor (dictionary tree is in the Dizionari tab).
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Loader2, AlertCircle, Check } from 'lucide-react';
+import { BookOpen, Loader2, AlertCircle, Check, Library, X } from 'lucide-react';
 import type { KbDocument } from '../../lib/supabase';
 import type { ParsedTabular } from '../../lib/parseTabular';
 import type { TokenCategory } from '../../lib/dictionaryTree';
@@ -12,7 +12,11 @@ import {
   type TokenDictionary,
   type TokenEntry,
 } from '../../lib/tokenDictionary';
-import { mergeLoadedTokens } from '../../lib/multiDictionarySegment';
+import {
+  mergeAllDictionarySessionsIntoLoadedRefs,
+  mergeLoadedTokens,
+} from '../../lib/multiDictionarySegment';
+import { getPathOrderingCategories } from '../../lib/pathCanonicalize';
 import {
   persistDocumentColumnRoles,
   setDescriptionColumnRole,
@@ -20,6 +24,7 @@ import {
 import type { UseProjectDictionariesResult } from '../../hooks/useProjectDictionaries';
 import { DictionaryIcon } from './DictionaryIcon';
 import { CorpusTokenEditor } from './CorpusTokenEditor';
+import { dictionaryTabDisplayName } from '../../lib/dictionaryTabOrder';
 import { DescriptionColumnSelect } from './DescriptionColumnSelect';
 
 export type DictionaryAfterSaveHandler = (
@@ -39,6 +44,7 @@ export interface DictionaryPanelState {
   getMergedDictionary: () => TokenDictionary | null;
   getDescriptions: () => string[];
   replaceTokens: (tokens: TokenEntry[]) => void;
+  replaceCategories: (categories: TokenCategory[]) => void;
 }
 
 interface DictionaryPanelProps {
@@ -49,6 +55,8 @@ interface DictionaryPanelProps {
   onDocUpdated: (doc: KbDocument) => void;
   onStateChange: (state: DictionaryPanelState) => void;
   onAfterSave?: DictionaryAfterSaveHandler;
+  onUnloadLibraryDictionary?: (dictionaryId: string) => void | Promise<void>;
+  onOpenDictionary?: (dictionaryId: string) => void;
   syncNotice?: string | null;
   error: string | null;
 }
@@ -63,12 +71,19 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   onDocUpdated,
   onStateChange,
   onAfterSave,
+  onUnloadLibraryDictionary,
+  onOpenDictionary,
   syncNotice = null,
   error,
 }: DictionaryPanelProps) {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [descriptionFilterStats, setDescriptionFilterStats] = useState({
+    visible: 0,
+    total: 0,
+    active: false,
+  });
 
   const descriptions = useMemo(() => {
     if (!descriptionColumn) return [];
@@ -77,7 +92,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     return tabular.rows.map((r) => r[idx] ?? '');
   }, [tabular, descriptionColumn]);
 
-  const projectDictId = dicts.projectDicts[0]?.id ?? null;
+  const projectDictId = dicts.projectDictionaryId;
   const projectSession = projectDictId ? dicts.getSession(projectDictId) : null;
   const projectMeta = projectDictId ? dicts.getDictionaryMeta(projectDictId) : null;
 
@@ -85,13 +100,38 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   const editingCategories = projectSession?.categories ?? [];
   const projectDirty = projectSession?.dirty ?? false;
 
-  const mergedTokens = useMemo(
-    () => mergeLoadedTokens(dicts.loadedRefs),
-    [dicts.loadedRefs],
-  );
-
-  const activeCount = getActiveTokens(mergedTokens).length;
+  const activeCount = useMemo(() => {
+    if (!projectDictId) {
+      return getActiveTokens(mergeLoadedTokens(dicts.loadedRefs)).length;
+    }
+    const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
+      dicts.loadedRefs,
+      (id) => dicts.getSession(id),
+    );
+    return getActiveTokens(mergeLoadedTokens(liveRefs)).length;
+  }, [
+    dicts.loadedRefs,
+    dicts.getSession,
+    dicts.dictionarySessionsRevision,
+    projectDictId,
+  ]);
   const rowCount = descriptions.filter((d) => d.trim()).length;
+
+  const loadedDictionaryLabels = useMemo(
+    () => dicts.loadedRefs.map((ref) => {
+      const isProject = ref.dictionary.id === projectDictId;
+      const tokenCount = isProject && projectSession
+        ? projectSession.tokens.filter((t) => !t.aliasOf).length
+        : ref.dictionary.tokens.filter((t) => !t.aliasOf).length;
+      return {
+        id: ref.dictionary.id,
+        name: dictionaryTabDisplayName(ref.dictionary),
+        scope: ref.dictionary.scope,
+        tokenCount,
+      };
+    }),
+    [dicts.loadedRefs, projectDictId, projectSession],
+  );
 
   const getEditingDictionary = useCallback((): TokenDictionary | null => {
     if (!descriptionColumn || !projectMeta) return null;
@@ -104,13 +144,21 @@ export const DictionaryPanel = memo(function DictionaryPanel({
 
   const getMergedDictionary = useCallback((): TokenDictionary | null => {
     if (!descriptionColumn || dicts.loadedRefs.length === 0) return null;
-    const allCategories = dicts.loadedRefs.flatMap((r) => r.dictionary.categories ?? []);
+    const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
+      dicts.loadedRefs,
+      (id) => dicts.getSession(id),
+    );
     return {
       descriptionColumn,
-      tokens: mergedTokens,
-      categories: allCategories,
+      tokens: mergeLoadedTokens(liveRefs),
+      categories: getPathOrderingCategories(liveRefs),
     };
-  }, [descriptionColumn, dicts.loadedRefs, mergedTokens]);
+  }, [
+    descriptionColumn,
+    dicts.loadedRefs,
+    dicts.getSession,
+    dicts.dictionarySessionsRevision,
+  ]);
 
   const handleSetDescriptionColumn = useCallback(async (column: string) => {
     setLocalError(null);
@@ -181,7 +229,16 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     const id = projectDictIdRef.current;
     if (!id) return;
     setSessionTokensRef.current(id, tokens);
-  }, []);
+    const session = dicts.getSession(id);
+    const categories = session?.categories ?? [];
+    dicts.setSessionCategories(id, syncCategoriesWithTokens(categories, tokens));
+  }, [dicts]);
+
+  const replaceCategories = useCallback((categories: TokenCategory[]) => {
+    const id = projectDictIdRef.current;
+    if (!id) return;
+    dicts.setSessionCategories(id, categories);
+  }, [dicts]);
 
   const panelState = useMemo((): DictionaryPanelState => ({
     dirty: projectDirty,
@@ -195,6 +252,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     getMergedDictionary,
     getDescriptions,
     replaceTokens,
+    replaceCategories,
   }), [
     projectDirty,
     saving,
@@ -207,6 +265,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     getMergedDictionary,
     getDescriptions,
     replaceTokens,
+    replaceCategories,
   ]);
 
   const panelRevision = useMemo(
@@ -238,7 +297,45 @@ export const DictionaryPanel = memo(function DictionaryPanel({
         <div className="flex items-center gap-2 flex-wrap">
           <BookOpen className="w-4 h-4 text-amber-400/70" />
           <span className="font-mono text-sm font-semibold text-emerald-300">Ontologia</span>
-          {projectMeta && (
+          {loadedDictionaryLabels.length > 0 ? (
+            <span className="flex items-center gap-1.5 flex-wrap text-xs">
+              {loadedDictionaryLabels.map((entry) => (
+                <span
+                  key={entry.id}
+                  className={`inline-flex items-center gap-1 rounded border overflow-hidden ${
+                    entry.scope === 'library'
+                      ? 'border-sky-400/35 bg-sky-400/8 text-sky-200/90'
+                      : 'border-emerald-400/35 bg-emerald-400/8 text-emerald-200/90'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenDictionary?.(entry.id)}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 hover:bg-white/5 transition-colors cursor-pointer"
+                    title={entry.scope === 'library'
+                      ? 'Apri editor dizionario libreria'
+                      : 'Apri editor dizionario di progetto'}
+                  >
+                    {entry.scope === 'library' && (
+                      <Library className="w-2.5 h-2.5 flex-shrink-0 opacity-80" aria-hidden />
+                    )}
+                    <span>{entry.name}</span>
+                    <span className="opacity-70 tabular-nums">({entry.tokenCount})</span>
+                  </button>
+                  {entry.scope === 'library' && onUnloadLibraryDictionary && (
+                    <button
+                      type="button"
+                      onClick={() => void onUnloadLibraryDictionary(entry.id)}
+                      className="p-0.5 mr-0.5 rounded text-sky-300/50 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                      title="Scollega dizionario libreria"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  )}
+                </span>
+              ))}
+            </span>
+          ) : projectMeta ? (
             <span className="flex items-center gap-1 font-mono text-[9px] text-sky-400/60">
               <DictionaryIcon
                 iconKey={projectMeta.icon_key}
@@ -247,7 +344,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
               />
               {projectMeta.name}
             </span>
-          )}
+          ) : null}
           {projectDirty && (
             <span className="font-mono text-[10px] text-amber-400/90 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10">
               modifiche non salvate
@@ -268,7 +365,11 @@ export const DictionaryPanel = memo(function DictionaryPanel({
                 variant="inline"
               />
               <span className="font-mono text-[10px] text-emerald-400/40">
-                {rowCount} righe · {dicts.loadedRefs.length} diz. · {activeCount} token attivi
+                {descriptionFilterStats.active
+                  ? `${descriptionFilterStats.visible} / ${descriptionFilterStats.total} righe`
+                  : `${rowCount} righe`}
+                {' · '}
+                {dicts.loadedRefs.length} diz. · {activeCount} token attivi
               </span>
             </>
           ) : null}
@@ -312,6 +413,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
             editingDictionaryId={projectDictId}
             onTokensChange={handleTokensChange}
             onCategoriesChange={handleCategoriesChange}
+            onRowFilterStatsChange={setDescriptionFilterStats}
           />
         </div>
       )}

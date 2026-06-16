@@ -8,6 +8,11 @@ import {
   type SegmentMatch,
 } from './dictionaryTree';
 import type { DictionaryScope, KbDictionary } from './dictionaryLibrary';
+import {
+  canonicalizePathSegmentsFromLoadedRefs,
+  getPathOrderingCategories,
+  getPrimaryLoadedDictionaryRef,
+} from './pathCanonicalize';
 import { collectWordSpanMatchesAfterShadow, type WordSpanMatch } from './phraseMatchEngine';
 import {
   applySuppressionCascade,
@@ -16,6 +21,7 @@ import {
   segmentWordsWithPositions,
   tokenizeToWords,
   type MatchPhrase,
+  type RowSegmentation,
   type TokenEntry,
 } from './tokenDictionary';
 
@@ -98,22 +104,36 @@ function segmentWordsMulti(
   return { matches, unmatched };
 }
 
+/**
+ * Orders matched tokens for path building using merged loaded-dictionary categories.
+ * Dictionary priority affects phrase collision resolution only, not path segment order.
+ */
 function orderTaggedSegments(matches: TaggedMatch[], loaded: LoadedDictionaryRef[]): SegmentedToken[] {
   if (matches.length === 0) return [];
 
-  const categoriesByDict = new Map(
-    loaded.map((l) => [l.dictionary.id, l.dictionary.categories ?? []]),
+  const categories = getPathOrderingCategories(loaded);
+  // Same canonical may match in project + library phrases — keep highest-priority dict match.
+  const uniqueByText = new Map<string, TaggedMatch>();
+  for (const match of [...matches].sort((a, b) => a.priority - b.priority)) {
+    if (!uniqueByText.has(match.text)) uniqueByText.set(match.text, match);
+  }
+  const deduped = [...uniqueByText.values()];
+
+  const orderedTexts = orderSegmentsByCategories(
+    deduped.map((m) => ({ text: m.text, wordStartIndex: m.wordStartIndex })),
+    categories,
   );
+  const byText = new Map(deduped.map((m) => [m.text, m]));
 
-  const sorted = [...matches].sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    const catA = getCategorySortOrder(a.text, categoriesByDict.get(a.dictionaryId) ?? []);
-    const catB = getCategorySortOrder(b.text, categoriesByDict.get(b.dictionaryId) ?? []);
-    if (catA !== catB) return catA - catB;
-    return a.wordStartIndex - b.wordStartIndex;
+  const primaryId = getPrimaryLoadedDictionaryRef(loaded)?.dictionary.id ?? '';
+
+  return orderedTexts.map((text) => {
+    const match = byText.get(text);
+    return {
+      text,
+      dictionaryId: match?.dictionaryId ?? primaryId,
+    };
   });
-
-  return sorted.map((m) => ({ text: m.text, dictionaryId: m.dictionaryId }));
 }
 
 /** Builds tagged match phrases from loaded dictionaries (project dicts first). */
@@ -157,10 +177,19 @@ export function segmentDescriptionMulti(
   const words = tokenizeToWords(normalized);
   const { matches, unmatched } = segmentWordsMulti(words, phrases);
   const segments = orderTaggedSegments(matches, loaded);
+  const path = canonicalizePathSegmentsFromLoadedRefs(
+    segments.map((s) => s.text).join('.'),
+    loaded,
+  );
 
   return {
-    segments,
-    path: segments.map((s) => s.text).join('.'),
+    segments: path
+      ? path.split('.').map((text) => {
+        const found = segments.find((s) => s.text === text);
+        return found ?? { text, dictionaryId: loaded[0]?.dictionary.id ?? '' };
+      })
+      : segments,
+    path,
     unmatched: [...new Set(unmatched)],
   };
 }
@@ -177,8 +206,35 @@ export function mergeLoadedTokens(loaded: LoadedDictionaryRef[]): TokenEntry[] {
   return [...byText.values()];
 }
 
+export interface DictionaryLiveSession {
+  tokens: TokenEntry[];
+  categories: TokenCategory[];
+}
+
 /**
  * Overlays unsaved edit-session tokens onto loaded refs so corpus chips match the live editor.
+ */
+export function mergeAllDictionarySessionsIntoLoadedRefs(
+  loadedRefs: LoadedDictionaryRef[],
+  getSession: (dictionaryId: string) => Pick<DictionaryLiveSession, 'tokens' | 'categories'> | null | undefined,
+): LoadedDictionaryRef[] {
+  if (loadedRefs.length === 0) return loadedRefs;
+  return loadedRefs.map((ref) => {
+    const session = getSession(ref.dictionary.id);
+    if (!session) return ref;
+    return {
+      ...ref,
+      dictionary: {
+        ...ref.dictionary,
+        tokens: applySuppressionCascade(session.tokens),
+        categories: session.categories,
+      },
+    };
+  });
+}
+
+/**
+ * Overlays one edit session onto loaded refs (legacy helper — prefer mergeAllDictionarySessionsIntoLoadedRefs).
  */
 export function mergeLiveEditingIntoLoadedRefs(
   loadedRefs: LoadedDictionaryRef[],
@@ -188,21 +244,15 @@ export function mergeLiveEditingIntoLoadedRefs(
 ): LoadedDictionaryRef[] {
   if (!editingDictionaryId) return loadedRefs;
 
-  const liveTokens = applySuppressionCascade(editingTokens);
-  let found = false;
-  const next = loadedRefs.map((ref) => {
-    if (ref.dictionary.id !== editingDictionaryId) return ref;
-    found = true;
-    return {
-      ...ref,
-      dictionary: {
-        ...ref.dictionary,
-        tokens: liveTokens,
-        categories: editingCategories,
-      },
-    };
-  });
+  let next = mergeAllDictionarySessionsIntoLoadedRefs(
+    loadedRefs,
+    (id) => (id === editingDictionaryId
+      ? { tokens: editingTokens, categories: editingCategories }
+      : null),
+  );
 
+  const liveTokens = applySuppressionCascade(editingTokens);
+  const found = next.some((ref) => ref.dictionary.id === editingDictionaryId);
   if (!found && liveTokens.length > 0) {
     const meta = loadedRefs[0]?.dictionary;
     next.push({
@@ -301,4 +351,29 @@ export function segmentDescriptionSingleDict(
 
 export function dictionaryScopeLabel(scope: DictionaryScope): string {
   return scope === 'library' ? 'Libreria' : 'Progetto';
+}
+
+/** Segments all corpus rows using loaded dictionaries (respects per-dict category order). */
+export function segmentAllDescriptionsFromLoadedRefs(
+  descriptions: string[],
+  loadedRefs: LoadedDictionaryRef[],
+): { leafPaths: string[]; rows: RowSegmentation[] } {
+  const rows: RowSegmentation[] = [];
+  const leafPaths: string[] = [];
+
+  descriptions.forEach((sourceText, rowIndex) => {
+    const trimmed = sourceText.trim();
+    if (!trimmed) return;
+    const result = segmentDescriptionMulti(trimmed, loadedRefs);
+    if (!result.path) return;
+    leafPaths.push(result.path);
+    rows.push({
+      rowIndex,
+      sourceText: trimmed,
+      path: result.path,
+      unmatched: result.unmatched,
+    });
+  });
+
+  return { leafPaths, rows };
 }

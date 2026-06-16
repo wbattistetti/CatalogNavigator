@@ -9,8 +9,11 @@ import {
   segmentAllDescriptions,
   type TokenDictionary,
 } from '../../lib/tokenDictionary';
-import { mergeLoadedTokens } from '../../lib/multiDictionarySegment';
-import { normalizeItemPaths } from '../../lib/itemPaths';
+import {
+  mergeAllDictionarySessionsIntoLoadedRefs,
+  mergeLoadedTokens,
+} from '../../lib/multiDictionarySegment';
+import { getPathOrderingCategories } from '../../lib/pathCanonicalize';
 import type { KbDocument } from '../../lib/supabase';
 import { supportsDictionaryFormat } from '../../lib/fileFormat';
 import type { DictionaryPanelState } from '../../components/DocumentViewer/DictionaryPanel';
@@ -18,27 +21,14 @@ import { useProjectDictionaries } from '../../hooks/useProjectDictionaries';
 import { useAnalysis, type GrammarEditTarget } from '../../hooks/useAnalysis';
 import { useDocumentContent } from '../../hooks/useDocumentContent';
 import { resolveDescriptionColumn } from '../../lib/columnRoles';
+import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRefresh';
+
+export type { AgentDictionaryContext };
 
 export interface UseDocumentEditorControllerOptions {
   doc: KbDocument;
   fileUrl: string;
   onDocUpdated: (doc: KbDocument) => void;
-}
-
-export type AgentDictionaryContext = {
-  dictionary: TokenDictionary;
-  descriptions: string[];
-  activeTokenCount: number;
-};
-
-function agentLeafPathsMatchDictionary(
-  leafPaths: string[],
-  itemPaths: string[] | null | undefined,
-): boolean {
-  const a = normalizeItemPaths(leafPaths);
-  const b = normalizeItemPaths(itemPaths ?? []);
-  if (a.length !== b.length) return false;
-  return a.every((path, index) => path === b[index]);
 }
 
 export function useDocumentEditorController({
@@ -50,6 +40,7 @@ export function useDocumentEditorController({
   const [affinaOpen, setAffinaOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [convaiOpen, setConvaiOpen] = useState(false);
+  const [convaiNoBeOpen, setConvaiNoBeOpen] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [grammarEditTarget, setGrammarEditTarget] = useState<GrammarEditTarget | null>(null);
   const [grammarOverwrite, setGrammarOverwrite] = useState(false);
@@ -70,10 +61,10 @@ export function useDocumentEditorController({
   const {
     load,
     initialLoadDone,
-    createAgentFromDictionary,
-    syncTaxonomyFromDictionary,
+    syncTaxonomyFromLoadedRefs,
     syncNotice,
     bindGrammarTokens,
+    bindPathOrderingCategories,
     syncGrammarsFromTokens,
   } = analysisApi;
 
@@ -82,6 +73,7 @@ export function useDocumentEditorController({
     setAffinaOpen(false);
     setTestOpen(false);
     setConvaiOpen(false);
+    setConvaiNoBeOpen(false);
     setSelectedSlot(null);
     setGrammarEditTarget(null);
   }, [doc.id]);
@@ -106,22 +98,10 @@ export function useDocumentEditorController({
     });
   }, []);
 
-  const handleDictionaryAfterSave = useCallback(
-    async (dictionary: Parameters<typeof syncTaxonomyFromDictionary>[0], descriptions: string[]) => {
-      try {
-        syncTaxonomyFromDictionary(dictionary, descriptions);
-        bindGrammarTokens(dictionary.tokens);
-        syncGrammarsFromTokens(dictionary.tokens);
-      } catch {
-        /* error surfaced via analysisApi.error */
-      }
-    },
-    [syncTaxonomyFromDictionary, bindGrammarTokens, syncGrammarsFromTokens],
-  );
-
-  const handleTokenGrammarSaved = useCallback(
-    (tokens: import('../../lib/tokenDictionary').TokenEntry[]) => {
-      dictState?.replaceTokens(tokens);
+  const handleGrammarSaved = useCallback(
+    (result: { tokens: import('../../lib/tokenDictionary').TokenEntry[]; categories: import('../../lib/dictionaryTree').TokenCategory[] }) => {
+      dictState?.replaceTokens(result.tokens);
+      dictState?.replaceCategories(result.categories);
     },
     [dictState],
   );
@@ -151,32 +131,30 @@ export function useDocumentEditorController({
 
   const agentDictionaryContext = useMemo((): AgentDictionaryContext | null => {
     if (!dictionaryMode || !content.tabular || !descriptionColumn) return null;
+    if (dicts.loadedRefs.length === 0) return null;
 
-    if (dictState) {
-      const dictionary = dictState.getMergedDictionary?.() ?? dictState.getDictionary();
-      const descriptions = dictState.getDescriptions();
-      if (dictionary && descriptions.length > 0 && dictState.activeTokenCount > 0) {
-        return {
-          dictionary,
-          descriptions,
-          activeTokenCount: dictState.activeTokenCount,
-        };
-      }
-    }
+    const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
+      dicts.loadedRefs,
+      (id) => dicts.getSession(id),
+    );
 
-    const idx = content.tabular.headers.indexOf(descriptionColumn);
-    if (idx < 0 || dicts.loadedRefs.length === 0) return null;
+    const descriptions = dictState?.getDescriptions()
+      ?? content.tabular.rows.map((row) => {
+        const idx = content.tabular!.headers.indexOf(descriptionColumn);
+        return idx >= 0 ? String(row[idx] ?? '') : '';
+      });
 
-    const descriptions = content.tabular.rows.map((row) => String(row[idx] ?? ''));
-    const mergedTokens = mergeLoadedTokens(dicts.loadedRefs);
-    const activeTokenCount = getActiveTokens(mergedTokens).length;
+    if (descriptions.length === 0) return null;
+
+    const tokens = mergeLoadedTokens(liveRefs);
+    const activeTokenCount = getActiveTokens(tokens).length;
     if (activeTokenCount === 0) return null;
 
     return {
       dictionary: {
         descriptionColumn,
-        tokens: mergedTokens,
-        categories: dicts.loadedRefs.flatMap((ref) => ref.dictionary.categories ?? []),
+        tokens,
+        categories: getPathOrderingCategories(liveRefs),
       },
       descriptions,
       activeTokenCount,
@@ -187,18 +165,33 @@ export function useDocumentEditorController({
     descriptionColumn,
     dictState,
     dicts.loadedRefs,
+    dicts.getSession,
+    dicts.dictionarySessionsRevision,
   ]);
 
-  const agentNeedsUpdate = useMemo(() => {
-    if (!agentDictionaryContext || !analysisApi.hasTaxonomy) return false;
-    const { leafPaths } = segmentAllDescriptions(
-      agentDictionaryContext.descriptions,
-      agentDictionaryContext.dictionary.tokens,
-      agentDictionaryContext.dictionary.categories ?? [],
-    );
-    if (leafPaths.length === 0) return false;
-    return !agentLeafPathsMatchDictionary(leafPaths, analysisApi.analysis?.item_paths);
-  }, [agentDictionaryContext, analysisApi.hasTaxonomy, analysisApi.analysis?.item_paths]);
+  const { agentNeedsUpdate, canRefreshOntology, refreshOntology, buildLiveLoadedRefs, liveLoadedRefs, pathOrderingCategories } = useOntologyRefresh({
+    dictState,
+    agentDictionaryContext,
+    dicts,
+    hasTaxonomy: analysisApi.hasTaxonomy,
+    generating: analysisApi.generating,
+    itemPaths: analysisApi.analysis?.item_paths,
+    syncTaxonomyFromLoadedRefs,
+  });
+
+  const handleDictionaryAfterSave = useCallback(
+    async (_dictionary: TokenDictionary, descriptions: string[]) => {
+      try {
+        const liveRefs = buildLiveLoadedRefs();
+        syncTaxonomyFromLoadedRefs(descriptions, liveRefs);
+        bindGrammarTokens(mergeLoadedTokens(liveRefs));
+        syncGrammarsFromTokens(mergeLoadedTokens(liveRefs));
+      } catch {
+        /* error surfaced via analysisApi.error */
+      }
+    },
+    [buildLiveLoadedRefs, syncTaxonomyFromLoadedRefs, bindGrammarTokens, syncGrammarsFromTokens],
+  );
 
   const grammarTokens = useMemo(() => {
     if (agentDictionaryContext?.dictionary.tokens.length) {
@@ -217,6 +210,10 @@ export function useDocumentEditorController({
       syncGrammarsFromTokens(grammarTokens);
     }
   }, [grammarTokens, analysisApi.hasTaxonomy, bindGrammarTokens, syncGrammarsFromTokens]);
+
+  useEffect(() => {
+    bindPathOrderingCategories(pathOrderingCategories);
+  }, [pathOrderingCategories, bindPathOrderingCategories]);
 
   const agentMountRevision = useMemo(
     () => (agentDictionaryContext
@@ -237,12 +234,9 @@ export function useDocumentEditorController({
 
     lastAgentMountRevision.current = agentMountRevision;
     try {
-      createAgentFromDictionary(
-        agentDictionaryContext.dictionary,
-        agentDictionaryContext.descriptions,
-        doc.name,
-        documentText ?? '',
-      );
+      const liveRefs = buildLiveLoadedRefs();
+      if (liveRefs.length === 0) return;
+      syncTaxonomyFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs);
     } catch {
       lastAgentMountRevision.current = null;
     }
@@ -253,10 +247,45 @@ export function useDocumentEditorController({
     analysisApi.hasTaxonomy,
     agentDictionaryContext,
     agentMountRevision,
-    createAgentFromDictionary,
-    doc.name,
-    documentText,
+    buildLiveLoadedRefs,
+    syncTaxonomyFromLoadedRefs,
   ]);
+
+  const handleUnloadLibraryDictionary = useCallback(
+    async (dictionaryId: string) => {
+      try {
+        const descriptions = dictState?.getDescriptions()
+          ?? agentDictionaryContext?.descriptions
+          ?? [];
+
+        const updatedRefs = await dicts.unloadLibraryDictionary(dictionaryId);
+        if (!updatedRefs) return;
+
+        const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
+          updatedRefs,
+          (id) => dicts.getSession(id),
+        );
+
+        if (descriptions.length > 0) {
+          syncTaxonomyFromLoadedRefs(descriptions, liveRefs);
+        }
+
+        const tokens = mergeLoadedTokens(liveRefs);
+        bindGrammarTokens(tokens);
+        syncGrammarsFromTokens(tokens);
+      } catch {
+        /* error surfaced via dicts.error or analysisApi.error */
+      }
+    },
+    [
+      dictState,
+      agentDictionaryContext,
+      dicts,
+      syncTaxonomyFromLoadedRefs,
+      bindGrammarTokens,
+      syncGrammarsFromTokens,
+    ],
+  );
 
   const dictionaryCatalog = useMemo(
     () => ({
@@ -295,6 +324,8 @@ export function useDocumentEditorController({
     setTestOpen,
     convaiOpen,
     setConvaiOpen,
+    convaiNoBeOpen,
+    setConvaiNoBeOpen,
     selectedSlot,
     setSelectedSlot,
     grammarEditTarget,
@@ -304,10 +335,17 @@ export function useDocumentEditorController({
     leafDescriptionMap,
     grammarTokens,
     handleDictionaryAfterSave,
-    handleTokenGrammarSaved,
+    handleUnloadLibraryDictionary,
+    handleGrammarSaved,
+    handleTokenGrammarSaved: handleGrammarSaved,
     syncNotice,
     agentDictionaryContext,
     agentNeedsUpdate,
+    canRefreshOntology,
+    refreshOntology,
+    buildLiveLoadedRefs,
+    liveLoadedRefs,
+    pathOrderingCategories,
   };
 }
 

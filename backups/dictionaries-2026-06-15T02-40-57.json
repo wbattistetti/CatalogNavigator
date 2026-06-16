@@ -1,0 +1,1047 @@
+{
+  "exportedAt": "2026-06-15T02:40:57.714Z",
+  "supabaseUrl": "http://127.0.0.1:54321",
+  "count": 8,
+  "dictionaries": [
+    {
+      "id": "43460e86-9bb7-4f02-a98c-604ac58ff532",
+      "name": "Esami",
+      "industry": "healthcare",
+      "industry_custom": null,
+      "description": null,
+      "scope": "library",
+      "project_id": null,
+      "icon_key": "Stethoscope",
+      "icon_color": "#38bdf8",
+      "categories": [],
+      "tokens": [],
+      "created_at": "2026-06-09T23:59:18.363113+00:00",
+      "updated_at": "2026-06-09T23:59:18.363113+00:00"
+    },
+    {
+      "id": "bbab35fa-bb96-460c-8425-fad92a3453b4",
+      "name": "Generale",
+      "industry": "retail",
+      "industry_custom": null,
+      "description": null,
+      "scope": "project",
+      "project_id": "a10a08da-a8ae-4068-a276-44ab0a437d55",
+      "icon_key": "ShoppingCart",
+      "icon_color": "#fb7185",
+      "categories": [],
+      "tokens": [],
+      "created_at": "2026-06-09T23:59:58.257855+00:00",
+      "updated_at": "2026-06-09T23:59:58.257855+00:00"
+    },
+    {
+      "id": "df29ee0e-c8df-4e00-a043-b9b812caa395",
+      "name": "Nuove prestazioni Monica",
+      "industry": "technology",
+      "industry_custom": null,
+      "description": "Dizionario passato sul doc di Monica",
+      "scope": "library",
+      "project_id": null,
+      "icon_key": "Cpu",
+      "icon_color": "#22d3ee",
+      "categories": [
+        {
+          "id": "cat_1781061666806_manj6m8",
+          "name": "specialità",
+          "type": "attributo",
+          "order": 0,
+          "iconKey": "Puzzle",
+          "iconColor": "#a78bfa",
+          "tokenTexts": [
+            "allergologica",
+            "andrologica",
+            "angiologica",
+            "cardiologica",
+            "chirurgia",
+            "chirurgica generale",
+            "chirurgica per scleroterapia",
+            "chirurgica plastica",
+            "dermatologica",
+            "diabetologica",
+            "dietologica",
+            "ematologica",
+            "endocrinologica",
+            "epatologica",
+            "fisiatrica",
+            "gastroenterologica",
+            "geriatrica",
+            "ginecologica",
+            "immunologica",
+            "internistica",
+            "nefrologica",
+            "neurochirurgica",
+            "neurologica",
+            "nutrizionistica",
+            "oculistica",
+            "ortopedica",
+            "otorinolaringoiatrica",
+            "pediatrica",
+            "pediatrico",
+            "pneumologica",
+            "reumatologica",
+            "senologica",
+            "urologica",
+            "venereologica"
+          ]
+        },
+        {
+          "id": "cat_1781061652083_e0y3rf2",
+          "name": "tipo visita",
+          "type": "attributo",
+          "order": 1,
+          "iconKey": "ClipboardList",
+          "iconColor": "#38bdf8",
+          "tokenTexts": [
+            "controllo",
+            "prima"
+          ]
+        },
+        {
+          "id": "cat_1781353565402_oi1nkew",
+          "name": "certificati",
+          "type": "attributo",
+          "order": 2,
+          "iconKey": "Folder",
+          "iconColor": "#f59e0b",
+          "tokenTexts": [
+            "certificato"
+          ]
+        },
+        {
+          "id": "cat_1781487157389_hx7rtcf",
+          "name": "tipo certificato",
+          "type": "attributo",
+          "order": 3,
+          "iconKey": "Folder",
+          "iconColor": "#f59e0b",
+          "tokenTexts": [
+            "idoneita",
+            "pratica sportiva"
+          ]
+        },
+        {
+          "id": "cat_1781487269831_1yrg3mu",
+          "name": "pratica sportiva",
+          "type": "attributo",
+          "order": 4,
+          "iconKey": "Folder",
+          "iconColor": "#f59e0b",
+          "tokenTexts": [
+            "agonistica"
+          ]
+        },
+        {
+          "id": "cat_1781158588246_fn1oial",
+          "name": "esame",
+          "type": "attributo",
+          "order": 5,
+          "iconKey": "FlaskConical",
+          "iconColor": "#22d3ee",
+          "tokenTexts": [
+            "ecocolordoppler",
+            "ecodoppler",
+            "elettrocardiogramma",
+            "escluso ecg",
+            "incluso ecografia e mammografia"
+          ]
+        },
+        {
+          "id": "cat_1781487192149_4m22enq",
+          "name": "tipo test",
+          "type": "attributo",
+          "order": 6,
+          "iconKey": "Folder",
+          "iconColor": "#f59e0b",
+          "tokenTexts": [
+            "da sforzo al ciclo ergometro"
+          ]
+        },
+        {
+          "id": "cat_1781209681160_zz0rsf2",
+          "name": "indicazione clinica",
+          "type": "attributo",
+          "order": 7,
+          "iconKey": "MapPin",
+          "iconColor": "#60a5fa",
+          "tokenTexts": [
+            "per ipotiroidismo tiroidite"
+          ]
+        },
+        {
+          "id": "cat_1781157654490_t0mjuaq",
+          "name": "organo",
+          "type": "attributo",
+          "order": 8,
+          "iconKey": "Heart",
+          "iconColor": "#f472b6",
+          "tokenTexts": [
+            "aorta",
+            "epiaortici",
+            "vasi"
+          ]
+        },
+        {
+          "id": "cat_1781157666112_u9898bz",
+          "name": "parte del corpo",
+          "type": "attributo",
+          "order": 9,
+          "iconKey": "PersonStanding",
+          "iconColor": "#818cf8",
+          "tokenTexts": [
+            "arti"
+          ]
+        },
+        {
+          "id": "cat_1781061719434_oc24h22",
+          "name": "fascia di età",
+          "type": "vincolo",
+          "order": 10,
+          "iconKey": "AgeGrowth",
+          "iconColor": "#fcd34d",
+          "tokenTexts": [
+            "> 17 anni",
+            ">3 anni",
+            "0 1 anno",
+            "da 12 a 15 anni",
+            "da 12 anni a 15 anni",
+            "da 15 anni",
+            "da 5 settimane di vita fino a 1 anno 51 settimane",
+            "da 5 settimane fino a 1 anno di vita",
+            "da 6 anni a 15 anni",
+            "da 6 anni a 16 anni",
+            "da 7 anni a 15 anni",
+            "dai 13 anni",
+            "dai 15 anni",
+            "dai 16 anni",
+            "dai 3 ai 5 anni",
+            "dai 3 anni",
+            "dai 40 anni",
+            "dai 45 anni",
+            "dai 5 anni",
+            "dai 6 ai 14 anni",
+            "dalle 5 settimane di vita fino a 1 anno",
+            "ecg da 0 fino a 1 anno",
+            "ecg da over 1 anno under 16 anni",
+            "entro le prime 4 settimane di vita",
+            "neonatale",
+            "over 1 anno under 16 anni",
+            "over 1 anno under 17 anni",
+            "over 17 anni"
+          ]
+        },
+        {
+          "id": "cat_1781222772247_a0inalz",
+          "name": "posizione",
+          "type": "attributo",
+          "order": 11,
+          "iconKey": "ArrowLeftRight",
+          "iconColor": "#a3e635",
+          "tokenTexts": [
+            "addominale",
+            "inferiori",
+            "superiori"
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "text": "pratica sportiva",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "agonistica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "step test",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "test da sforzo massimale",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "controllo",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "nutrizionistico",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "sportivo",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "associato alla 1 visita",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ecocolordoppler",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "cardiaco",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "neonatale",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "entro le prime 4 settimane di vita",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "pediatrica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 5 settimane di vita fino a 1 anno 51 settimane",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "pediatrico",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "over 1 anno under 17 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ecodoppler",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "aorta",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "addominale",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "arti",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "inferiori",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "venoso",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "over 17 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "vasi",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "epiaortici",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "arterioso",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "superiori",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "elettrocardiogramma",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dalle 5 settimane di vita fino a 1 anno",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "> 17 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "neurologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "cefalea",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "nutrizionale e dietologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "allergologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "andrologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 12 anni a 15 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 16 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "angiologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "cardiologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "escluso ecg",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da sforzo al ciclo ergometro",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ecg da 0 fino a 1 anno",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ecg da over 1 anno under 16 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 3 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "incluso prick test",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "0 1 anno",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dermatologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "chirurgia",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "maxillo facciale",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 5 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "diabetologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 6 anni a 16 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 5 settimane fino a 1 anno di vita",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "over 1 anno under 16 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ematologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "endocrinologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "epatologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "per ipotiroidismo tiroidite",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "fisiatrica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 15 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 6 anni a 15 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 7 anni a 15 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "medicina fisica e riabilitazione",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "gastroenterologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "geriatrica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ginecologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 45 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 12 a 15 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "immunologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "internistica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "nefrologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "neurochirurgica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "nutrizionistica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "oculistica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "da 15 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 3 ai 5 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 6 ai 14 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ortopedica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "otorinolaringoiatrica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "pneumologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "reumatologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "senologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 13 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dai 40 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "incluso ecografia e mammografia",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "urologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "venereologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "per alimenti",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": ">3 anni",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "per inalanti",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "per adeguamento terapia",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dietologica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "nutrizione",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "prima",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "chirurgica generale",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "chirurgica per scleroterapia",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "chirurgica plastica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "kyminasi diet",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "certificato",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "idoneita",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "incluso eventuale ecg",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "tronchi sovraortici",
+          "enabled": true,
+          "grammar": null
+        }
+      ],
+      "created_at": "2026-06-10T01:22:14.221127+00:00",
+      "updated_at": "2026-06-15T01:53:42.279+00:00"
+    },
+    {
+      "id": "d621cda6-d81a-4f1c-8fb4-cf7229c57e54",
+      "name": "PAROS - visite prenotabili - prima e seconda tranche - 14.04.2026",
+      "industry": "technology",
+      "industry_custom": null,
+      "description": "Dizionario di progetto creato automaticamente",
+      "scope": "project",
+      "project_id": "a10a08da-a8ae-4068-a276-44ab0a437d55",
+      "icon_key": "Cpu",
+      "icon_color": "#22d3ee",
+      "categories": [],
+      "tokens": [],
+      "created_at": "2026-06-09T22:54:41.767615+00:00",
+      "updated_at": "2026-06-09T22:54:41.767615+00:00"
+    },
+    {
+      "id": "0781c278-a6d4-4640-9ac4-15232a0f860a",
+      "name": "Project",
+      "industry": "technology",
+      "industry_custom": null,
+      "description": "Dizionario di progetto creato automaticamente",
+      "scope": "project",
+      "project_id": "14902998-3d69-4f44-9c06-bf2f803998de",
+      "icon_key": "Cpu",
+      "icon_color": "#22d3ee",
+      "categories": [],
+      "tokens": [],
+      "created_at": "2026-06-12T13:06:38.591669+00:00",
+      "updated_at": "2026-06-12T13:06:38.591669+00:00"
+    },
+    {
+      "id": "abfaead1-5c7f-4d73-8bd8-0eb6061c6ac9",
+      "name": "Project",
+      "industry": "technology",
+      "industry_custom": null,
+      "description": "Dizionario di progetto",
+      "scope": "project",
+      "project_id": "0772d68e-3ea2-47f6-babe-865e7ca82c0f",
+      "icon_key": "Cpu",
+      "icon_color": "#22d3ee",
+      "categories": [],
+      "tokens": [],
+      "created_at": "2026-06-13T20:23:25.255825+00:00",
+      "updated_at": "2026-06-13T20:23:25.255825+00:00"
+    },
+    {
+      "id": "c146bfcb-40a0-411b-80e7-c8bda37dce82",
+      "name": "Project",
+      "industry": "technology",
+      "industry_custom": null,
+      "description": "Dizionario di progetto creato automaticamente",
+      "scope": "project",
+      "project_id": "6989a34b-7296-49ba-872d-07844954823d",
+      "icon_key": "Cpu",
+      "icon_color": "#22d3ee",
+      "categories": [],
+      "tokens": [
+        {
+          "text": "a che ora",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "sportelli",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "differenza",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "libera professione",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "aprono",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "ritirare",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "referto",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "come",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "tariffa amica",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "accettazione",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "accedere",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "laboratorio",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "contattare",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "analisi",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "presentare",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "reclamo",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "segnalazione",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "raggiungere",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "autobus",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "macchina",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "treno",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "recarmi",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "dove",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "possibile",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "senza prenotazione",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "presente",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "parcheggio interno",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "pronto soccorso",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "scaricare",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "referti",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "on line",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "esami",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "effettuare",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "quali",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "orari",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "apertura",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "recapiti",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "costa",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "quanto",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "numero",
+          "enabled": true,
+          "grammar": null
+        },
+        {
+          "text": "chiamare",
+          "enabled": true,
+          "grammar": null
+        }
+      ],
+      "created_at": "2026-06-14T02:37:21.63999+00:00",
+      "updated_at": "2026-06-14T03:01:00.507+00:00"
+    },
+    {
+      "id": "d869a743-aa00-4730-b6d7-94fb27283468",
+      "name": "visite",
+      "industry": "healthcare",
+      "industry_custom": null,
+      "description": null,
+      "scope": "library",
+      "project_id": null,
+      "icon_key": "Stethoscope",
+      "icon_color": "#38bdf8",
+      "categories": [],
+      "tokens": [],
+      "created_at": "2026-06-09T23:58:54.518718+00:00",
+      "updated_at": "2026-06-09T23:58:54.518718+00:00"
+    }
+  ]
+}

@@ -54,20 +54,30 @@ import {
 } from '../lib/analyzeAiPostProcess';
 import { migrateDualGrammars } from '../lib/grammarDual';
 import {
-  applyAnswerGrammarsToRows,
-  applyTemplateGrammarsWithTokens,
+  applyCategoryGrammarsWithTokens,
+  clearRowGrammars,
 } from '../lib/grammarTemplate';
+import { applyCategoryGrammars, findCategoriesMissingGrammar } from '../lib/categoryGrammar';
+import {
+  segmentAllDescriptionsFromLoadedRefs,
+  type LoadedDictionaryRef,
+} from '../lib/multiDictionarySegment';
 import {
   segmentAllDescriptions,
   type TokenDictionary,
   type TokenEntry,
 } from '../lib/tokenDictionary';
 import {
-  findTokensMissingGrammar,
   setTokenGrammar,
   syncRowGrammarsFromTokens,
 } from '../lib/tokenGrammar';
-import { syncTaxonomyFromLeafPaths, type TaxonomySyncResult } from '../lib/taxonomyPathSync';
+import {
+  syncTaxonomyFromLeafPaths,
+  type TaxonomySyncOptions,
+  type TaxonomySyncResult,
+} from '../lib/taxonomyPathSync';
+import { getPathOrderingCategories } from '../lib/pathCanonicalize';
+import type { TokenCategory } from '../lib/dictionaryTree';
 import type {
   AgentGenProgress,
   Analysis,
@@ -133,7 +143,7 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     rawRows.map((r) => r.slot_filling),
     data.item_paths ?? null,
   );
-  const rows = migrateDualGrammars(normalizeGrammarRows(rawRows), itemPaths);
+  const rows = migrateDualGrammars(normalizeGrammarRows(rawRows), itemPaths, pathOrderingCategoriesRef.current);
   const slots = rows.map((r) => r.slot_filling);
   return {
     ...data,
@@ -207,6 +217,15 @@ export function useAnalysis(documentId: string) {
   const generationAbortRef = useRef<AbortController | null>(null);
   const grammarTokensRef = useRef<TokenEntry[]>([]);
   const [grammarTokensBound, setGrammarTokensBound] = useState<TokenEntry[]>([]);
+  const pathOrderingCategoriesRef = useRef<TokenCategory[]>([]);
+
+  const bindPathOrderingCategories = useCallback((categories: TokenCategory[]) => {
+    pathOrderingCategoriesRef.current = categories;
+  }, []);
+
+  const resolvePathOrderingCategories = useCallback((): TokenCategory[] => {
+    return pathOrderingCategoriesRef.current;
+  }, []);
 
   const beginGenerationAbort = useCallback((): AbortSignal => {
     generationAbortRef.current?.abort();
@@ -337,21 +356,22 @@ export function useAnalysis(documentId: string) {
     if (roots.length === 0) throw new Error('Nessuna radice nell\'albero');
 
     const itemPaths = existing?.item_paths ?? null;
+    const categories = pathOrderingCategoriesRef.current;
     setAgentGenProgress({ current: 0, total: roots.length, rootSlot: 'preparazione' });
     await yieldToUi();
 
-    let currentRows = applyDeterministicMessagesLayer(taxonomyRows, itemPaths);
+    let currentRows = applyDeterministicMessagesLayer(taxonomyRows, itemPaths, categories);
     await yieldToUi();
     const allSlotsAfterDet = currentRows.map((r) => r.slot_filling);
-    currentRows = applyNluQuestionRules(allSlotsAfterDet, currentRows, itemPaths);
+    currentRows = applyNluQuestionRules(allSlotsAfterDet, currentRows, itemPaths, categories);
     await yieldToUi();
-    currentRows = stampDeterministicMessageLayer(currentRows, itemPaths);
+    currentRows = stampDeterministicMessageLayer(currentRows, itemPaths, categories);
     setAnalysis(draftWithStart(documentId, currentRows, existing));
     setAnalysisDirty(true);
     await yieldToUi();
 
     const isComplete = (slot: string, row: AnalysisRow) =>
-      isMessagesNodeComplete(allSlots, slot, row, itemPaths);
+      isMessagesNodeComplete(allSlots, slot, row, itemPaths, categories);
     const forceAiReview = options?.forceAiReview ?? false;
 
     for (let i = 0; i < roots.length; i++) {
@@ -360,11 +380,11 @@ export function useAnalysis(documentId: string) {
       setAgentGenProgress({ current: i + 1, total: roots.length, rootSlot });
 
       const subtreeSlots = collectSubtreeSlots(currentRows, rootSlot);
-      const interactiveSlots = getInteractiveMessageSlots(subtreeSlots, itemPaths);
+      const interactiveSlots = getInteractiveMessageSlots(subtreeSlots, itemPaths, categories);
 
       if (
         interactiveSlots.length === 0
-        || (!forceAiReview && isSubtreeMessagesComplete(currentRows, rootSlot, itemPaths))
+        || (!forceAiReview && isSubtreeMessagesComplete(currentRows, rootSlot, itemPaths, categories))
       ) {
         setRegeningRoots([]);
         setAnalysis(draftWithStart(documentId, currentRows, existing));
@@ -380,11 +400,12 @@ export function useAnalysis(documentId: string) {
         documentText,
         signal,
         itemPaths,
+        categories,
       );
 
       throwIfAborted(signal);
 
-      const invalid = findInvalidMessagesNodes(subtreeSlots, regenRows, itemPaths);
+      const invalid = findInvalidMessagesNodes(subtreeSlots, regenRows, itemPaths, categories);
       if (invalid.length > 0) {
         throw new Error(`Messaggi mancanti per ${rootSlot}: ${invalid.join(', ')}`);
       }
@@ -395,13 +416,14 @@ export function useAnalysis(documentId: string) {
         currentRows.map((r) => r.slot_filling),
         currentRows,
         itemPaths,
+        categories,
       );
-      currentRows = stampAiMessageSubtree(currentRows, rootSlot, itemPaths);
+      currentRows = stampAiMessageSubtree(currentRows, rootSlot, itemPaths, categories);
       setAnalysis(draftWithStart(documentId, currentRows, existing));
     }
 
     const finalSlots = currentRows.map((r) => r.slot_filling);
-    currentRows = applyNluQuestionRules(finalSlots, currentRows, itemPaths);
+    currentRows = applyNluQuestionRules(finalSlots, currentRows, itemPaths, categories);
     return currentRows;
   }, [documentId]);
 
@@ -419,6 +441,7 @@ export function useAnalysis(documentId: string) {
     if (roots.length === 0) throw new Error('Nessuna radice nell\'albero');
 
     let currentRows = baseRows;
+    const categories = pathOrderingCategoriesRef.current;
     setAnalysis(draftAnalysis(documentId, currentRows, existing));
     setAnalysisDirty(true);
 
@@ -429,7 +452,9 @@ export function useAnalysis(documentId: string) {
       throwIfAborted(signal);
       const rootSlot = roots[i]!;
       const subtreeSlots = collectSubtreeSlots(currentRows, rootSlot);
-      const targetSlots = getGrammarTargetSlots(subtreeSlots, currentRows, overwriteExisting);
+      const targetSlots = getGrammarTargetSlots(
+        subtreeSlots, currentRows, overwriteExisting, existing?.item_paths, categories,
+      );
 
       setAgentGenProgress({ current: i + 1, total: roots.length, rootSlot });
 
@@ -457,16 +482,17 @@ export function useAnalysis(documentId: string) {
           signal,
         );
 
-        currentRows = applyAnswerGrammarsToRows(
+        const { rows: clearedRows, categories: nextCategories } = applyCategoryGrammarsWithTokens(
           currentRows,
+          grammarTokensRef.current,
           overwriteExisting,
           existing?.item_paths,
+          categories,
         );
-        if (grammarTokensRef.current.length > 0) {
-          currentRows = syncRowGrammarsFromTokens(currentRows, grammarTokensRef.current);
-        }
+        currentRows = clearedRows;
+        pathOrderingCategoriesRef.current = nextCategories;
 
-        const invalid = findInvalidGrammarNodes(batch, currentRows, existing?.item_paths);
+        const invalid = findInvalidGrammarNodes(batch, currentRows, existing?.item_paths, nextCategories);
         if (invalid.length > 0) {
           throw new Error(`Grammatiche mancanti per ${rootSlot}: ${invalid.join(', ')}`);
         }
@@ -486,10 +512,14 @@ export function useAnalysis(documentId: string) {
       setAnalysis(draftAnalysis(documentId, currentRows, existing));
     }
 
-    let finalRows = applyAnswerGrammarsToRows(currentRows, false, existing?.item_paths ?? null);
-    if (grammarTokensRef.current.length > 0) {
-      finalRows = syncRowGrammarsFromTokens(finalRows, grammarTokensRef.current);
-    }
+    const { rows: finalRows, categories: finalCategories } = applyCategoryGrammarsWithTokens(
+      currentRows,
+      grammarTokensRef.current,
+      false,
+      existing?.item_paths ?? null,
+      categories,
+    );
+    pathOrderingCategoriesRef.current = finalCategories;
     return finalRows;
   }, [documentId]);
 
@@ -521,34 +551,62 @@ export function useAnalysis(documentId: string) {
     setSyncNotice(parts.length > 0 ? `Albero aggiornato: ${parts.join(', ')}` : 'Albero aggiornato');
   }, [documentId]);
 
+  const applyLeafPathSync = useCallback((
+    leafPaths: string[],
+    syncOptions?: TaxonomySyncOptions,
+  ): TaxonomySyncResult | null => {
+    if (leafPaths.length === 0) {
+      setSyncNotice(null);
+      return null;
+    }
+    if (syncOptions?.loadedRefs?.length) {
+      pathOrderingCategoriesRef.current = getPathOrderingCategories(syncOptions.loadedRefs);
+    } else if (syncOptions?.categories?.length) {
+      pathOrderingCategoriesRef.current = syncOptions.categories;
+    }
+    const result = syncTaxonomyFromLeafPaths(
+      leafPaths,
+      analysis?.rows,
+      analysis?.item_paths,
+      syncOptions,
+    );
+    applyTaxonomySyncResult(result, analysis);
+    return result;
+  }, [analysis, applyTaxonomySyncResult]);
+
   /** Structural tree sync from dictionary segmentation; preserves unchanged NLU. */
   const syncTaxonomyFromDictionary = useCallback((
     dictionary: TokenDictionary,
     descriptions: string[],
   ): TaxonomySyncResult | null => {
     setError(null);
-    const { leafPaths } = segmentAllDescriptions(
-      descriptions,
-      dictionary.tokens,
-      dictionary.categories ?? [],
-    );
-    if (leafPaths.length === 0) {
-      setSyncNotice(null);
-      return null;
-    }
     try {
-      const result = syncTaxonomyFromLeafPaths(
-        leafPaths,
-        analysis?.rows,
-        analysis?.item_paths,
+      const { leafPaths } = segmentAllDescriptions(
+        descriptions,
+        dictionary.tokens,
+        dictionary.categories ?? [],
       );
-      applyTaxonomySyncResult(result, analysis);
-      return result;
+      return applyLeafPathSync(leafPaths, { categories: dictionary.categories ?? [] });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       throw e;
     }
-  }, [analysis, applyTaxonomySyncResult]);
+  }, [applyLeafPathSync]);
+
+  /** Rebuilds ontology paths from multi-dictionary corpus segmentation (live category order). */
+  const syncTaxonomyFromLoadedRefs = useCallback((
+    descriptions: string[],
+    loadedRefs: LoadedDictionaryRef[],
+  ): TaxonomySyncResult | null => {
+    setError(null);
+    try {
+      const { leafPaths } = segmentAllDescriptionsFromLoadedRefs(descriptions, loadedRefs);
+      return applyLeafPathSync(leafPaths, { loadedRefs });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  }, [applyLeafPathSync]);
 
   const clearSyncNotice = useCallback(() => setSyncNotice(null), []);
 
@@ -577,7 +635,12 @@ export function useAnalysis(documentId: string) {
         outcome = 'existing';
         return current;
       }
-      const result = syncTaxonomyFromLeafPaths(leafPaths, null, null);
+      const result = syncTaxonomyFromLeafPaths(
+        leafPaths,
+        null,
+        null,
+        { categories: dictionary.categories ?? [] },
+      );
       if (result.rows.length === 0) return current;
       outcome = 'mounted';
       nextDirtyRoots = result.dirtyRoots;
@@ -598,10 +661,13 @@ export function useAnalysis(documentId: string) {
     throw new Error(msg);
   }, [documentId]);
 
-  /** Deterministic tree from dictionary, then IA messages. */
+  /**
+   * Syncs ontology from live loaded dictionaries (same path as Ricrea ontologia),
+   * then generates IA messages without reverting category order.
+   */
   const generateMessagesFromDictionary = useCallback(async (
-    dictionary: TokenDictionary,
     descriptions: string[],
+    loadedRefs: LoadedDictionaryRef[],
     documentName: string,
     documentText?: string,
   ) => {
@@ -611,18 +677,29 @@ export function useAnalysis(documentId: string) {
     setError(null);
     try {
       throwIfAborted(signal);
-      const { leafPaths } = segmentAllDescriptions(
-        descriptions,
-        dictionary.tokens,
-        dictionary.categories ?? [],
-      );
+      const { leafPaths } = segmentAllDescriptionsFromLoadedRefs(descriptions, loadedRefs);
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
-      const { rows: builtRows, item_paths } = buildTaxonomyFromItemPaths(leafPaths);
-      const taxonomyRows = mergeTaxonomyForMessageRegen(builtRows, analysis?.rows);
-      const draft = draftAnalysis(documentId, taxonomyRows, analysis, item_paths);
+      const syncResult = syncTaxonomyFromLeafPaths(
+        leafPaths,
+        analysis?.rows,
+        analysis?.item_paths,
+        { loadedRefs },
+      );
+      const taxonomyRows = mergeTaxonomyForMessageRegen(syncResult.rows, analysis?.rows);
+      const draft = draftAnalysis(documentId, taxonomyRows, analysis, syncResult.item_paths);
       setAnalysis(draft);
+      setAnalysisDirty(true);
+      if (!syncResult.pathsUnchanged) {
+        setDirtyRoots((prev) => {
+          const next = [...prev];
+          for (const root of syncResult.dirtyRoots) {
+            if (!next.includes(root)) next.push(root);
+          }
+          return next;
+        });
+      }
       setGeneratingPhase('messages');
       const finalRows = await generateMessagesByRootChunks(
         taxonomyRows,
@@ -632,7 +709,6 @@ export function useAnalysis(documentId: string) {
         signal,
       );
       setAnalysis(draftWithStart(documentId, finalRows, draft));
-      setAnalysisDirty(true);
       setDirtyRoots([]);
     } catch (e) {
       if (!isAbortError(e)) setError(e instanceof Error ? e.message : String(e));
@@ -701,53 +777,56 @@ export function useAnalysis(documentId: string) {
     setGrammarTokensBound(tokens);
   }, []);
 
-  /** Generates token grammars (rule-based) and syncs rows + answer grammars on nodes. */
+  /** Generates category grammars (rule-based) and clears legacy node grammars. */
   const generateGrammars = useCallback(async (
     tokens: TokenEntry[],
     _documentText: string,
     _documentName: string,
     overwriteExisting = false,
-  ): Promise<TokenEntry[]> => {
+  ): Promise<{ tokens: TokenEntry[]; categories: TokenCategory[] } | undefined> => {
     if (!analysis) {
       throw new Error('Nessuna analisi caricata');
     }
     if (analysis.rows.length === 0) {
       throw new Error('Genera prima la tassonomia');
     }
-    const allSlots = analysis.rows.map((r) => r.slot_filling);
+    const categories = pathOrderingCategoriesRef.current;
     if (!overwriteExisting) {
-      const missing = findTokensMissingGrammar(allSlots, tokens);
+      const missing = findCategoriesMissingGrammar(categories);
       if (missing.length === 0) {
         setError(null);
-        return tokens;
+        return { tokens, categories };
       }
     }
 
     setGenerating(true);
     setGeneratingPhase('grammars');
-    setAgentGenProgress({ current: 0, total: tokens.length, rootSlot: 'preparazione' });
+    setAgentGenProgress({ current: 0, total: categories.length, rootSlot: 'preparazione' });
     setError(null);
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const { rows: newRows, tokens: nextTokens } = applyTemplateGrammarsWithTokens(
-        analysis.rows,
-        tokens,
-        overwriteExisting,
-        analysis.item_paths,
-      );
+      const { rows: newRows, tokens: nextTokens, categories: nextCategories } =
+        applyCategoryGrammarsWithTokens(
+          analysis.rows,
+          tokens,
+          overwriteExisting,
+          analysis.item_paths,
+          categories,
+        );
+      pathOrderingCategoriesRef.current = nextCategories;
       grammarTokensRef.current = nextTokens;
       setGrammarTokensBound(nextTokens);
       setAgentGenProgress({
-        current: nextTokens.length,
-        total: nextTokens.length,
+        current: nextCategories.length,
+        total: nextCategories.length,
         rootSlot: 'completato',
       });
       setAnalysis(applyStartQuestionIfMissing({ ...analysis, rows: newRows }));
       setAnalysisDirty(true);
       setDirtyRoots([]);
       await new Promise((resolve) => setTimeout(resolve, 400));
-      return nextTokens;
+      return { tokens: nextTokens, categories: nextCategories };
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       throw e;
@@ -755,6 +834,42 @@ export function useAnalysis(documentId: string) {
       setGenerating(false);
       setGeneratingPhase(null);
       setAgentGenProgress(null);
+    }
+  }, [analysis]);
+
+  /** Compiles category grammars from dictionary data (no taxonomy required). */
+  const generateDictionaryCategoryGrammars = useCallback(async (
+    tokens: TokenEntry[],
+    categories: TokenCategory[],
+    overwriteExisting = false,
+  ): Promise<TokenCategory[]> => {
+    if (!overwriteExisting && findCategoriesMissingGrammar(categories).length === 0) {
+      return categories;
+    }
+
+    setGenerating(true);
+    setGeneratingPhase('grammars');
+    setError(null);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const nextCategories = applyCategoryGrammars(categories, tokens, overwriteExisting);
+      grammarTokensRef.current = tokens;
+      setGrammarTokensBound(tokens);
+      if (analysis?.rows.length) {
+        setAnalysis(applyStartQuestionIfMissing({
+          ...analysis,
+          rows: clearRowGrammars(analysis.rows),
+        }));
+        setAnalysisDirty(true);
+      }
+      return nextCategories;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setGenerating(false);
+      setGeneratingPhase(null);
     }
   }, [analysis]);
 
@@ -770,7 +885,9 @@ export function useAnalysis(documentId: string) {
     }
     const allSlots = analysis.rows.map((r) => r.slot_filling);
     if (!overwriteExisting) {
-      const missing = findInvalidGrammarNodes(allSlots, analysis.rows, analysis.item_paths);
+      const missing = findInvalidGrammarNodes(
+        allSlots, analysis.rows, analysis.item_paths, pathOrderingCategoriesRef.current,
+      );
       if (missing.length === 0) {
         setError(null);
         return;
@@ -816,15 +933,20 @@ export function useAnalysis(documentId: string) {
       const subtreeSlots = collectSubtreeSlots(analysis.rows, rootSlot);
       if (subtreeSlots.length === 0) throw new Error('Nessuno slot nel sottoalbero');
 
-      const targetSlots = getGrammarTargetSlots(subtreeSlots, analysis.rows, overwriteExisting);
+      const categories = pathOrderingCategoriesRef.current;
+      const targetSlots = getGrammarTargetSlots(
+        subtreeSlots, analysis.rows, overwriteExisting, analysis.item_paths, categories,
+      );
       if (targetSlots.length === 0) return;
 
-      let newRows = applyAnswerGrammarsToRows(
-        analysis.rows, overwriteExisting, analysis.item_paths,
+      const { rows: newRows, categories: nextCategories } = applyCategoryGrammarsWithTokens(
+        analysis.rows,
+        grammarTokensRef.current,
+        overwriteExisting,
+        analysis.item_paths,
+        categories,
       );
-      if (grammarTokensRef.current.length > 0) {
-        newRows = syncRowGrammarsFromTokens(newRows, grammarTokensRef.current);
-      }
+      pathOrderingCategoriesRef.current = nextCategories;
 
       setAnalysis({ ...analysis, rows: newRows });
       setAnalysisDirty(true);
@@ -1020,14 +1142,15 @@ export function useAnalysis(documentId: string) {
         throw new Error('La rigenerazione non ha restituito righe valide');
       }
 
-      const invalid = findInvalidInternalNodes(slots, regenRows, analysis.item_paths);
+      const categories = pathOrderingCategoriesRef.current;
+      const invalid = findInvalidInternalNodes(slots, regenRows, analysis.item_paths, categories);
       if (invalid.length > 0) {
         throw new Error(`Domande mancanti per: ${invalid.join(', ')}`);
       }
 
       const regenedBySlot = indexRowsBySlot(regenRows);
       let newRows = mergeSubtreeRows(analysis.rows, regenedBySlot, rootSlot);
-      newRows = applyNluQuestionRules(slots, newRows, analysis.item_paths);
+      newRows = applyNluQuestionRules(slots, newRows, analysis.item_paths, categories);
 
       setAnalysis({ ...analysis, rows: newRows });
       setAnalysisDirty(true);
@@ -1139,22 +1262,30 @@ export function useAnalysis(documentId: string) {
         throw new Error('La rigenerazione non ha restituito righe valide');
       }
 
-      const invalid = findInvalidInternalNodes(slots, regenRows, analysis.item_paths);
+      const categories = pathOrderingCategoriesRef.current;
+      const invalid = findInvalidInternalNodes(slots, regenRows, analysis.item_paths, categories);
       if (invalid.length > 0) {
         throw new Error(`Domande mancanti per: ${invalid.join(', ')}`);
       }
 
       const regenedBySlot = indexRowsBySlot(regenRows);
       let newRows = mergeSubtreeRows(analysis.rows, regenedBySlot, rootSlot);
-      newRows = applyNluQuestionRules(slots, newRows, analysis.item_paths);
+      newRows = applyNluQuestionRules(slots, newRows, analysis.item_paths, categories);
 
       const subtreeSlots = collectSubtreeSlots(newRows, rootSlot);
-      const targetSlots = getGrammarTargetSlots(subtreeSlots, newRows, overwriteGrammars);
+      const targetSlots = getGrammarTargetSlots(
+        subtreeSlots, newRows, overwriteGrammars, analysis.item_paths, categories,
+      );
       if (targetSlots.length > 0) {
-        newRows = applyAnswerGrammarsToRows(newRows, overwriteGrammars, analysis.item_paths);
-        if (grammarTokensRef.current.length > 0) {
-          newRows = syncRowGrammarsFromTokens(newRows, grammarTokensRef.current);
-        }
+        const { rows: grammarRows, categories: nextCategories } = applyCategoryGrammarsWithTokens(
+          newRows,
+          grammarTokensRef.current,
+          overwriteGrammars,
+          analysis.item_paths,
+          categories,
+        );
+        newRows = grammarRows;
+        pathOrderingCategoriesRef.current = nextCategories;
       }
 
       setAnalysis({ ...analysis, rows: newRows });
@@ -1167,27 +1298,23 @@ export function useAnalysis(documentId: string) {
     }
   }, [analysis]);
 
+  const categories = pathOrderingCategoriesRef.current;
   const messagesReady = analysis
-    ? isMessagesLayerReady(analysis.rows, analysis.item_paths, analysis.start_question)
+    ? isMessagesLayerReady(analysis.rows, analysis.item_paths, analysis.start_question, categories)
     : false;
-  const grammarsReady = analysis ? isGrammarsLayerReady(analysis.rows, analysis.item_paths) : false;
-  const agentReady = analysis ? hasAgentContent(analysis.rows) : false;
+  const grammarsReady = analysis
+    ? isGrammarsLayerReady(analysis.rows, analysis.item_paths, categories)
+    : false;
+  const agentReady = analysis
+    ? hasAgentContent(analysis.rows, categories)
+    : false;
   const hasMessages = analysis
     ? hasMessagesContent(analysis.rows, analysis.item_paths, analysis.start_question)
     : false;
   const hasTaxonomy = (analysis?.rows.length ?? 0) > 0;
   const canGenerateGrammars = hasTaxonomy && !generating;
   const missingGrammarCount = analysis
-    ? (grammarTokensBound.length > 0
-      ? findTokensMissingGrammar(
-        analysis.rows.map((r) => r.slot_filling),
-        grammarTokensBound,
-      ).length
-      : findInvalidGrammarNodes(
-        analysis.rows.map((r) => r.slot_filling),
-        analysis.rows,
-        analysis.item_paths,
-      ).length)
+    ? findCategoriesMissingGrammar(categories).length
     : 0;
 
   return {
@@ -1197,10 +1324,10 @@ export function useAnalysis(documentId: string) {
     missingGrammarCount,
     load, saveAnalysis, discardAnalysisChanges, updateAgentConfig, generateConfirmations, cancelGeneration,
     generateTaxonomy, generateMessagesFromText, createAgentFromDictionary,
-    generateMessagesFromDictionary, generateMessagesOnly, reviewMessagesWithAi, generateGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
+    generateMessagesFromDictionary, generateMessagesOnly, reviewMessagesWithAi, generateGrammars, generateDictionaryCategoryGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
     updateRow, deleteRow, addRow, restructurePath,
     dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree, regenSubtreeFull,
-    syncTaxonomyFromDictionary, syncNotice, clearSyncNotice,
-    bindGrammarTokens, syncGrammarsFromTokens, updateTokenGrammar,
+    syncTaxonomyFromDictionary, syncTaxonomyFromLoadedRefs, syncNotice, clearSyncNotice,
+    bindGrammarTokens, bindPathOrderingCategories, syncGrammarsFromTokens, updateTokenGrammar,
   };
 }

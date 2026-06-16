@@ -68,7 +68,7 @@ function SplitWorkspace({
   return (
     <div
       ref={containerRef}
-      className={`flex h-full min-h-0 ${resizing ? 'select-none' : ''}`}
+      className={`flex h-full min-h-0 min-w-0 ${resizing ? 'select-none' : ''}`}
     >
       <div className="min-w-0 min-h-0 flex flex-col" style={{ width: `${layout.ratio}%` }}>
         <EditorWorkspacePanel tabId={layout.primary} mounted />
@@ -135,7 +135,7 @@ export function DocumentEditorWorkspace() {
 
   return (
     <div
-      className="flex-1 min-h-0 overflow-hidden bg-[#0d0d0d] relative"
+      className="flex-1 min-h-0 min-w-0 overflow-hidden bg-[#0d0d0d] relative"
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}

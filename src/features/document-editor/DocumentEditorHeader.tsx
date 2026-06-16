@@ -32,11 +32,11 @@ export function DocumentEditorHeader() {
         </span>
         <h2 className="font-mono text-sm text-emerald-200 truncate flex-1 min-w-0">{doc.name}</h2>
         {content.tabular && (
-          <span className="flex-shrink-0 font-mono text-[10px] text-emerald-400/50 tabular-nums">
+          <span className="flex-shrink-0 font-mono text-sm text-emerald-400/50 tabular-nums">
             {content.tabular.rows.length} righe
           </span>
         )}
-        <span className={`flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border ${formatColor(doc.format)}`}>
+        <span className={`flex-shrink-0 text-sm font-mono px-1.5 py-0.5 rounded border ${formatColor(doc.format)}`}>
           {formatLabel(doc.format)}
         </span>
       </div>
@@ -45,7 +45,7 @@ export function DocumentEditorHeader() {
           {doc.column_headers.map((col) => (
             <span
               key={col}
-              className="flex-shrink-0 font-mono text-[10px] px-2 py-0.5 rounded-full bg-[#0a2a18] border border-emerald-400/20 text-emerald-400/70"
+              className="flex-shrink-0 font-mono text-sm px-2 py-0.5 rounded-full bg-[#0a2a18] border border-emerald-400/20 text-emerald-400/70"
             >
               {col}
             </span>

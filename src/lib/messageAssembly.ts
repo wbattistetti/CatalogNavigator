@@ -3,14 +3,18 @@
  * AI contributes only disambiguation questions for interactive paths.
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
-import { getDirectChildSlots } from './analysisTree';
 import {
   buildPrefixDisambiguationQuestion,
-  getDescendantItemSlots,
-  getDirectChildItemSlots,
-  isPrefixAmbiguityNode,
   resolveItemPaths,
 } from './itemPaths';
+import { AGE_YEARS_QUESTION } from './constraintValidation';
+import type { TokenCategory } from './dictionaryTree';
+import {
+  getPrefixAmbiguityTargets,
+  getSiblingChoiceChildren,
+  hasAttributoPrefixAmbiguity,
+  requiresVincoloSegmentQuestionNode,
+} from './nluCategoryRules';
 import { isPassthroughNode, requiresInteractiveNode } from './nluQuestionRules';
 
 function lastSegment(slot: string): string {
@@ -60,21 +64,21 @@ export function buildInteractiveMessageFallback(
   slots: string[],
   slot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): Pick<AnalysisRow, 'question' | 'no_match_1' | 'no_match_2' | 'no_match_3'> {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
   let question: string | null = null;
 
-  if (isPrefixAmbiguityNode(slots, slot, itemPaths)) {
-    const directChildItems = getDirectChildItemSlots(slot, itemPaths);
-    const targets = directChildItems.length > 0
-      ? directChildItems
-      : getDescendantItemSlots(slot, itemPaths);
+  if (requiresVincoloSegmentQuestionNode(slot, itemPaths, categories)) {
+    question = AGE_YEARS_QUESTION;
+  } else if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) {
+    const targets = getPrefixAmbiguityTargets(slot, itemPaths, categories);
     question = buildPrefixDisambiguationQuestion(slot, targets);
   } else {
-    const children = getDirectChildSlots(slots, slot);
-    if (children.length >= 2 && children.length <= 3) {
+    const children = getSiblingChoiceChildren(slots, slot, categories);
+    if (children && children.length >= 2 && children.length <= 3) {
       question = `Quale ${lastSegment(slot)} desidera: ${formatOptionsList(children)}?`;
-    } else if (children.length >= 4) {
+    } else if (children && children.length >= 4) {
       question = `Quale ${lastSegment(slot)} desidera?`;
     }
   }
@@ -100,8 +104,9 @@ export function isMessageFreeSlot(
   slots: string[],
   slot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): boolean {
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  return isPassthroughNode(slots, slot, itemPaths)
-    || !requiresInteractiveNode(slots, slot, itemPaths);
+  return isPassthroughNode(slots, slot, itemPaths, categories)
+    || !requiresInteractiveNode(slots, slot, itemPaths, categories);
 }

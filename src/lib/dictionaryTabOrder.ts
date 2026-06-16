@@ -37,3 +37,40 @@ export function defaultDictionaryEditorId(dictionaries: KbDictionary[]): string 
   const ordered = orderDictionaryIds(dictionaries);
   return ordered[0] ?? null;
 }
+
+function canonicalTokenCount(dictionary: KbDictionary): number {
+  return dictionary.tokens.filter((t) => !t.aliasOf).length;
+}
+
+/** Every project + linked library dictionary id (tab order). */
+export function loadedDictionaryEditorIds(dictionaries: KbDictionary[]): string[] {
+  return orderDictionaryIds(dictionaries, dictionaries.map((d) => d.id));
+}
+
+/**
+ * Active tab on reload: library dict with tokens when project dict is empty,
+ * otherwise the first project dictionary.
+ */
+export function preferredActiveDictionaryId(dictionaries: KbDictionary[]): string | null {
+  if (dictionaries.length === 0) return null;
+
+  const ordered = orderDictionaryIds(dictionaries);
+  const projectId = ordered.find(
+    (id) => dictionaries.find((d) => d.id === id)?.scope === 'project',
+  );
+  const projectDict = projectId
+    ? dictionaries.find((d) => d.id === projectId)
+    : undefined;
+
+  if (projectDict && canonicalTokenCount(projectDict) > 0) {
+    return projectId!;
+  }
+
+  const libraryWithTokens = ordered
+    .map((id) => dictionaries.find((d) => d.id === id))
+    .filter((d): d is KbDictionary => d?.scope === 'library' && canonicalTokenCount(d) > 0)
+    .sort((a, b) => canonicalTokenCount(b) - canonicalTokenCount(a))[0];
+
+  if (libraryWithTokens) return libraryWithTokens.id;
+  return projectId ?? ordered[0] ?? null;
+}

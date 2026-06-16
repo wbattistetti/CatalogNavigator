@@ -28,6 +28,12 @@ export const NO_CATEGORY_ICON: CategoryIconSpec = {
   iconColor: CATEGORY_COLOR.noCategory,
 };
 
+/** Badge shown on categories with type=vincolo (eligibility rules). */
+export const VINCOLO_CATEGORY_BADGE: CategoryIconSpec = {
+  iconKey: 'ShieldAlert',
+  iconColor: CATEGORY_COLOR.constraint,
+};
+
 const DEFAULT_CATEGORY_ICON: CategoryIconSpec = {
   iconKey: DEFAULT_LUCIDE_ICON_KEY,
   iconColor: CATEGORY_COLOR.default,

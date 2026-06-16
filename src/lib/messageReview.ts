@@ -9,6 +9,7 @@ import type {
   MessageSource,
   RowStatus,
 } from './analysisTypes';
+import type { TokenCategory } from './dictionaryTree';
 import { getInteractiveMessageSlots } from './analysisTree';
 import { isTerminalItemSlot, resolveItemPaths } from './itemPaths';
 
@@ -74,10 +75,11 @@ function reviewFieldsForRow(
 export function computeMessageReviewStats(
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): MessageReviewStats {
   const slots = rows.map((r) => r.slot_filling);
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const interactiveSlots = new Set(getInteractiveMessageSlots(slots, itemPaths));
+  const interactiveSlots = new Set(getInteractiveMessageSlots(slots, itemPaths, categories));
 
   let total = 0;
   let validated = 0;
@@ -171,10 +173,11 @@ function stampRowFields(
 export function stampDeterministicMessageLayer(
   rows: AnalysisRow[],
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const slots = rows.map((r) => r.slot_filling);
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const interactiveSlots = new Set(getInteractiveMessageSlots(slots, itemPaths));
+  const interactiveSlots = new Set(getInteractiveMessageSlots(slots, itemPaths, categories));
   return rows.map((row) => {
     if (!interactiveSlots.has(row.slot_filling)) return row;
     return stampRowFields(row, INTERACTIVE_MESSAGE_FIELDS, 'deterministic', true);
@@ -186,10 +189,11 @@ export function stampAiMessageSubtree(
   rows: AnalysisRow[],
   rootSlot: string,
   itemPathsInput?: string[] | null,
+  categories?: TokenCategory[],
 ): AnalysisRow[] {
   const slots = rows.map((r) => r.slot_filling);
   const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const interactiveSlots = new Set(getInteractiveMessageSlots(slots, itemPaths));
+  const interactiveSlots = new Set(getInteractiveMessageSlots(slots, itemPaths, categories));
   const prefix = `${rootSlot}.`;
   return rows.map((row) => {
     const inSubtree = row.slot_filling === rootSlot || row.slot_filling.startsWith(prefix);

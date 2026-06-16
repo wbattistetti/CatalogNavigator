@@ -30,6 +30,15 @@ export function normalizeSplitLayout(
   return layout;
 }
 
+/** True when `tabId` is shown in a side-by-side split (primary or secondary pane). */
+export function splitLayoutIncludesTab(
+  layout: EditorSplitLayout,
+  tabId: EditorTabId,
+): boolean {
+  return layout.type === 'split'
+    && (layout.primary === tabId || layout.secondary === tabId);
+}
+
 export function createSplitLayout(
   primary: EditorTabId,
   secondary: EditorTabId,
