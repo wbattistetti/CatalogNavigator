@@ -3,33 +3,45 @@
 ''' </summary>
 Public Module TurnExpectedInput
 
-    Private Const DefaultAgeCategory As String = "FASCIA DI ETÀ (VINCOLO)"
+    Private Const AgeYearsDescription As String =
+        "Età del paziente in anni come numero intero (es. ""30""). NON usare token vincolo/fascia dal catalogo (es. ""over 17 anni"")."
 
-    Public Function BuildAskAgeConstraint(Optional categoryName As String = Nothing) As Models.ExpectedConstraint
-        Dim name = If(String.IsNullOrWhiteSpace(categoryName), DefaultAgeCategory, categoryName)
+    Public Function BuildAskAgeConstraint(categoryName As String) As Models.ExpectedConstraint
         Return New Models.ExpectedConstraint With {
-            .CategoryName = name,
-            .ValueKind = "age_years",
-            .Description = "Età del paziente in anni come numero intero (es. ""30""). NON usare token vincolo/fascia dal catalogo (es. ""over 17 anni"")."
+            .CategoryName = categoryName,
+            .ValueKind = CategoryTypes.ValueKindAgeYears,
+            .Description = AgeYearsDescription
         }
     End Function
 
-    Private Function AgeCategoryLabelForExpected(categoryName As String) As String
-        Dim baseName = If(String.IsNullOrWhiteSpace(categoryName), "FASCIA DI ETÀ", categoryName.Trim())
-        If baseName.ToLowerInvariant().Contains("vincolo") Then Return baseName
-        Return baseName & " (VINCOLO)"
-    End Function
-
-    Public Function WithExpectedInput(instruction As Models.AgentTurnInstruction) As Models.AgentTurnInstruction
+    Public Function WithExpectedInput(
+        instruction As Models.AgentTurnInstruction,
+        Optional bundle As Models.AgentBundle = Nothing
+    ) As Models.AgentTurnInstruction
         If instruction Is Nothing Then Return Nothing
 
         If instruction.Action = "ask_age" Then
+            Dim categoryName = ResolveAskAgeCategoryName(instruction, bundle)
             instruction.ExpectedConstraints = New List(Of Models.ExpectedConstraint) From {
-                BuildAskAgeConstraint(AgeCategoryLabelForExpected(instruction.CategoryName))
+                BuildAskAgeConstraint(categoryName)
             }
         End If
 
         Return instruction
+    End Function
+
+    Private Function ResolveAskAgeCategoryName(
+        instruction As Models.AgentTurnInstruction,
+        bundle As Models.AgentBundle
+    ) As String
+        If Not String.IsNullOrWhiteSpace(instruction.CategoryName) Then
+            Return instruction.CategoryName.Trim()
+        End If
+
+        Dim fromBundle = CategoryTypes.FirstAgeVincoloCategory(If(bundle IsNot Nothing, bundle.Ontology, Nothing))
+        If fromBundle IsNot Nothing Then Return fromBundle.Name
+
+        Return "fascia di età"
     End Function
 
     Public Function BuildPendingConstraint(instruction As Models.AgentTurnInstruction) As Models.ExpectedConstraint

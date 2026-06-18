@@ -9,6 +9,7 @@ import {
   segmentAllDescriptions,
   type TokenDictionary,
 } from '../../lib/tokenDictionary';
+import { LARGE_DICTIONARY_TOKEN_THRESHOLD } from '../../lib/dictionaryLimits';
 import {
   mergeAllDictionarySessionsIntoLoadedRefs,
   mergeLoadedTokens,
@@ -20,7 +21,11 @@ import type { DictionaryPanelState } from '../../components/DocumentViewer/Dicti
 import { useProjectDictionaries } from '../../hooks/useProjectDictionaries';
 import { useAnalysis, type GrammarEditTarget } from '../../hooks/useAnalysis';
 import { useDocumentContent } from '../../hooks/useDocumentContent';
-import { resolveDescriptionColumn } from '../../lib/columnRoles';
+import {
+  buildCorpusDescriptionsFromColumns,
+  primaryOntologyColumn,
+  resolveOntologyColumns,
+} from '../../lib/columnRoles';
 import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRefresh';
 
 export type { AgentDictionaryContext };
@@ -49,11 +54,16 @@ export function useDocumentEditorController({
   const content = useDocumentContent(doc, fileUrl);
   const documentText = content.text;
 
-  const descriptionColumn = useMemo(
+  const ontologyColumns = useMemo(
     () => (content.tabular
-      ? resolveDescriptionColumn(content.tabular.headers, doc.column_roles ?? {})
-      : null),
+      ? resolveOntologyColumns(content.tabular.headers, doc.column_roles ?? {})
+      : []),
     [content.tabular, doc.column_roles],
+  );
+
+  const descriptionColumn = useMemo(
+    () => primaryOntologyColumn(ontologyColumns),
+    [ontologyColumns],
   );
 
   const dicts = useProjectDictionaries(doc, descriptionColumn, onDocUpdated);
@@ -62,6 +72,7 @@ export function useDocumentEditorController({
     load,
     initialLoadDone,
     syncTaxonomyFromLoadedRefs,
+    syncTaxonomyFromLoadedRefsAsync,
     syncNotice,
     bindGrammarTokens,
     bindPathOrderingCategories,
@@ -91,6 +102,7 @@ export function useDocumentEditorController({
         && prev.saving === next.saving
         && prev.activeTokenCount === next.activeTokenCount
         && prev.descriptionColumn === next.descriptionColumn
+        && prev.ontologyColumns.join('\0') === next.ontologyColumns.join('\0')
       ) {
         return prev;
       }
@@ -111,18 +123,21 @@ export function useDocumentEditorController({
     const dict = dictState?.getMergedDictionary?.() ?? dictState?.getDictionary();
     const descriptions = dictState?.getDescriptions() ?? [];
     if (dict && descriptions.length > 0) {
+      if (getActiveTokens(dict.tokens).length > LARGE_DICTIONARY_TOKEN_THRESHOLD) {
+        return null;
+      }
       const { rows } = segmentAllDescriptions(descriptions, dict.tokens, dict.categories ?? []);
       return buildLeafDescriptionMap(rows);
     }
     const saved = doc.token_dictionary;
     const descCol = saved?.descriptionColumn
-      ?? Object.entries(doc.column_roles).find(([, r]) => r === 'description')?.[0];
+      ?? primaryOntologyColumn(resolveOntologyColumns(content.tabular.headers, doc.column_roles ?? {}));
     if (!saved || !descCol) return null;
-    const idx = content.tabular.headers.indexOf(descCol);
-    if (idx < 0) return null;
-    const corpus = content.tabular.rows
-      .map((row) => String(row[idx] ?? '').trim())
-      .filter(Boolean);
+    const corpus = buildCorpusDescriptionsFromColumns(
+      content.tabular.headers,
+      content.tabular.rows,
+      resolveOntologyColumns(content.tabular.headers, doc.column_roles ?? {}),
+    ).filter(Boolean);
     const tokens = loadSavedTokens(saved, descCol);
     if (tokens.length === 0 || corpus.length === 0) return null;
     const { rows } = segmentAllDescriptions(corpus, tokens, saved?.categories ?? []);
@@ -130,7 +145,7 @@ export function useDocumentEditorController({
   }, [content.tabular, dictState, doc.token_dictionary, doc.column_roles]);
 
   const agentDictionaryContext = useMemo((): AgentDictionaryContext | null => {
-    if (!dictionaryMode || !content.tabular || !descriptionColumn) return null;
+    if (!dictionaryMode || !content.tabular || ontologyColumns.length === 0) return null;
     if (dicts.loadedRefs.length === 0) return null;
 
     const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
@@ -139,10 +154,11 @@ export function useDocumentEditorController({
     );
 
     const descriptions = dictState?.getDescriptions()
-      ?? content.tabular.rows.map((row) => {
-        const idx = content.tabular!.headers.indexOf(descriptionColumn);
-        return idx >= 0 ? String(row[idx] ?? '') : '';
-      });
+      ?? buildCorpusDescriptionsFromColumns(
+        content.tabular.headers,
+        content.tabular.rows,
+        ontologyColumns,
+      );
 
     if (descriptions.length === 0) return null;
 
@@ -152,7 +168,7 @@ export function useDocumentEditorController({
 
     return {
       dictionary: {
-        descriptionColumn,
+        descriptionColumn: descriptionColumn ?? ontologyColumns[0] ?? '',
         tokens,
         categories: getPathOrderingCategories(liveRefs),
       },
@@ -162,6 +178,7 @@ export function useDocumentEditorController({
   }, [
     dictionaryMode,
     content.tabular,
+    ontologyColumns,
     descriptionColumn,
     dictState,
     dicts.loadedRefs,
@@ -169,28 +186,49 @@ export function useDocumentEditorController({
     dicts.dictionarySessionsRevision,
   ]);
 
-  const { agentNeedsUpdate, canRefreshOntology, refreshOntology, buildLiveLoadedRefs, liveLoadedRefs, pathOrderingCategories } = useOntologyRefresh({
+  const corpusDescriptions = useMemo(() => {
+    if (!content.tabular || ontologyColumns.length === 0) return [];
+    return buildCorpusDescriptionsFromColumns(
+      content.tabular.headers,
+      content.tabular.rows,
+      ontologyColumns,
+    ).filter(Boolean);
+  }, [content.tabular, ontologyColumns]);
+
+  const { agentNeedsUpdate, canRefreshOntology, refreshingOntology, ontologyRefreshProgress, cancelOntologyRefresh, refreshOntology, buildLiveLoadedRefs, liveLoadedRefs, pathOrderingCategories } = useOntologyRefresh({
     dictState,
     agentDictionaryContext,
+    corpusDescriptions,
     dicts,
     hasTaxonomy: analysisApi.hasTaxonomy,
     generating: analysisApi.generating,
     itemPaths: analysisApi.analysis?.item_paths,
-    syncTaxonomyFromLoadedRefs,
+    syncTaxonomyFromLoadedRefsAsync,
   });
 
   const handleDictionaryAfterSave = useCallback(
     async (_dictionary: TokenDictionary, descriptions: string[]) => {
       try {
         const liveRefs = buildLiveLoadedRefs();
-        syncTaxonomyFromLoadedRefs(descriptions, liveRefs);
-        bindGrammarTokens(mergeLoadedTokens(liveRefs));
-        syncGrammarsFromTokens(mergeLoadedTokens(liveRefs));
+        const tokens = mergeLoadedTokens(liveRefs);
+        // Re-segment only if no ontology exists yet — once item_paths are set,
+        // saving the dictionary must not overwrite them with re-segmented paths.
+        if (!analysisApi.hasTaxonomy) {
+          syncTaxonomyFromLoadedRefs(descriptions, liveRefs);
+        }
+        bindGrammarTokens(tokens);
+        syncGrammarsFromTokens(tokens);
       } catch {
         /* error surfaced via analysisApi.error */
       }
     },
-    [buildLiveLoadedRefs, syncTaxonomyFromLoadedRefs, bindGrammarTokens, syncGrammarsFromTokens],
+    [
+      buildLiveLoadedRefs,
+      analysisApi.hasTaxonomy,
+      syncTaxonomyFromLoadedRefs,
+      bindGrammarTokens,
+      syncGrammarsFromTokens,
+    ],
   );
 
   const grammarTokens = useMemo(() => {
@@ -199,14 +237,21 @@ export function useDocumentEditorController({
     }
     const saved = doc.token_dictionary;
     const descCol = saved?.descriptionColumn
-      ?? Object.entries(doc.column_roles).find(([, r]) => r === 'description')?.[0];
+      ?? primaryOntologyColumn(resolveOntologyColumns(
+        content.tabular?.headers ?? [],
+        doc.column_roles ?? {},
+      ));
     if (!saved || !descCol) return [];
     return loadSavedTokens(saved, descCol);
-  }, [agentDictionaryContext, doc.token_dictionary, doc.column_roles]);
+  }, [agentDictionaryContext, doc.token_dictionary, doc.column_roles, content.tabular]);
 
   useEffect(() => {
     bindGrammarTokens(grammarTokens);
-    if (grammarTokens.length > 0 && analysisApi.hasTaxonomy) {
+    if (
+      grammarTokens.length > 0
+      && grammarTokens.length <= LARGE_DICTIONARY_TOKEN_THRESHOLD
+      && analysisApi.hasTaxonomy
+    ) {
       syncGrammarsFromTokens(grammarTokens);
     }
   }, [grammarTokens, analysisApi.hasTaxonomy, bindGrammarTokens, syncGrammarsFromTokens]);
@@ -230,16 +275,35 @@ export function useDocumentEditorController({
   useEffect(() => {
     if (!dictionaryMode || !initialLoadDone || analysisApi.loading) return;
     if (!agentDictionaryContext || analysisApi.hasTaxonomy) return;
+    if (agentDictionaryContext.activeTokenCount > LARGE_DICTIONARY_TOKEN_THRESHOLD) return;
     if (!agentMountRevision || lastAgentMountRevision.current === agentMountRevision) return;
 
-    lastAgentMountRevision.current = agentMountRevision;
-    try {
-      const liveRefs = buildLiveLoadedRefs();
-      if (liveRefs.length === 0) return;
-      syncTaxonomyFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs);
-    } catch {
-      lastAgentMountRevision.current = null;
+    let cancelled = false;
+    const runSync = () => {
+      if (cancelled) return;
+      try {
+        const liveRefs = buildLiveLoadedRefs();
+        if (liveRefs.length === 0) return;
+        syncTaxonomyFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs);
+        // Mark only after sync actually ran — avoids skipping mount when idle callback is cancelled.
+        lastAgentMountRevision.current = agentMountRevision;
+      } catch {
+        lastAgentMountRevision.current = agentMountRevision;
+      }
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      const idleId = requestIdleCallback(runSync, { timeout: 4000 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(idleId);
+      };
     }
+    const timeoutId = window.setTimeout(runSync, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
   }, [
     dictionaryMode,
     initialLoadDone,
@@ -304,13 +368,31 @@ export function useDocumentEditorController({
     [dicts.setSessionTokens, dicts.setSessionCategories],
   );
 
+  const canSaveProject = dictionaryMode && (
+    Boolean(dictState?.canSave)
+    || (analysisApi.analysisDirty && analysisApi.hasTaxonomy)
+  );
+  const savingProject = Boolean(dictState?.saving) || analysisApi.saving;
+
+  const saveProject = useCallback(async () => {
+    if (!dictionaryMode) return;
+    if (dictState?.canSave) {
+      await dictState.save();
+    }
+    if (analysisApi.analysisDirty && analysisApi.hasTaxonomy) {
+      await analysisApi.saveAnalysis();
+    }
+  }, [analysisApi, dictState, dictionaryMode]);
+
   return {
     doc,
     fileUrl,
     onDocUpdated,
     content,
     dictionaryMode,
+    ontologyColumns,
     descriptionColumn,
+    ontologyColumns,
     documentText,
     dicts,
     dictionaryCatalog,
@@ -342,10 +424,16 @@ export function useDocumentEditorController({
     agentDictionaryContext,
     agentNeedsUpdate,
     canRefreshOntology,
+    refreshingOntology,
+    ontologyRefreshProgress,
+    cancelOntologyRefresh,
     refreshOntology,
     buildLiveLoadedRefs,
     liveLoadedRefs,
     pathOrderingCategories,
+    canSaveProject,
+    savingProject,
+    saveProject,
   };
 }
 

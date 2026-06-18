@@ -3,13 +3,14 @@
  */
 import type { GrammarEntry } from '../hooks/useAnalysis';
 import type { TokenCategory } from './dictionaryTree';
-import { orderSegmentsByCategories, type SegmentMatch } from './dictionaryTree';
-import { canonicalizePathSegments } from './pathCanonicalize';
+import { type SegmentMatch } from './dictionaryTree';
+import { segmentDescriptionGrammarAware } from './grammarAwareSegment';
 import {
   collectWordSpanMatchesAfterShadow,
   findAllWordSpanMatches,
   collectHighlightSpansAfterShadow,
 } from './phraseMatchEngine';
+import { dropPreliminaryNegatedMatches, isPreliminaryNegationBeforeMatch } from './preliminaryNegation';
 
 export type { TokenCategory } from './dictionaryTree';
 
@@ -421,7 +422,10 @@ export function segmentWordsWithPositions(words: string[], matchPhrases: MatchPh
   unmatched: string[];
 } {
   const candidates = findAllWordSpanMatches(words, matchPhrases);
-  const selected = collectWordSpanMatchesAfterShadow(candidates);
+  const selected = dropPreliminaryNegatedMatches(
+    words,
+    collectWordSpanMatchesAfterShadow(candidates),
+  );
 
   const matchedWordIndices = new Set<number>();
   for (const m of selected) {
@@ -454,23 +458,9 @@ export function segmentDescription(
   text: string,
   tokens: TokenEntry[],
   categories: TokenCategory[] = [],
+  prebuiltMatchPhrases?: MatchPhrase[],
 ): SegmentationResult {
-  const normalized = normalizeDescriptionText(text);
-  if (!normalized) {
-    return { segments: [], path: '', unmatched: [] };
-  }
-
-  const matchPhrases = getActiveMatchPhrases(tokens);
-  const words = tokenizeToWords(normalized);
-  const { matches, unmatched } = segmentWordsWithPositions(words, matchPhrases);
-  const segments = orderSegmentsByCategories(matches, categories);
-  const path = canonicalizePathSegments(segments.join('.'), categories);
-
-  return {
-    segments: path ? path.split('.') : segments,
-    path,
-    unmatched: [...new Set(unmatched)],
-  };
+  return segmentDescriptionGrammarAware(text, tokens, categories, prebuiltMatchPhrases);
 }
 
 /** Matched dictionary tokens in order (one entry per tree level). */
@@ -558,11 +548,12 @@ export function segmentAllDescriptions(
 ): { leafPaths: string[]; rows: RowSegmentation[] } {
   const rows: RowSegmentation[] = [];
   const leafPaths: string[] = [];
+  const matchPhrases = getActiveMatchPhrases(tokens);
 
   descriptions.forEach((sourceText, rowIndex) => {
     const trimmed = sourceText.trim();
     if (!trimmed) return;
-    const result = segmentDescription(trimmed, tokens, categories);
+    const result = segmentDescription(trimmed, tokens, categories, matchPhrases);
     if (result.path) {
       leafPaths.push(result.path);
       rows.push({ rowIndex, sourceText: trimmed, path: result.path, unmatched: result.unmatched });
@@ -706,18 +697,37 @@ function charSpanForWordMatch(
   return { start, end };
 }
 
-/** Finds highlight spans in source text (contained shorter phrases are shadowed). */
-export function findHighlightSpans(sourceText: string, tokens: TokenEntry[]): HighlightSpan[] {
-  const matchPhrases = getActiveMatchPhrases(tokens);
+/** Finds highlight spans using pre-built match phrases (same engine as multi-dict segmentation). */
+export function findHighlightSpansFromPhrases(
+  sourceText: string,
+  matchPhrases: MatchPhrase[],
+): HighlightSpan[] {
   if (matchPhrases.length === 0) return [];
 
-  const words = tokenizeToWordsWithOffsets(sourceText);
-  if (words.length === 0) return [];
+  const wordSpans = tokenizeToWordsWithOffsets(sourceText);
+  if (wordSpans.length === 0) return [];
+
+  // Lowercase words for phrase matching; offsets stay on original source text.
+  const wordTexts = wordSpans.map((w) => w.word);
+  const shadowed = collectWordSpanMatchesAfterShadow(
+    findAllWordSpanMatches(wordTexts, matchPhrases),
+  );
+  const allowed = dropPreliminaryNegatedMatches(wordTexts, shadowed);
+  const allowedKeys = new Set(allowed.map((m) => `${m.wordStart}:${m.phrase}`));
 
   const candidates: HighlightSpan[] = [];
   const seen = new Set<string>();
 
-  const pushCandidate = (start: number, end: number, rule: MatchPhrase) => {
+  const pushCandidate = (
+    start: number,
+    end: number,
+    rule: MatchPhrase,
+    wordStart: number,
+  ) => {
+    if (isPreliminaryNegationBeforeMatch(wordTexts, wordStart, shadowed)
+        && !allowedKeys.has(`${wordStart}:${rule.phrase}`)) {
+      return;
+    }
     const key = `${start}:${end}:${rule.phrase}`;
     if (seen.has(key)) return;
     if (!isValidHighlightSpan(sourceText, start, end)) return;
@@ -731,25 +741,30 @@ export function findHighlightSpans(sourceText: string, tokens: TokenEntry[]): Hi
     });
   };
 
-  for (const rule of matchPhrases) {
-    const partCount = tokenizeToWords(rule.phrase).length;
-    if (partCount === 0) continue;
-
-    for (let i = 0; i <= words.length - partCount; i++) {
-      const span = charSpanForWordMatch(sourceText, words, i, rule.phrase);
-      if (!span) continue;
-      pushCandidate(span.start, span.end, rule);
-    }
+  for (const m of allowed) {
+    const span = charSpanForWordMatch(sourceText, wordSpans, m.wordStart, m.phrase);
+    if (!span) continue;
+    pushCandidate(span.start, span.end, m, m.wordStart);
   }
 
   for (const rule of matchPhrases) {
+    const partCount = tokenizeToWords(rule.phrase).length;
+    if (partCount === 0) continue;
     const re = buildPhraseHighlightRegex(rule.phrase);
     if (!re) continue;
     let match: RegExpExecArray | null;
     while ((match = re.exec(sourceText)) !== null) {
-      pushCandidate(match.index, match.index + match[0].length, rule);
+      const wordStart = wordSpans.findIndex((w) => w.start === match!.index);
+      if (wordStart < 0) continue;
+      if (allowedKeys.has(`${wordStart}:${rule.phrase}`)) continue;
+      pushCandidate(match.index, match.index + match[0].length, rule, wordStart);
     }
   }
 
   return collectHighlightSpansAfterShadow(candidates);
+}
+
+/** Finds highlight spans in source text (contained shorter phrases are shadowed). */
+export function findHighlightSpans(sourceText: string, tokens: TokenEntry[]): HighlightSpan[] {
+  return findHighlightSpansFromPhrases(sourceText, getActiveMatchPhrases(tokens));
 }

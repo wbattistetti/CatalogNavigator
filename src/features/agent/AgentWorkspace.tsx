@@ -13,8 +13,6 @@ export function AgentWorkspace() {
     agentDictionaryContext,
     affinaOpen,
     setAffinaOpen,
-    testOpen,
-    setTestOpen,
     convaiOpen,
     setConvaiOpen,
     convaiNoBeOpen,
@@ -50,8 +48,6 @@ export function AgentWorkspace() {
       onGenerateDialogueMessages={handleGenerateDialogueMessages}
       affinaOpen={affinaOpen}
       onAffinaOpenChange={setAffinaOpen}
-      testOpen={testOpen}
-      onTestOpenChange={setTestOpen}
       convaiOpen={convaiOpen}
       onConvaiOpenChange={setConvaiOpen}
       convaiNoBeOpen={convaiNoBeOpen}

@@ -43,6 +43,19 @@ describe('resolveCategoryIcon', () => {
   it('falls back to Folder for unknown names', () => {
     expect(resolveCategoryIcon('categoria sconosciuta').iconKey).toBe('Folder');
   });
+
+  it('maps pharmaceutical category containers', () => {
+    expect(resolveCategoryIcon('Principio attivo').iconKey).toBe('FlaskConical');
+    expect(resolveCategoryIcon('Nome commerciale').iconKey).toBe('Tag');
+    expect(resolveCategoryIcon('Forma di confezionamento').iconKey).toBe('Package');
+    expect(resolveCategoryIcon('Dosaggio / concentrazione').iconKey).toBe('Scale');
+    expect(resolveCategoryIcon('Quantità confezione').iconKey).toBe('Boxes');
+    expect(resolveCategoryIcon('Indicazione clinica').iconKey).toBe('FileText');
+    expect(resolveCategoryIcon('Vincoli / controindicazioni').iconKey).toBe('ShieldAlert');
+    expect(resolveCategoryIcon('Modalità di somministrazione').iconKey).toBe('Syringe');
+    expect(resolveCategoryIcon('Stabilità e conservazione').iconKey).toBe('Snowflake');
+    expect(resolveCategoryIcon('Interazioni farmacologiche rilevanti').iconKey).toBe('Link2');
+  });
 });
 
 describe('resolveTokenIcon', () => {

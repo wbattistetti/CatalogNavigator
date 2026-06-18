@@ -10,8 +10,6 @@ import {
   type TokenCategory,
 } from './dictionaryTree';
 import {
-  getDirectChildItemSlots,
-  isPrefixAmbiguityNode,
   isTerminalItemSlot,
 } from './itemPaths';
 
@@ -96,31 +94,6 @@ export function isVincoloToken(token: string, categories: TokenCategory[]): bool
 }
 
 /**
- * Direct child item paths offered in "semplice vs estensione" questions.
- * Vincolo segments (e.g. age bands) are never listed as optional add-ons.
- */
-export function getPrefixAmbiguityTargets(
-  slot: string,
-  itemPaths: string[],
-  categories?: TokenCategory[],
-): string[] {
-  const direct = getDirectChildItemSlots(slot, itemPaths);
-  if (!categories?.length) return direct;
-  return direct.filter((childPath) => !isVincoloToken(lastSegment(childPath), categories));
-}
-
-/** True when parent-item must disambiguate base vs attributo child-item extension. */
-export function hasAttributoPrefixAmbiguity(
-  slots: string[],
-  slot: string,
-  itemPaths: string[],
-  categories?: TokenCategory[],
-): boolean {
-  if (!isPrefixAmbiguityNode(slots, slot, itemPaths)) return false;
-  return getPrefixAmbiguityTargets(slot, itemPaths, categories).length > 0;
-}
-
-/**
  * True when this tree node's last segment is a vincolo token — ask patient age, never a fascia menu.
  */
 export function requiresVincoloSegmentQuestionNode(
@@ -132,7 +105,7 @@ export function requiresVincoloSegmentQuestionNode(
   return isVincoloToken(lastSegment(slot), categories);
 }
 
-/** True when node needs a disambiguation question (vincolo segment, prefix-item, or siblings). */
+/** True when node needs a disambiguation question (vincolo segment or attributo siblings). */
 export function requiresCategoryAwareInteractiveNode(
   slots: string[],
   slot: string,
@@ -141,7 +114,6 @@ export function requiresCategoryAwareInteractiveNode(
 ): boolean {
   if (requiresVincoloSegmentQuestionNode(slot, itemPaths, categories)) return true;
   if (isTerminalItemSlot(slot, itemPaths)) return false;
-  if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) return true;
   const siblings = getSiblingChoiceChildren(slots, slot, categories);
   return siblings != null && siblings.length >= 2;
 }

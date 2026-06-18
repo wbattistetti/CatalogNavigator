@@ -3,7 +3,7 @@
  */
 import type { AgentTurnInstruction, ExpectedSlotInput } from './agentBundleTypes';
 
-const DEFAULT_AGE_CATEGORY = 'FASCIA DI ETÀ (VINCOLO)';
+const DEFAULT_AGE_CATEGORY = 'fascia di età';
 
 /** Contract for ask_age: numeric years only, never fascia catalog tokens. */
 export function buildAskAgeExpectedInput(categoryName = DEFAULT_AGE_CATEGORY): ExpectedSlotInput[] {
@@ -28,10 +28,9 @@ export function buildDisambiguateExpectedInput(
   }];
 }
 
-function ageCategoryLabelForExpected(categoryName?: string): string {
-  const base = categoryName?.trim() || 'FASCIA DI ETÀ';
-  if (/vincolo/i.test(base)) return base;
-  return `${base} (VINCOLO)`;
+function resolveAgeCategoryName(categoryName?: string): string {
+  const trimmed = categoryName?.trim();
+  return trimmed || DEFAULT_AGE_CATEGORY;
 }
 
 /** Attaches expectedInput to instruction when the action requires a specific next slot shape. */
@@ -40,7 +39,7 @@ export function withExpectedInput(instruction: AgentTurnInstruction): AgentTurnI
     return {
       ...instruction,
       expectedInput: {
-        slots: buildAskAgeExpectedInput(ageCategoryLabelForExpected(instruction.categoryName)),
+        slots: buildAskAgeExpectedInput(resolveAgeCategoryName(instruction.categoryName)),
       },
     };
   }

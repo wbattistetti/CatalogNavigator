@@ -6,7 +6,7 @@ import { BookOpen, Loader2, AlertCircle, Check, Library, X } from 'lucide-react'
 import type { KbDocument } from '../../lib/supabase';
 import type { ParsedTabular } from '../../lib/parseTabular';
 import type { TokenCategory } from '../../lib/dictionaryTree';
-import { syncCategoriesWithTokens } from '../../lib/dictionaryTree';
+import { reconcileCategoryGrammarsWithTokens } from '../../lib/categoryGrammar';
 import {
   getActiveTokens,
   type TokenDictionary,
@@ -18,14 +18,19 @@ import {
 } from '../../lib/multiDictionarySegment';
 import { getPathOrderingCategories } from '../../lib/pathCanonicalize';
 import {
+  buildCorpusDescriptionsFromColumns,
   persistDocumentColumnRoles,
-  setDescriptionColumnRole,
+  primaryOntologyColumn,
+  setOntologyColumnRoles,
 } from '../../lib/columnRoles';
 import type { UseProjectDictionariesResult } from '../../hooks/useProjectDictionaries';
 import { DictionaryIcon } from './DictionaryIcon';
 import { CorpusTokenEditor } from './CorpusTokenEditor';
+import { OntologyCorpusSegmentationProvider } from '../../features/ontology-corpus/OntologyCorpusSegmentationContext';
+import { useDocumentEditorTab } from '../../features/document-editor/DocumentEditorContext';
+import { EDITOR_TAB_IDS } from '../../features/document-editor/editorTabIds';
 import { dictionaryTabDisplayName } from '../../lib/dictionaryTabOrder';
-import { DescriptionColumnSelect } from './DescriptionColumnSelect';
+import { OntologyColumnsSelect } from './OntologyColumnsSelect';
 
 export type DictionaryAfterSaveHandler = (
   dictionary: TokenDictionary,
@@ -37,6 +42,8 @@ export interface DictionaryPanelState {
   canSave: boolean;
   saving?: boolean;
   activeTokenCount: number;
+  ontologyColumns: string[];
+  /** First ontology column — legacy metadata for token dictionaries. */
   descriptionColumn: string | null;
   save: () => Promise<void>;
   discard: () => void;
@@ -51,6 +58,7 @@ interface DictionaryPanelProps {
   doc: KbDocument;
   tabular: ParsedTabular;
   dicts: UseProjectDictionariesResult;
+  ontologyColumns: string[];
   descriptionColumn: string | null;
   onDocUpdated: (doc: KbDocument) => void;
   onStateChange: (state: DictionaryPanelState) => void;
@@ -67,6 +75,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   doc,
   tabular,
   dicts,
+  ontologyColumns,
   descriptionColumn,
   onDocUpdated,
   onStateChange,
@@ -76,6 +85,9 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   syncNotice = null,
   error,
 }: DictionaryPanelProps) {
+  const { activeTab } = useDocumentEditorTab();
+  const segmentationCacheEnabled = activeTab === EDITOR_TAB_IDS.ontology;
+
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -85,12 +97,10 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     active: false,
   });
 
-  const descriptions = useMemo(() => {
-    if (!descriptionColumn) return [];
-    const idx = tabular.headers.indexOf(descriptionColumn);
-    if (idx < 0) return [];
-    return tabular.rows.map((r) => r[idx] ?? '');
-  }, [tabular, descriptionColumn]);
+  const descriptions = useMemo(
+    () => buildCorpusDescriptionsFromColumns(tabular.headers, tabular.rows, ontologyColumns),
+    [tabular, ontologyColumns],
+  );
 
   const projectDictId = dicts.projectDictionaryId;
   const projectSession = projectDictId ? dicts.getSession(projectDictId) : null;
@@ -100,21 +110,18 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   const editingCategories = projectSession?.categories ?? [];
   const projectDirty = projectSession?.dirty ?? false;
 
-  const activeCount = useMemo(() => {
-    if (!projectDictId) {
-      return getActiveTokens(mergeLoadedTokens(dicts.loadedRefs)).length;
-    }
-    const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
+  const liveLoadedRefs = useMemo(
+    () => mergeAllDictionarySessionsIntoLoadedRefs(
       dicts.loadedRefs,
       (id) => dicts.getSession(id),
-    );
-    return getActiveTokens(mergeLoadedTokens(liveRefs)).length;
-  }, [
-    dicts.loadedRefs,
-    dicts.getSession,
-    dicts.dictionarySessionsRevision,
-    projectDictId,
-  ]);
+    ),
+    [dicts.loadedRefs, dicts.getSession, dicts.dictionarySessionsRevision],
+  );
+
+  const activeCount = useMemo(
+    () => getActiveTokens(mergeLoadedTokens(liveLoadedRefs)).length,
+    [liveLoadedRefs],
+  );
   const rowCount = descriptions.filter((d) => d.trim()).length;
 
   const loadedDictionaryLabels = useMemo(
@@ -143,31 +150,22 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   }, [descriptionColumn, projectMeta, editingTokens, editingCategories]);
 
   const getMergedDictionary = useCallback((): TokenDictionary | null => {
-    if (!descriptionColumn || dicts.loadedRefs.length === 0) return null;
-    const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
-      dicts.loadedRefs,
-      (id) => dicts.getSession(id),
-    );
+    if (!descriptionColumn || liveLoadedRefs.length === 0) return null;
     return {
       descriptionColumn,
-      tokens: mergeLoadedTokens(liveRefs),
-      categories: getPathOrderingCategories(liveRefs),
+      tokens: mergeLoadedTokens(liveLoadedRefs),
+      categories: getPathOrderingCategories(liveLoadedRefs),
     };
-  }, [
-    descriptionColumn,
-    dicts.loadedRefs,
-    dicts.getSession,
-    dicts.dictionarySessionsRevision,
-  ]);
+  }, [descriptionColumn, liveLoadedRefs]);
 
-  const handleSetDescriptionColumn = useCallback(async (column: string) => {
+  const handleSetOntologyColumns = useCallback(async (columns: string[]) => {
     setLocalError(null);
     try {
-      const newRoles = setDescriptionColumnRole(doc.column_roles ?? {}, tabular.headers, column);
+      const newRoles = setOntologyColumnRoles(doc.column_roles ?? {}, tabular.headers, columns);
       const fresh = await persistDocumentColumnRoles(doc.id, newRoles);
       onDocUpdated(fresh);
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Impossibile salvare la colonna descrizione');
+      setLocalError(err instanceof Error ? err.message : 'Impossibile salvare le colonne ontologia');
     }
   }, [doc.column_roles, doc.id, tabular.headers, onDocUpdated]);
 
@@ -180,7 +178,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
       if (!projectDictId) throw new Error('Nessun dizionario di progetto');
       await dicts.saveDictionary(projectDictId);
 
-      const newRoles = setDescriptionColumnRole(doc.column_roles ?? {}, tabular.headers, descriptionColumn);
+      const newRoles = setOntologyColumnRoles(doc.column_roles ?? {}, tabular.headers, ontologyColumns);
       const fresh = await persistDocumentColumnRoles(doc.id, newRoles);
       onDocUpdated(fresh);
       setSaveStatus('saved');
@@ -194,7 +192,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     } finally {
       setSaving(false);
     }
-  }, [descriptionColumn, saving, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave, projectDictId]);
+  }, [descriptionColumn, ontologyColumns, saving, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave, projectDictId]);
 
   const handleDiscard = useCallback(() => {
     if (projectDictId) dicts.discardDictionary(projectDictId);
@@ -204,7 +202,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
 
   const handleTokensChange = useCallback((next: TokenEntry[]) => {
     if (!projectDictId) return;
-    const synced = syncCategoriesWithTokens(editingCategories, next);
+    const synced = reconcileCategoryGrammarsWithTokens(editingCategories, next);
     dicts.setSessionTokens(projectDictId, next);
     dicts.setSessionCategories(projectDictId, synced);
   }, [dicts, editingCategories, projectDictId]);
@@ -231,7 +229,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     setSessionTokensRef.current(id, tokens);
     const session = dicts.getSession(id);
     const categories = session?.categories ?? [];
-    dicts.setSessionCategories(id, syncCategoriesWithTokens(categories, tokens));
+    dicts.setSessionCategories(id, reconcileCategoryGrammarsWithTokens(categories, tokens));
   }, [dicts]);
 
   const replaceCategories = useCallback((categories: TokenCategory[]) => {
@@ -245,6 +243,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     canSave: projectDirty && !saving && !!projectDictId,
     saving,
     activeTokenCount: activeCount,
+    ontologyColumns,
     descriptionColumn,
     save: handleSave,
     discard: handleDiscard,
@@ -259,6 +258,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     projectDictId,
     activeCount,
     descriptionColumn,
+    ontologyColumns,
     handleSave,
     handleDiscard,
     getEditingDictionary,
@@ -274,7 +274,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
       projectDictId,
       activeCount,
       saving,
-      descriptionColumn,
+      ontologyColumns.join('\0'),
       editingTokens.length,
     ].join('\0'),
     [
@@ -282,7 +282,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
       projectDictId,
       activeCount,
       saving,
-      descriptionColumn,
+      ontologyColumns,
       editingTokens.length,
     ],
   );
@@ -292,7 +292,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   }, [panelRevision, panelState, onStateChange]);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
       <div className="flex-shrink-0 px-4 py-2 border-b border-[#1a3a2a] bg-[#070d09]">
         <div className="flex items-center gap-2 flex-wrap">
           <BookOpen className="w-4 h-4 text-amber-400/70" />
@@ -355,13 +355,13 @@ export const DictionaryPanel = memo(function DictionaryPanel({
               <Check className="w-3 h-3" /> salvato
             </span>
           )}
-          {descriptionColumn ? (
+          {ontologyColumns.length > 0 ? (
             <>
-              <DescriptionColumnSelect
+              <OntologyColumnsSelect
                 headers={tabular.headers}
                 columnRoles={doc.column_roles}
-                value={descriptionColumn}
-                onConfirm={handleSetDescriptionColumn}
+                value={ontologyColumns}
+                onConfirm={handleSetOntologyColumns}
                 variant="inline"
               />
               <span className="font-mono text-[10px] text-emerald-400/40">
@@ -394,27 +394,34 @@ export const DictionaryPanel = memo(function DictionaryPanel({
           <Loader2 className="w-4 h-4 animate-spin" />
           Caricamento…
         </div>
-      ) : !descriptionColumn ? (
+      ) : ontologyColumns.length === 0 ? (
         <div className="flex-1 flex items-center justify-center px-8">
-          <DescriptionColumnSelect
+          <OntologyColumnsSelect
             headers={tabular.headers}
             columnRoles={doc.column_roles}
-            value={null}
-            onConfirm={handleSetDescriptionColumn}
+            value={[]}
+            onConfirm={handleSetOntologyColumns}
           />
         </div>
       ) : (
-        <div className="flex-1 min-h-0 flex flex-col p-4 overflow-hidden">
-          <CorpusTokenEditor
-            descriptions={descriptions}
-            tokens={editingTokens}
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col p-4 overflow-hidden">
+          <OntologyCorpusSegmentationProvider
+            corpusTexts={descriptions}
+            liveLoadedRefs={liveLoadedRefs}
             categories={editingCategories}
-            loadedRefs={dicts.loadedRefs}
-            editingDictionaryId={projectDictId}
-            onTokensChange={handleTokensChange}
-            onCategoriesChange={handleCategoriesChange}
-            onRowFilterStatsChange={setDescriptionFilterStats}
-          />
+            enabled={segmentationCacheEnabled}
+          >
+            <CorpusTokenEditor
+              descriptions={descriptions}
+              liveLoadedRefs={liveLoadedRefs}
+              tokens={editingTokens}
+              categories={editingCategories}
+              editingDictionaryId={projectDictId}
+              onTokensChange={handleTokensChange}
+              onCategoriesChange={handleCategoriesChange}
+              onRowFilterStatsChange={setDescriptionFilterStats}
+            />
+          </OntologyCorpusSegmentationProvider>
         </div>
       )}
     </div>

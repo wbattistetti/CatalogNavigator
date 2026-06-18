@@ -4,15 +4,12 @@
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import {
-  buildPrefixDisambiguationQuestion,
   resolveItemPaths,
 } from './itemPaths';
 import { AGE_YEARS_QUESTION } from './constraintValidation';
 import type { TokenCategory } from './dictionaryTree';
 import {
-  getPrefixAmbiguityTargets,
   getSiblingChoiceChildren,
-  hasAttributoPrefixAmbiguity,
   requiresVincoloSegmentQuestionNode,
 } from './nluCategoryRules';
 import { isPassthroughNode, requiresInteractiveNode } from './nluQuestionRules';
@@ -71,9 +68,6 @@ export function buildInteractiveMessageFallback(
 
   if (requiresVincoloSegmentQuestionNode(slot, itemPaths, categories)) {
     question = AGE_YEARS_QUESTION;
-  } else if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) {
-    const targets = getPrefixAmbiguityTargets(slot, itemPaths, categories);
-    question = buildPrefixDisambiguationQuestion(slot, targets);
   } else {
     const children = getSiblingChoiceChildren(slots, slot, categories);
     if (children && children.length >= 2 && children.length <= 3) {

@@ -30,6 +30,8 @@ export type { DictionaryEditSession } from '../lib/dictionaryEditSession';
 
 export interface UseProjectDictionariesResult {
   loading: boolean;
+  /** True while linked library dictionaries (full payload) are loading after the UI unlocks. */
+  hydratingLinked: boolean;
   error: string | null;
   projectId: string | null;
   available: KbDictionary[];
@@ -95,6 +97,7 @@ export function useProjectDictionaries(
   onDocUpdated: (doc: KbDocument) => void,
 ): UseProjectDictionariesResult {
   const [loading, setLoading] = useState(true);
+  const [hydratingLinked, setHydratingLinked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [localDoc, setLocalDoc] = useState(doc);
   const [projectId, setProjectId] = useState<string | null>(doc.project_id ?? null);
@@ -146,32 +149,41 @@ export function useProjectDictionaries(
         await ensureDefaultProjectDictionary(project.id, nextDoc.name);
       }
 
-      const [avail, proj, linked] = await Promise.all([
+      const [avail, proj] = await Promise.all([
         listAvailableDictionaries(project.id),
         listProjectDictionaries(project.id),
-        listLinkedLibraryDictionaries(project.id),
       ]);
 
-      setAvailable(avail);
       const canonical = canonicalProjectDictionary(proj);
       const projectList = canonical ? [canonical] : [];
+
+      setAvailable(avail);
       setProjectDicts(projectList);
+      setLoading(false);
+      setHydratingLinked(true);
+
+      const linked = await listLinkedLibraryDictionaries(project.id);
+
       setLinkedLibrary(linked);
+      setHydratingLinked(false);
 
       const loaded = [...projectList, ...linked.map((l) => l.dictionary)];
-      editSessions.syncSessionsFromLoaded(loaded, true);
+      window.setTimeout(() => {
+        editSessions.syncSessionsFromLoaded(loaded, true);
+        const allLoadedIds = new Set(loaded.map((d) => d.id));
+        const defaultId = defaultDictionaryEditorId(loaded);
+        editSessions.syncOpenEditorsAfterReload(
+          allLoadedIds,
+          defaultId,
+          loaded,
+          options?.focusDictionaryId,
+        );
+      }, 0);
 
-      const allLoadedIds = new Set(loaded.map((d) => d.id));
-      const defaultId = defaultDictionaryEditorId(loaded);
-      editSessions.syncOpenEditorsAfterReload(
-        allLoadedIds,
-        defaultId,
-        loaded,
-        options?.focusDictionaryId,
-      );
       return buildLoadedRefs(projectList, linked);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Errore caricamento dizionari');
+      setHydratingLinked(false);
       return null;
     } finally {
       setLoading(false);
@@ -330,6 +342,7 @@ export function useProjectDictionaries(
 
   return {
     loading,
+    hydratingLinked,
     error,
     projectId,
     available,

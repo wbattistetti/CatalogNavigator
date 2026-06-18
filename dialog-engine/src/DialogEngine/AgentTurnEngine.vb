@@ -1,5 +1,5 @@
 ﻿''' <summary>
-''' Agent turn: extract concepts, merge conversation, filter catalog, next step.
+''' Agent turn: route utterance vs external slots, merge conversation, filter catalog, next step.
 ''' </summary>
 Public Module AgentTurnEngine
 
@@ -17,7 +17,14 @@ Public Module AgentTurnEngine
         conversation As Models.AgentSessionState,
         turn As Models.AgentTurnInput
     ) As Models.AgentTurnResult
-        Return FinishTurn(ProcessTurn(bundle, conversation, turn))
+        Dim earlyExit = TryAlreadyDoneResult(bundle, conversation)
+        If earlyExit IsNot Nothing Then Return earlyExit
+
+        If HasExternalSlots(turn) Then
+            Return FinishTurn(bundle, ProcessExternalSlots(bundle, conversation, turn))
+        End If
+
+        Return FinishTurn(bundle, ProcessUtterance(bundle, conversation, turn))
     End Function
 
     Public Function ProcessAgentTurnFromText(
@@ -25,8 +32,10 @@ Public Module AgentTurnEngine
         conversation As Models.AgentSessionState,
         userText As String
     ) As Models.AgentTurnResult
+        Dim earlyExit = TryAlreadyDoneResult(bundle, conversation)
+        If earlyExit IsNot Nothing Then Return earlyExit
         Dim turn = New Models.AgentTurnInput With {.Transcript = If(userText, String.Empty).Trim()}
-        Return FinishTurn(ProcessTurn(bundle, conversation, turn))
+        Return FinishTurn(bundle, ProcessUtterance(bundle, conversation, turn))
     End Function
 
     Public Function FormatAgentParsedBlock(
@@ -38,71 +47,108 @@ Public Module AgentTurnEngine
         Return $"---PARSED---{Environment.NewLine}{String.Join(Environment.NewLine, lines)}"
     End Function
 
-    Private Function ProcessTurn(
+    Private Function TryAlreadyDoneResult(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState
+    ) As Models.AgentTurnResult
+        If conversation Is Nothing OrElse String.IsNullOrEmpty(conversation.SelectedPath) Then Return Nothing
+        Return FinishTurn(bundle, TurnResultBuilder.AlreadyDone(conversation, New List(Of Models.Concept)()))
+    End Function
+
+    Private Function HasExternalSlots(turn As Models.AgentTurnInput) As Boolean
+        Return turn IsNot Nothing AndAlso turn.IncomingConcepts IsNot Nothing AndAlso turn.IncomingConcepts.Count > 0
+    End Function
+
+    Private Function ProcessUtterance(
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
         turn As Models.AgentTurnInput
     ) As Models.AgentTurnResult
-        Dim conceptsInUtterance = ExtractConceptsThisTurn(bundle, conversation, turn)
-        Dim utterance = If(turn IsNot Nothing AndAlso turn.Transcript IsNot Nothing, turn.Transcript.Trim(), String.Empty)
-
-        If conversation IsNot Nothing AndAlso Not String.IsNullOrEmpty(conversation.SelectedPath) Then
-            Return TurnResultBuilder.AlreadyDone(conversation, conceptsInUtterance)
-        End If
-
-        Dim priorConversation = conversation
-        conversation = MergeIntoConversation(conversation, conceptsInUtterance, utterance)
-
-        Dim candidates = CatalogFilter.FilterCandidates(bundle.Catalog, conversation)
-        Dim candidatePaths = candidates.Select(Function(item) item.Path).ToList()
-        Dim confirmImplicit = turn IsNot Nothing AndAlso turn.ConfirmImplicitConcepts
-
-        Return NextStep(bundle, priorConversation, conversation, conceptsInUtterance, candidatePaths, confirmImplicit)
+        Dim transcript = If(turn IsNot Nothing AndAlso turn.Transcript IsNot Nothing, turn.Transcript.Trim(), String.Empty)
+        Dim conceptsThisTurn = ExtractConceptsFromTranscript(bundle, conversation, transcript)
+        Return ContinueDialogStep(bundle, conversation, turn, conceptsThisTurn, transcript)
     End Function
 
-    Private Function ExtractConceptsThisTurn(
+    Private Function ProcessExternalSlots(
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
         turn As Models.AgentTurnInput
-    ) As List(Of Models.Concept)
-        Dim utterance = utteranceFromTurn(turn)
-        Dim incoming = If(turn IsNot Nothing AndAlso turn.IncomingConcepts IsNot Nothing, turn.IncomingConcepts, New List(Of Models.Concept)())
-        Dim pendingOnly = IsCollectingConstraintValue(conversation)
-        Dim pendingAgeCategory = If(pendingOnly, PendingAgeCategoryName(conversation), Nothing)
+    ) As Models.AgentTurnResult
+        Dim externalSlots = If(turn IsNot Nothing AndAlso turn.IncomingConcepts IsNot Nothing,
+            turn.IncomingConcepts, New List(Of Models.Concept)())
+        Dim conceptsThisTurn = ValidateAndNormalizeExternalSlots(bundle, conversation, externalSlots)
 
-        Dim fromUtterance As New List(Of Models.Concept)()
-        If Not String.IsNullOrWhiteSpace(utterance) Then
-            fromUtterance = ConceptExtraction.ExtractConceptsFromUtterance(
-                utterance, bundle.Ontology, pendingAgeCategory, pendingOnly)
+        Dim transcript = If(turn IsNot Nothing AndAlso turn.Transcript IsNot Nothing, turn.Transcript.Trim(), String.Empty)
+        If Not String.IsNullOrWhiteSpace(transcript) Then
+            Dim fromTranscript = ExtractConceptsFromTranscript(bundle, conversation, transcript)
+            conceptsThisTurn = ConceptOps.MergeAcquired(fromTranscript, conceptsThisTurn, bundle.Ontology)
         End If
-        Dim normalizedUtterance = ConceptExtraction.NormalizeExtractedConcepts(fromUtterance)
 
-        If incoming.Count = 0 Then Return normalizedUtterance
-
-        Dim priorPaths = AgentSlotMatch.PriorCandidatePaths(bundle, conversation)
-        Dim validationPaths = If(priorPaths.Count > 0, priorPaths, BundleAccess.ItemPaths(bundle))
-        Dim filtered = IncomingConcepts.FilterIncomingConcepts(
-            bundle, incoming, If(conversation IsNot Nothing, conversation.PendingConstraint, Nothing), validationPaths)
-        Dim normalizedIncoming = ConceptExtraction.NormalizeExtractedConcepts(filtered)
-
-        Return ConceptOps.MergeAcquired(normalizedUtterance, normalizedIncoming)
+        Return ContinueDialogStep(bundle, conversation, turn, conceptsThisTurn, transcript)
     End Function
 
-    Private Function utteranceFromTurn(turn As Models.AgentTurnInput) As String
-        If turn Is Nothing OrElse turn.Transcript Is Nothing Then Return String.Empty
-        Return turn.Transcript.Trim()
+    Private Function ExtractConceptsFromTranscript(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState,
+        transcript As String
+    ) As List(Of Models.Concept)
+        If String.IsNullOrWhiteSpace(transcript) Then Return New List(Of Models.Concept)()
+
+        Dim pendingOnly = IsCollectingConstraintValue(conversation)
+        Dim pendingCategory = If(pendingOnly, PendingVincoloCategoryName(conversation, bundle), Nothing)
+        Dim extracted = ConceptExtraction.ExtractConceptsFromUtterance(
+            transcript, bundle.Ontology, pendingCategory, pendingOnly)
+        Return ConceptExtraction.NormalizeExtractedConcepts(extracted, bundle.Ontology)
+    End Function
+
+    Private Function ValidateAndNormalizeExternalSlots(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState,
+        externalSlots As IList(Of Models.Concept)
+    ) As List(Of Models.Concept)
+        Dim slots = If(externalSlots IsNot Nothing, externalSlots, New List(Of Models.Concept)())
+        If slots.Count = 0 Then Return New List(Of Models.Concept)()
+
+        Dim normalized = ConceptExtraction.NormalizeExtractedConcepts(slots, bundle.Ontology)
+        If normalized.Count = 0 Then Return normalized
+
+        Dim priorCandidates = AgentSlotMatch.PriorCandidates(bundle, conversation)
+        Dim validationCandidates = priorCandidates
+        If validationCandidates.Count = 0 AndAlso bundle IsNot Nothing AndAlso bundle.Catalog IsNot Nothing AndAlso bundle.Catalog.Items IsNot Nothing Then
+            validationCandidates = bundle.Catalog.Items
+        End If
+        Return IncomingConcepts.FilterIncomingConcepts(
+            bundle, normalized, If(conversation IsNot Nothing, conversation.PendingConstraint, Nothing), validationCandidates)
+    End Function
+
+    Private Function ContinueDialogStep(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState,
+        turn As Models.AgentTurnInput,
+        conceptsThisTurn As IList(Of Models.Concept),
+        transcript As String
+    ) As Models.AgentTurnResult
+        Dim priorConversation = conversation
+        conversation = MergeIntoConversation(bundle, conversation, conceptsThisTurn, transcript)
+
+        Dim candidates = CatalogFilter.FilterCandidates(bundle.Catalog, conversation)
+        Dim confirmImplicit = turn IsNot Nothing AndAlso turn.ConfirmImplicitConcepts
+
+        Return NextStep(bundle, priorConversation, conversation, conceptsThisTurn, candidates, confirmImplicit)
     End Function
 
     Private Function MergeIntoConversation(
+        bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
         conceptsInUtterance As IList(Of Models.Concept),
         utterance As String
     ) As Models.AgentSessionState
         Dim prior = If(conversation IsNot Nothing AndAlso conversation.AcquiredConcepts IsNot Nothing,
             conversation.AcquiredConcepts, New List(Of Models.Concept)())
+        Dim ontology = If(bundle IsNot Nothing, bundle.Ontology, Nothing)
 
         Return New Models.AgentSessionState With {
-            .AcquiredConcepts = ConceptOps.MergeAcquired(prior, conceptsInUtterance),
+            .AcquiredConcepts = ConceptOps.MergeAcquired(prior, conceptsInUtterance, ontology),
             .SelectedPath = If(conversation IsNot Nothing, conversation.SelectedPath, Nothing),
             .NoMatchCount = If(conversation IsNot Nothing, conversation.NoMatchCount, 0),
             .LastTranscript = If(String.IsNullOrWhiteSpace(utterance) AndAlso conversation IsNot Nothing,
@@ -116,60 +162,72 @@ Public Module AgentTurnEngine
         priorConversation As Models.AgentSessionState,
         conversation As Models.AgentSessionState,
         conceptsInUtterance As IList(Of Models.Concept),
-        candidatePaths As IList(Of String),
+        candidates As IList(Of Models.CatalogItem),
         confirmImplicit As Boolean
     ) As Models.AgentTurnResult
-        If candidatePaths.Count = 0 Then
+        Dim survivingPaths = AgentSlotMatch.CandidatePaths(candidates)
+
+        If candidates Is Nothing OrElse candidates.Count = 0 Then
             Dim acquiredCount = ConceptOps.AcquiredCount(conversation.AcquiredConcepts)
             Dim hint = If(
                 acquiredCount = 0 AndAlso Not String.IsNullOrWhiteSpace(bundle.Ontology.StartQuestion),
                 bundle.Ontology.StartQuestion.Trim(),
                 If(acquiredCount = 0, "Non ho capito. Può ripetere?", "Nessuna prestazione compatibile con i criteri indicati."))
             Return TurnResultBuilder.NoMatch(
-                conversation, priorConversation, conceptsInUtterance, hint, 0, New List(Of String)())
+                conversation, priorConversation, conceptsInUtterance, hint, 0, survivingPaths)
         End If
 
-        If AgentSlotMatch.ShouldAskAge(bundle, candidatePaths, conversation) Then
-            Return TurnResultBuilder.AskAge(conversation, conceptsInUtterance, "FASCIA DI ETÀ", candidatePaths)
+        If AgentSlotMatch.ShouldAskAge(bundle, candidates, conversation) Then
+            Dim ageCategory = CategoryTypes.FirstAgeVincoloCategory(bundle.Ontology)
+            Dim categoryName = If(ageCategory IsNot Nothing, ageCategory.Name, "fascia di età")
+            Return TurnResultBuilder.AskAge(conversation, conceptsInUtterance, categoryName, survivingPaths)
         End If
 
-        If candidatePaths.Count = 1 Then
-            Return TurnResultBuilder.Confirm(bundle, conversation, candidatePaths(0), conceptsInUtterance, candidatePaths)
+        If candidates.Count = 1 Then
+            Return TurnResultBuilder.Confirm(bundle, conversation, candidates(0).Path, conceptsInUtterance, survivingPaths)
         End If
 
         If confirmImplicit Then
-            Dim inferred = AgentSlotMatch.FindInferredConcept(bundle, candidatePaths, conversation.AcquiredConcepts)
+            Dim inferred = AgentSlotMatch.FindInferredConcept(bundle, candidates, conversation.AcquiredConcepts)
             If inferred IsNot Nothing Then
-                Return TurnResultBuilder.ConfirmImplicit(conversation, conceptsInUtterance, inferred, candidatePaths)
+                Return TurnResultBuilder.ConfirmImplicit(conversation, conceptsInUtterance, inferred, survivingPaths)
             End If
         End If
 
-        Dim disambiguation = AgentSlotMatch.FindDisambiguationTarget(bundle, candidatePaths, conversation.AcquiredConcepts)
+        Dim disambiguation = AgentSlotMatch.FindDisambiguationTarget(bundle, candidates, conversation.AcquiredConcepts)
         If disambiguation IsNot Nothing Then
-            Return TurnResultBuilder.Disambiguate(conversation, conceptsInUtterance, disambiguation, candidatePaths)
+            Return TurnResultBuilder.Disambiguate(conversation, conceptsInUtterance, disambiguation, survivingPaths)
         End If
 
         Return TurnResultBuilder.NoMatch(
             conversation, priorConversation, conceptsInUtterance,
             "Ho bisogno di un dettaglio in più per individuare la prestazione.",
-            candidatePaths.Count, candidatePaths)
+            candidates.Count, survivingPaths)
     End Function
 
     Private Function IsCollectingConstraintValue(conversation As Models.AgentSessionState) As Boolean
         Return conversation IsNot Nothing AndAlso conversation.PendingConstraint IsNot Nothing AndAlso
-               conversation.PendingConstraint.ValueKind = "age_years"
+               String.Equals(conversation.PendingConstraint.ValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase)
     End Function
 
-    Private Function PendingAgeCategoryName(conversation As Models.AgentSessionState) As String
+    Private Function PendingVincoloCategoryName(
+        conversation As Models.AgentSessionState,
+        bundle As Models.AgentBundle
+    ) As String
         If conversation IsNot Nothing AndAlso conversation.PendingConstraint IsNot Nothing AndAlso
            Not String.IsNullOrWhiteSpace(conversation.PendingConstraint.CategoryName) Then
             Return conversation.PendingConstraint.CategoryName.Trim()
         End If
-        Return "FASCIA DI ETÀ (VINCOLO)"
+        Dim fromBundle = CategoryTypes.FirstAgeVincoloCategory(If(bundle IsNot Nothing, bundle.Ontology, Nothing))
+        If fromBundle IsNot Nothing Then Return fromBundle.Name
+        Return "fascia di età"
     End Function
 
-    Private Function FinishTurn(result As Models.AgentTurnResult) As Models.AgentTurnResult
-        result.Instruction = TurnExpectedInput.WithExpectedInput(result.Instruction)
+    Private Function FinishTurn(
+        bundle As Models.AgentBundle,
+        result As Models.AgentTurnResult
+    ) As Models.AgentTurnResult
+        result.Instruction = TurnExpectedInput.WithExpectedInput(result.Instruction, bundle)
         If result.Instruction.Action = "confirm" OrElse result.Instruction.Action = "already_done" Then
             result.NextState.PendingConstraint = Nothing
         Else

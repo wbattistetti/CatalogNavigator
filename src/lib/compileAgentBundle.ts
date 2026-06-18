@@ -12,7 +12,7 @@ import type {
 } from './agentBundleTypes';
 import { parseAgeConstraintToken } from './ageConstraintParse';
 import { normalizeCategoryOrders, type TokenCategory } from './dictionaryTree';
-import { resolveItemPaths } from './itemPaths';
+import { catalogItemPaths } from './itemPaths';
 import { getPathOrderingCategories } from './pathCanonicalize';
 import { buildCorpusItemsFromPaths } from './slotExtract';
 
@@ -101,7 +101,7 @@ export function compileAgentBundle(input: AgentBundleCompileInput): AgentBundle 
   const compileWarnings = buildMetaWarnings(input);
 
   const slots = ontology.rows.map((row) => row.slot_filling);
-  const itemPaths = resolveItemPaths(slots, ontology.item_paths);
+  const itemPaths = catalogItemPaths(slots, ontology.item_paths, pathCategories);
 
   if (itemPaths.length === 0) {
     throw new Error(

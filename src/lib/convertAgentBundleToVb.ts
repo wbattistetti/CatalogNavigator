@@ -6,17 +6,34 @@ import type {
   AgentConcept,
   AgentSessionState,
   CompiledAgeConstraint,
+  ConceptKind,
   ExpectedSlotValueKind,
   PendingSlotContract,
 } from './agentBundleTypes';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import { compileVincoloResolutionPipeline } from './vincoloResolutionPipeline';
-import { isAgeVincoloCategoryName } from './vincoloResolutionGrammar';
+
+function canonicalConceptValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/** Maps a value to dictionary token text when it matches allowedValues. */
+function resolveCatalogValue(
+  value: string,
+  allowedValues: readonly string[],
+  kind: ConceptKind,
+): string {
+  const trimmed = value.trim();
+  if (kind === 'vincolo') return trimmed;
+  const normalized = canonicalConceptValue(trimmed);
+  const match = allowedValues.find((allowed) => canonicalConceptValue(allowed) === normalized);
+  return match ?? trimmed;
+}
 
 export interface VbCatalogConcept {
   category: string;
   value: string;
-  kind: string;
+  kind: ConceptKind;
 }
 
 export interface VbCatalogItem {
@@ -36,7 +53,7 @@ export interface VbAgentBundlePayload {
       id: string;
       name: string;
       order: number;
-      kind: string;
+      kind: ConceptKind;
       allowedValues: string[];
       valueKind?: string | null;
       grammar?: { regex: string; mappings: Record<string, string> } | null;
@@ -74,23 +91,36 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
   };
 
   const vbCategories = categories.map((cat) => {
-    const isAgeVincolo = cat.type === 'vincolo' && isAgeVincoloCategoryName(cat.name);
-    const resolution = isAgeVincolo
+    const isVincolo = cat.type === 'vincolo';
+    const kind: ConceptKind = isVincolo ? 'vincolo' : 'attributo';
+    const allowedValues = [...(cat.tokenTexts ?? [])];
+    const valueKind = cat.valueKind === 'age_years' ? 'age_years' : null;
+    const resolution = isVincolo && valueKind === 'age_years'
       ? (cat.resolution ?? compileVincoloResolutionPipeline(cat))
       : null;
+    const grammarMappings = cat.grammar?.mappings
+      ? Object.fromEntries(
+        Object.entries(cat.grammar.mappings).map(([key, mapped]) => [
+          key,
+          resolveCatalogValue(mapped, allowedValues, kind),
+        ]),
+      )
+      : undefined;
     return {
       id: cat.id,
       name: cat.name,
       order: cat.order,
-      kind: cat.type === 'vincolo' ? 'vincolo' : 'attributo',
-      allowedValues: [...(cat.tokenTexts ?? [])],
-      valueKind: isAgeVincolo ? 'age_years' : null,
+      kind,
+      allowedValues,
+      valueKind,
       grammar: cat.grammar?.regex?.trim()
-        ? { regex: cat.grammar.regex, mappings: { ...cat.grammar.mappings } }
+        ? { regex: cat.grammar.regex, mappings: grammarMappings ?? {} }
         : undefined,
       resolution: resolution ?? undefined,
     };
   });
+
+  const categoryByName = new Map(vbCategories.map((cat) => [cat.name, cat]));
 
   const nodes = bundle.itemPaths.flatMap((path) => {
     const confirmationText = confirmationForPath(path);
@@ -102,11 +132,15 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
     path: item.path,
     concepts: item.segments
       .filter((seg) => seg.categoryName.trim())
-      .map((seg) => ({
-        category: seg.categoryName,
-        value: seg.text,
-        kind: seg.categoryType === 'vincolo' ? 'vincolo' : 'attributo',
-      })),
+      .map((seg) => {
+        const category = categoryByName.get(seg.categoryName);
+        const kind: ConceptKind = seg.categoryType === 'vincolo' ? 'vincolo' : 'attributo';
+        return {
+          category: seg.categoryName,
+          value: resolveCatalogValue(seg.text, category?.allowedValues ?? [], kind),
+          kind,
+        };
+      }),
     ageConstraints: item.constraints
       .filter((c): c is CompiledAgeConstraint => c.kind === 'age_years')
       .map((c) => ({

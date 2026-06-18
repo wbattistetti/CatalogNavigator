@@ -26,8 +26,8 @@ export function formatConvaiDebugTraceLines(): string[] {
     '  [Parte 2 — righe PARSED] una riga per categoria parsata + PROSSIMA_AZIONE.',
     '- Nel blocco PARSED riporta SOLO il parsing dell\'ultima frase utente, più la prossima azione:',
     '  - Una riga per ogni categoria del dizionario con token riconosciuto in quel turno.',
-    '  - Etichetta = nome categoria del dizionario in MAIUSCOLO (es. SPECIALITÀ, TIPO VISITA).',
-    '  - Per categorie vincolo: NOME (VINCOLO): valore grezzo (es. FASCIA DI ETÀ (VINCOLO): 30).',
+    '  - Etichetta = nome categoria ESATTO dal dizionario (es. specialità, tipo visita, fascia di età).',
+    '  - Valore = token canonico dal catalogo (es. cardiologica, prima, 30 per età in anni).',
     '  - Includi "NO CATEGORY: …" se matched.',
     '  - Se nessun token: (nessun token riconosciuto)',
     '  - Ultima riga: PROSSIMA_AZIONE: chiedi_vincolo | chiedi_attributo | conferma | upgrade_subset',
@@ -37,8 +37,8 @@ export function formatConvaiDebugTraceLines(): string[] {
     '  Certo, posso aiutarla con una prima visita cardiologica. Quanti anni ha il paziente?',
     '',
     `  ${CONVAI_PARSED_DEBUG_SEPARATOR}`,
-    '  SPECIALITÀ: cardiologica',
-    '  TIPO VISITA: prima',
+    '  specialità: cardiologica',
+    '  tipo visita: prima',
     '  PROSSIMA_AZIONE: chiedi_vincolo',
   ];
 }

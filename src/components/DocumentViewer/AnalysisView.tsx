@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import {
   Sparkles, Loader2, AlertCircle, AlertTriangle, ChevronRight, ChevronDown,
   List, GitBranch, Wand2, X, ThumbsUp, ThumbsDown, HelpCircle,
-  Pencil, Check, Zap, FlaskConical, Trash2, RefreshCw, Braces, Plus,
+  Pencil, Check, Zap, Trash2, RefreshCw, Braces, Plus,
   Layers, Bot, Save, RotateCcw, MessageCircle, Filter, Search,
 } from 'lucide-react';
 import type {
@@ -16,7 +16,6 @@ import type {
 } from '../../hooks/useAnalysis';
 import { resolveItemPaths } from '../../lib/itemPaths';
 import type { KbDocument } from '../../lib/supabase';
-import { ChatPanel } from './ChatPanel';
 import { ConvaiExportPanel } from './ConvaiExportPanel';
 import { ConvaiNoBeExportPanel } from './ConvaiNoBeExportPanel';
 import { AnswerGrammarModal } from './AnswerGrammarModal';
@@ -38,7 +37,6 @@ import {
   rowHasMessage,
   slotsWithDirectChildren,
 } from '../../lib/analysisTree';
-import { compileAgentBundle } from '../../lib/compileAgentBundle';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import {
   buildRowFieldStatusUpdate,
@@ -60,8 +58,6 @@ interface AnalysisViewProps {
   externalToolbar?: boolean;
   affinaOpen?: boolean;
   onAffinaOpenChange?: (open: boolean) => void;
-  testOpen?: boolean;
-  onTestOpenChange?: (open: boolean) => void;
   convaiOpen?: boolean;
   onConvaiOpenChange?: (open: boolean) => void;
   convaiNoBeOpen?: boolean;
@@ -2330,8 +2326,6 @@ export function AnalysisView({
   externalToolbar = false,
   affinaOpen: affinaOpenProp,
   onAffinaOpenChange,
-  testOpen: testOpenProp,
-  onTestOpenChange,
   convaiOpen: convaiOpenProp,
   onConvaiOpenChange,
   convaiNoBeOpen: convaiNoBeOpenProp,
@@ -2379,11 +2373,8 @@ export function AnalysisView({
   const grammarEditTarget = grammarEditTargetProp ?? grammarEditTargetLocal;
   const setGrammarEditTarget = onGrammarEditTargetChange ?? setGrammarEditTargetLocal;
   const [affinaOpenLocal, setAffinaOpenLocal] = useState(false);
-  const [testOpenLocal, setTestOpenLocal] = useState(false);
   const affinaOpen = affinaOpenProp ?? affinaOpenLocal;
   const setAffinaOpen = onAffinaOpenChange ?? setAffinaOpenLocal;
-  const testOpen = testOpenProp ?? testOpenLocal;
-  const setTestOpen = onTestOpenChange ?? setTestOpenLocal;
   const convaiOpen = convaiOpenProp ?? false;
   const setConvaiOpen = onConvaiOpenChange ?? (() => {});
   const convaiNoBeOpen = convaiNoBeOpenProp ?? false;
@@ -2395,39 +2386,6 @@ export function AnalysisView({
     [rows, analysis?.item_paths],
   );
   const hasData = rows.length > 0;
-
-  const testAgentBundle = useMemo(() => {
-    const dictionary = convaiExportContext?.dictionary ?? agentDictionaryContext?.dictionary;
-    const descriptions = convaiExportContext?.descriptions
-      ?? agentDictionaryContext?.descriptions
-      ?? [];
-    if (!dictionary || !analysis?.rows?.length) return null;
-    try {
-      return compileAgentBundle({
-        documentName: doc.name,
-        documentId: doc.id,
-        mode: 'preview',
-        dictionary,
-        descriptions,
-        analysis,
-        leafDescriptionMap: leafDescriptionMap ?? undefined,
-        loadedRefs: convaiExportContext?.loadedRefs,
-        dictionaryDirty: convaiExportContext?.dictionaryDirty,
-        analysisDirty,
-        pathsOutOfSync: convaiExportContext?.pathsOutOfSync,
-      });
-    } catch {
-      return null;
-    }
-  }, [
-    convaiExportContext,
-    agentDictionaryContext,
-    analysis,
-    leafDescriptionMap,
-    doc.name,
-    doc.id,
-    analysisDirty,
-  ]);
 
   useEffect(() => {
     onHasData?.(hasData);
@@ -2835,23 +2793,6 @@ export function AnalysisView({
                 <Layers className="w-3 h-3" />Rigenera tassonomia
               </button>
             )}
-            {hasMessages && (
-              <button
-                onClick={() => setTestOpen(!testOpen)}
-                title={agentReady
-                  ? 'Apri chat di test'
-                  : 'Apri chat (genera le grammatiche per il riconoscimento risposte)'}
-                className={`flex items-center gap-1 px-2 py-1 font-mono text-sm border rounded transition-colors ${
-                  testOpen
-                    ? 'text-emerald-300 border-emerald-400/50 bg-emerald-400/10'
-                    : agentReady
-                      ? 'text-emerald-400/60 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-400/90'
-                      : 'text-amber-400/60 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-400/90'
-                }`}
-              >
-                <FlaskConical className="w-3 h-3" />Test
-              </button>
-            )}
             {!hasData && (
               <button
                 onClick={initiateTaxonomy}
@@ -3066,12 +3007,6 @@ export function AnalysisView({
               />
             )}
           </div>
-          {testOpen && (
-            <ChatPanel
-              agentBundle={testAgentBundle}
-              onClose={() => setTestOpen(false)}
-            />
-          )}
           </>
           )}
           </div>

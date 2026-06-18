@@ -6,6 +6,8 @@ import { DocumentEditorHeader } from './DocumentEditorHeader';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { DocumentEditorTabStrip } from './DocumentEditorTabStrip';
 import { DocumentEditorWorkspace } from './DocumentEditorWorkspace';
+import { DocumentEditorTestRail } from './DocumentEditorTestRail';
+import { OntologyRefreshProgressBar } from './OntologyRefreshProgressBar';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 
 function AgentGenerationProgress() {
@@ -57,19 +59,29 @@ function AgentGenerationProgress() {
 
 export function DocumentEditorShell() {
   const { activeTab } = useDocumentEditorTab();
+  const { dictionaryMode, testOpen } = useDocumentEditorController();
+  const showTestRail = testOpen
+    && dictionaryMode
+    && (activeTab === EDITOR_TAB_IDS.ontology || activeTab === EDITOR_TAB_IDS.agent);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 min-w-0">
+    <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
       <DocumentEditorHeader />
 
-      <div className="flex-shrink-0 flex flex-wrap items-end justify-between gap-x-2 gap-y-1 px-2 border-b border-[#1a3a2a] bg-[#080e0a] min-w-0 overflow-x-auto scrollbar-thin">
+      <div className="flex-shrink-0 flex flex-wrap items-end justify-between gap-x-2 gap-y-1 px-2 border-b border-[#1a3a2a] bg-[#080e0a] min-w-0 max-w-full overflow-x-auto scrollbar-thin">
         <DocumentEditorTabStrip />
         <DocumentEditorToolbar />
       </div>
 
       {activeTab === EDITOR_TAB_IDS.agent && <AgentGenerationProgress />}
+      <OntologyRefreshProgressBar />
 
-      <DocumentEditorWorkspace />
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+        <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+          <DocumentEditorWorkspace />
+        </div>
+        {showTestRail && <DocumentEditorTestRail />}
+      </div>
     </div>
   );
 }

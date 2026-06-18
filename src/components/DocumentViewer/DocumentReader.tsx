@@ -17,10 +17,13 @@ interface DocumentReaderProps {
 
 export function DocumentReader({ doc, fileUrl, content, onDocUpdated }: DocumentReaderProps) {
   const { tabular, textContent, loading, error } = content;
+  const viewportClass = 'flex flex-1 min-h-0 min-w-0 overflow-hidden';
+  const columnShellClass = `${viewportClass} flex-col`;
+  const centeredClass = `${viewportClass} items-center justify-center gap-2`;
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full gap-2 text-emerald-400/60">
+      <div className={`${centeredClass} text-emerald-400/60`}>
         <Loader2 className="w-5 h-5 animate-spin" />
         <span className="font-mono text-sm">Loading…</span>
       </div>
@@ -29,16 +32,34 @@ export function DocumentReader({ doc, fileUrl, content, onDocUpdated }: Document
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-2 text-red-400">
+      <div className={`${centeredClass} text-red-400`}>
         <AlertCircle className="w-6 h-6" />
         <span className="font-mono text-sm">{error}</span>
       </div>
     );
   }
 
-  if (doc.format === 'pdf') return <PdfViewer fileUrl={fileUrl} />;
-  if (doc.format === 'docx') return <WordViewer fileUrl={fileUrl} />;
-  if (doc.format === 'image') return <ImageViewer fileUrl={fileUrl} fileName={doc.name} />;
+  if (doc.format === 'pdf') {
+    return (
+      <div className={columnShellClass}>
+        <PdfViewer fileUrl={fileUrl} />
+      </div>
+    );
+  }
+  if (doc.format === 'docx') {
+    return (
+      <div className={columnShellClass}>
+        <WordViewer fileUrl={fileUrl} />
+      </div>
+    );
+  }
+  if (doc.format === 'image') {
+    return (
+      <div className={columnShellClass}>
+        <ImageViewer fileUrl={fileUrl} fileName={doc.name} />
+      </div>
+    );
+  }
   if (tabular) {
     return (
       <TabularPreview
@@ -49,7 +70,13 @@ export function DocumentReader({ doc, fileUrl, content, onDocUpdated }: Document
       />
     );
   }
-  if (textContent !== null) return <TextViewer text={textContent} format={doc.format} />;
+  if (textContent !== null) {
+    return (
+      <div className={columnShellClass}>
+        <TextViewer text={textContent} format={doc.format} />
+      </div>
+    );
+  }
 
   return null;
 }

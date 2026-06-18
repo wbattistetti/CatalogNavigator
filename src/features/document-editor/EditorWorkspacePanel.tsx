@@ -1,7 +1,7 @@
 /**
  * Body for one main editor tab (document, dictionaries, ontology, agent).
  */
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { DictionariesWorkspace } from '../dictionaries/DictionariesWorkspace';
 import { AgentWorkspace } from '../agent/AgentWorkspace';
@@ -35,6 +35,14 @@ function LoadingPlaceholder({ label }: { label: string }) {
   );
 }
 
+function WorkspaceBody({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden">
+      {children}
+    </div>
+  );
+}
+
 export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
   tabId,
   mounted,
@@ -50,19 +58,43 @@ export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
 
   switch (tabId) {
     case EDITOR_TAB_IDS.document:
-      return <MountedDocumentWorkspace />;
+      return (
+        <WorkspaceBody>
+          <MountedDocumentWorkspace />
+        </WorkspaceBody>
+      );
     case EDITOR_TAB_IDS.dictionaries:
-      if (content.loading || dicts.loading) {
-        return <LoadingPlaceholder label="Caricamento…" />;
+      if (content.loading && dicts.loading) {
+        return (
+          <WorkspaceBody>
+            <LoadingPlaceholder label="Caricamento…" />
+          </WorkspaceBody>
+        );
       }
-      return <MountedDictionariesWorkspace />;
+      return (
+        <WorkspaceBody>
+          <MountedDictionariesWorkspace />
+        </WorkspaceBody>
+      );
     case EDITOR_TAB_IDS.ontology:
       if (content.loading) {
-        return <LoadingPlaceholder label="Caricamento tabella…" />;
+        return (
+          <WorkspaceBody>
+            <LoadingPlaceholder label="Caricamento tabella…" />
+          </WorkspaceBody>
+        );
       }
-      return <MountedOntologyWorkspace />;
+      return (
+        <WorkspaceBody>
+          <MountedOntologyWorkspace />
+        </WorkspaceBody>
+      );
     case EDITOR_TAB_IDS.agent:
-      return <MountedAgentWorkspace />;
+      return (
+        <WorkspaceBody>
+          <MountedAgentWorkspace />
+        </WorkspaceBody>
+      );
     default:
       return null;
   }

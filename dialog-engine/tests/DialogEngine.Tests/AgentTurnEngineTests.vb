@@ -8,8 +8,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildCardioBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "SPECIALITÀ", .Value = "cardiologica"},
-                New Concept With {.Category = "TIPO VISITA", .Value = "prima"}
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
             }
         })
         Assert.Equal("ask_age", result.Instruction.Action)
@@ -23,13 +23,13 @@ Public Class AgentTurnEngineTests
         Dim state = AgentTurnEngine.InitAgentSession()
         state = AgentTurnEngine.ProcessAgentTurn(bundle, state, New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "SPECIALITÀ", .Value = "cardiologica"},
-                New Concept With {.Category = "TIPO VISITA", .Value = "prima"}
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, state, New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "FASCIA DI ETÀ (VINCOLO)", .Value = "30"}
+                New Concept With {.Category = "fascia di età", .Value = "30"}
             }
         })
         Assert.Equal("confirm", result.Instruction.Action)
@@ -43,7 +43,7 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "SPECIALITÀ", .Value = "cardiologica"}
+                New Concept With {.Category = "specialità", .Value = "cardiologica"}
             }
         })
         Assert.Equal("disambiguate", result.Instruction.Action)
@@ -58,11 +58,12 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildCardioBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "SPECIALITÀ", .Value = "cardiologica"},
-                New Concept With {.Category = "TIPO VISITA", .Value = "prima"}
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
             }
         })
         Assert.Equal("age_years", result.Instruction.ExpectedConstraints(0).ValueKind)
+        Assert.Equal("fascia di età", result.Instruction.ExpectedConstraints(0).CategoryName)
     End Sub
 
     <Fact>
@@ -109,6 +110,20 @@ Public Class AgentTurnEngineTests
         Assert.Equal("confirm", result.Instruction.Action)
         Assert.Contains("adulto", result.NextState.SelectedPath)
         Assert.Equal(20, ConceptOps.FindAcquiredAgeYears(result.NextState.AcquiredConcepts))
+    End Sub
+
+    <Fact>
+    Public Sub Disambiguates_WithNone_WhenOptionalCategoryMissingOnShorterPath()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        })
+        Assert.Equal("disambiguate", result.Instruction.Action)
+        Assert.Contains("ecg", result.Instruction.CategoryName.ToLowerInvariant())
+        Assert.Equal(New List(Of String) From {"ecg", "none"}, result.Instruction.Options)
     End Sub
 
     <Fact>

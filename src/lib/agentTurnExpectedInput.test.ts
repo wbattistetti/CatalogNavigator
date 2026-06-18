@@ -8,11 +8,11 @@ describe('withExpectedInput', () => {
   it('adds age_years contract for ask_age', () => {
     const instruction = withExpectedInput({
       action: 'ask_age',
-      categoryName: 'FASCIA DI ETÀ',
+      categoryName: 'fascia di età',
     });
     expect(instruction.expectedInput?.slots).toHaveLength(1);
     expect(instruction.expectedInput?.slots[0]?.valueKind).toBe('age_years');
-    expect(instruction.expectedInput?.slots[0]?.categoryName).toContain('VINCOLO');
+    expect(instruction.expectedInput?.slots[0]?.categoryName).toBe('fascia di età');
     expect(instruction.expectedInput?.slots[0]?.description).toContain('30');
   });
 

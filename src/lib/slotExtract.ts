@@ -48,7 +48,7 @@ export function matchTextToSlots(
 
     if (category.grammar?.regex?.trim()) {
       const matched = matchCategoryGrammar(lower, category);
-      if (matched) {
+      if (matched && tokens.some((t) => isCanonicalToken(t) && t.text === matched.canonicalValue)) {
         result[key] = matched.canonicalValue;
         continue;
       }
@@ -142,7 +142,7 @@ export function scorePathsBySlots(
         (seg) =>
           seg.categoryType === 'attributo'
           && normalizeSlotCategoryKey(seg.categoryName) === key
-          && seg.text.toLowerCase() === tokenValue.toLowerCase(),
+          && seg.text === tokenValue,
       );
       if (hasMatch) count += 1;
     }

@@ -30,7 +30,7 @@ describe('contextual answer synonym seeds', () => {
     expect(synonyms).not.toContain('agonistica certificato idoneita');
   });
 
-  it('child panel under prefix ambiguity includes affirmatives', () => {
+  it('child panel on binary choice includes affirmatives', () => {
     const synonyms = defaultChildContextualSynonyms(
       'agonistica.certificato idoneita.pratica sportiva',
       true,
@@ -42,24 +42,21 @@ describe('contextual answer synonym seeds', () => {
   });
 
   it('seedDefaultPanels does not inject recognition path chains', () => {
-    const slots = [
-      'agonistica',
-      'agonistica.certificato idoneita',
-      'agonistica.certificato idoneita.pratica sportiva',
+    const categories: TokenCategory[] = [
+      { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
+      { id: 'c2', name: 'tipo visita', order: 1, tokenTexts: ['prima', 'visita'] },
     ];
-    const itemPaths = [
-      'agonistica.certificato idoneita',
-      'agonistica.certificato idoneita.pratica sportiva',
-    ];
+    const slots = ['cardiologica', 'cardiologica.prima', 'cardiologica.visita'];
     const panels = seedDefaultPanels(
-      buildInteractivePanels('agonistica.certificato idoneita', slots, itemPaths),
-      'agonistica.certificato idoneita',
+      buildInteractivePanels('cardiologica', slots, null, categories),
+      'cardiologica',
     );
-    const parent = panels.find((p) => p.isParent)!;
-    const child = panels.find((p) => !p.isParent)!;
-    expect(parent.synonyms).not.toContain('agonistica certificato idoneita');
-    expect(child.synonyms).toContain('sì');
-    expect(child.synonyms).not.toContain('agonistica certificato idoneita pratica sportiva');
+    expect(panels).toHaveLength(2);
+    for (const panel of panels) {
+      expect(panel.synonyms).not.toContain('cardiologica prima');
+      expect(panel.synonyms).not.toContain('cardiologica visita');
+    }
+    expect(panels.some((p) => p.synonyms.includes('sì'))).toBe(true);
   });
 });
 

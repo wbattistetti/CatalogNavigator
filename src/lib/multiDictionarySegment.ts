@@ -3,7 +3,6 @@
  */
 import type { TokenCategory } from './dictionaryTree';
 import {
-  getCategorySortOrder,
   orderSegmentsByCategories,
   type SegmentMatch,
 } from './dictionaryTree';
@@ -14,16 +13,21 @@ import {
   getPrimaryLoadedDictionaryRef,
 } from './pathCanonicalize';
 import { collectWordSpanMatchesAfterShadow, type WordSpanMatch } from './phraseMatchEngine';
+import { dropPreliminaryNegatedMatches } from './preliminaryNegation';
 import {
   applySuppressionCascade,
+  findHighlightSpansFromPhrases,
   getActiveMatchPhrases,
+  isCanonicalToken,
   normalizeDescriptionText,
   segmentWordsWithPositions,
   tokenizeToWords,
+  type HighlightSpan,
   type MatchPhrase,
   type RowSegmentation,
   type TokenEntry,
 } from './tokenDictionary';
+import { segmentDescriptionGrammarAware } from './grammarAwareSegment';
 
 export interface LoadedDictionaryRef {
   dictionary: KbDictionary;
@@ -88,7 +92,10 @@ function segmentWordsMulti(
     }
   }
 
-  const selected = collectWordSpanMatchesAfterShadow(candidates);
+  const selected = dropPreliminaryNegatedMatches(
+    words,
+    collectWordSpanMatchesAfterShadow(candidates),
+  );
   const matchedWordIndices = new Set<number>();
   for (const m of selected) {
     for (let w = m.wordStart; w < m.wordEnd; w++) matchedWordIndices.add(w);
@@ -136,7 +143,7 @@ function orderTaggedSegments(matches: TaggedMatch[], loaded: LoadedDictionaryRef
   });
 }
 
-/** Builds tagged match phrases from loaded dictionaries (project dicts first). */
+/** Builds tagged match phrases from in-memory loaded dictionaries (project + library). */
 export function buildTaggedMatchPhrases(loaded: LoadedDictionaryRef[]): TaggedPhrase[] {
   const sorted = [...loaded].sort((a, b) => a.priority - b.priority);
   const out: TaggedPhrase[] = [];
@@ -159,44 +166,92 @@ export function buildTaggedMatchPhrases(loaded: LoadedDictionaryRef[]): TaggedPh
   });
 }
 
+/** Description highlights using the same phrase set as {@link segmentDescriptionMulti}. */
+export function findHighlightSpansFromLoadedRefs(
+  sourceText: string,
+  loaded: LoadedDictionaryRef[],
+  prebuiltPhrases?: ReturnType<typeof buildTaggedMatchPhrases>,
+): HighlightSpan[] {
+  const phrases = prebuiltPhrases ?? buildTaggedMatchPhrases(loaded);
+  return findHighlightSpansFromPhrases(sourceText, phrases);
+}
+
+function activeCanonicalTexts(tokens: TokenEntry[]): Set<string> {
+  return new Set(tokens.filter(isCanonicalToken).map((t) => t.text));
+}
+
+function filterPathToCanonicalTokens(path: string, canonicalTexts: Set<string>): string {
+  if (!path) return '';
+  return path.split('.').filter((seg) => canonicalTexts.has(seg)).join('.');
+}
+
 /** Segments text using all loaded dictionaries; each segment carries dictionary provenance. */
 export function segmentDescriptionMulti(
   text: string,
   loaded: LoadedDictionaryRef[],
+  prebuiltPhrases?: TaggedPhrase[],
 ): MultiSegmentationResult {
   const normalized = normalizeDescriptionText(text);
   if (!normalized || loaded.length === 0) {
     return { segments: [], path: '', unmatched: normalized ? tokenizeToWords(normalized) : [] };
   }
 
-  const phrases = buildTaggedMatchPhrases(loaded);
+  const phrases = prebuiltPhrases ?? buildTaggedMatchPhrases(loaded);
   if (phrases.length === 0) {
     return { segments: [], path: '', unmatched: tokenizeToWords(normalized) };
   }
 
   const words = tokenizeToWords(normalized);
   const { matches, unmatched } = segmentWordsMulti(words, phrases);
-  const segments = orderTaggedSegments(matches, loaded);
-  const path = canonicalizePathSegmentsFromLoadedRefs(
-    segments.map((s) => s.text).join('.'),
-    loaded,
+  const phraseSegments = orderTaggedSegments(matches, loaded);
+  const tokens = mergeLoadedTokens(loaded);
+  const categories = getPathOrderingCategories(loaded);
+  const canonicalTexts = activeCanonicalTexts(tokens);
+  const grammarResult = segmentDescriptionGrammarAware(
+    text,
+    tokens,
+    categories,
+    getActiveMatchPhrases(tokens),
+  );
+
+  const rawPath = grammarResult.path
+    || canonicalizePathSegmentsFromLoadedRefs(
+      phraseSegments.map((s) => s.text).join('.'),
+      loaded,
+    );
+  const path = filterPathToCanonicalTokens(rawPath, canonicalTexts);
+
+  const phraseByText = new Map(
+    phraseSegments.filter((s) => canonicalTexts.has(s.text)).map((s) => [s.text, s]),
   );
 
   return {
     segments: path
-      ? path.split('.').map((text) => {
-        const found = segments.find((s) => s.text === text);
-        return found ?? { text, dictionaryId: loaded[0]?.dictionary.id ?? '' };
+      ? path.split('.').map((segText) => {
+        const found = phraseByText.get(segText);
+        if (found) return found;
+        const dictionaryId = resolveTokenDictionaryId(segText, loaded);
+        return { text: segText, dictionaryId };
       })
-      : segments,
+      : phraseSegments.filter((s) => canonicalTexts.has(s.text)),
     path,
-    unmatched: [...new Set(unmatched)],
+    unmatched: grammarResult.path ? grammarResult.unmatched : [...new Set(unmatched)],
   };
+}
+
+function resolveTokenDictionaryId(tokenText: string, loaded: LoadedDictionaryRef[]): string {
+  const sorted = [...loaded].sort((a, b) => a.priority - b.priority);
+  for (const ref of sorted) {
+    if (ref.dictionary.tokens.some((t) => t.text === tokenText)) {
+      return ref.dictionary.id;
+    }
+  }
+  return getPrimaryLoadedDictionaryRef(loaded)?.dictionary.id ?? '';
 }
 
 /** Merges tokens from loaded dictionaries; project-scoped entries win on text collision. */
 export function mergeLoadedTokens(loaded: LoadedDictionaryRef[]): TokenEntry[] {
-  const sorted = [...loaded].sort((a, b) => a.priority - b.priority);
+  const sorted = [...loaded].sort((a, b) => b.priority - a.priority);
   const byText = new Map<string, TokenEntry>();
   for (const ref of sorted) {
     for (const t of ref.dictionary.tokens) {
@@ -278,16 +333,9 @@ export function mergeLiveEditingIntoLoadedRefs(
   return next;
 }
 
-/** Active tokens for corpus description chips (live edits + saved loaded dicts). */
-export function corpusHighlightTokens(
-  loadedRefs: LoadedDictionaryRef[],
-  editingDictionaryId: string | null | undefined,
-  editingTokens: TokenEntry[],
-  editingCategories: TokenCategory[],
-): TokenEntry[] {
-  return mergeLoadedTokens(
-    mergeLiveEditingIntoLoadedRefs(loadedRefs, editingDictionaryId, editingTokens, editingCategories),
-  );
+/** Merged token list from live in-memory loaded refs (all dictionary sessions). */
+export function corpusHighlightTokens(liveLoadedRefs: LoadedDictionaryRef[]): TokenEntry[] {
+  return mergeLoadedTokens(liveLoadedRefs);
 }
 
 /** Merges categories from loaded dictionaries (kept separate per dict in editor; flat for legacy helpers). */
@@ -360,11 +408,12 @@ export function segmentAllDescriptionsFromLoadedRefs(
 ): { leafPaths: string[]; rows: RowSegmentation[] } {
   const rows: RowSegmentation[] = [];
   const leafPaths: string[] = [];
+  const phrases = loadedRefs.length > 0 ? buildTaggedMatchPhrases(loadedRefs) : [];
 
   descriptions.forEach((sourceText, rowIndex) => {
     const trimmed = sourceText.trim();
     if (!trimmed) return;
-    const result = segmentDescriptionMulti(trimmed, loadedRefs);
+    const result = segmentDescriptionMulti(trimmed, loadedRefs, phrases);
     if (!result.path) return;
     leafPaths.push(result.path);
     rows.push({
@@ -376,4 +425,65 @@ export function segmentAllDescriptionsFromLoadedRefs(
   });
 
   return { leafPaths, rows };
+}
+
+export interface SegmentAllDescriptionsAsyncOptions {
+  /** Rows processed between UI yields (default 50). */
+  yieldEvery?: number;
+  onProgress?: (current: number, total: number) => void;
+  shouldCancel?: () => boolean;
+}
+
+/**
+ * Batched corpus segmentation — yields to the browser between chunks so large corpora
+ * do not freeze the main thread.
+ */
+export async function segmentAllDescriptionsFromLoadedRefsAsync(
+  descriptions: string[],
+  loadedRefs: LoadedDictionaryRef[],
+  options?: SegmentAllDescriptionsAsyncOptions,
+): Promise<{ leafPaths: string[]; rows: RowSegmentation[]; cancelled: boolean }> {
+  const rows: RowSegmentation[] = [];
+  const leafPaths: string[] = [];
+  const phrases = loadedRefs.length > 0 ? buildTaggedMatchPhrases(loadedRefs) : [];
+  const total = descriptions.length;
+  const yieldEvery = options?.yieldEvery ?? 50;
+  let sinceYield = 0;
+  let processed = 0;
+
+  options?.onProgress?.(0, total);
+
+  for (let rowIndex = 0; rowIndex < descriptions.length; rowIndex++) {
+    if (options?.shouldCancel?.()) {
+      return { leafPaths, rows, cancelled: true };
+    }
+
+    const trimmed = descriptions[rowIndex]!.trim();
+    processed += 1;
+
+    if (trimmed) {
+      const result = segmentDescriptionMulti(trimmed, loadedRefs, phrases);
+      if (result.path) {
+        leafPaths.push(result.path);
+        rows.push({
+          rowIndex,
+          sourceText: trimmed,
+          path: result.path,
+          unmatched: result.unmatched,
+        });
+      }
+    }
+
+    sinceYield += 1;
+    if (sinceYield >= yieldEvery) {
+      sinceYield = 0;
+      options?.onProgress?.(processed, total);
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+    }
+  }
+
+  options?.onProgress?.(processed, total);
+  return { leafPaths, rows, cancelled: false };
 }

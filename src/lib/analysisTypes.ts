@@ -19,6 +19,8 @@ export type RowStatus = 'approved' | 'rejected' | 'uncertain' | null;
 
 export type GeneratingPhase = 'taxonomy' | 'messages' | 'grammars' | null;
 
+export type OntologySyncPhase = 'segmentation' | 'building';
+
 export interface AgentGenProgress {
   current: number;
   total: number;

@@ -111,7 +111,7 @@ describe('convertAgentBundleToVb', () => {
       selectedPath: null,
       noMatchCount: 0,
       pendingConstraint: {
-        categoryName: 'FASCIA DI ETÀ (VINCOLO)',
+        categoryName: 'fascia di età',
         valueKind: 'age_years',
         description: 'Età del paziente in anni come numero intero (es. "30").',
       },
@@ -121,7 +121,7 @@ describe('convertAgentBundleToVb', () => {
     expect(tsState?.acquiredConcepts).toEqual([{ category: 'specialità', value: 'cardiologica', kind: 'attributo' }]);
     expect(tsState?.pendingExpectedInput).toEqual([
       {
-        categoryName: 'FASCIA DI ETÀ (VINCOLO)',
+        categoryName: 'fascia di età',
         valueKind: 'age_years',
         description: 'Età del paziente in anni come numero intero (es. "30").',
       },

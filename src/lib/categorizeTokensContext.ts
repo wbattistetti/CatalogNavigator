@@ -1,7 +1,11 @@
 /**
  * Builds corpus context for AI token → category assignment.
  */
-import { resolveDescriptionColumn } from './columnRoles';
+import type { ColumnRole } from '../../lib/supabase';
+import {
+  buildCorpusDescriptionsFromColumns,
+  resolveOntologyColumns,
+} from './columnRoles';
 import { normalizeCategoryOrders, rootTokenTexts, type TokenCategory } from './dictionaryTree';
 import type { TokenEntry } from './tokenDictionary';
 import { findHighlightSpans } from './tokenDictionary';
@@ -55,19 +59,14 @@ function categoryIdForToken(token: string, categories: TokenCategory[]): string 
   return null;
 }
 
-/** Extracts description column strings from tabular document content. */
+/** Extracts ontology corpus strings from tabular document content. */
 export function extractDescriptions(
   headers: string[],
   rows: string[][],
-  columnRoles: Record<string, string>,
+  columnRoles: Record<string, ColumnRole>,
 ): string[] {
-  const descCol = resolveDescriptionColumn(headers, columnRoles);
-  if (!descCol) return [];
-  const idx = headers.indexOf(descCol);
-  if (idx < 0) return [];
-  return rows
-    .map((row) => String(row[idx] ?? '').trim())
-    .filter(Boolean);
+  const columns = resolveOntologyColumns(headers, columnRoles);
+  return buildCorpusDescriptionsFromColumns(headers, rows, columns).filter(Boolean);
 }
 
 /** Snapshot for AI: full catalogation + uncategorized tokens with context. */

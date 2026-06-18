@@ -3,6 +3,12 @@
 ''' </summary>
 Namespace Models
 
+    ''' <summary>Category semantic type: attributo (catalog dimension) or vincolo (eligibility rule).</summary>
+    Public Enum ConceptKind
+        Attributo
+        Vincolo
+    End Enum
+
     ' --- Ontology (category definitions + dialog tree) ---
 
     Public Class CategoryGrammar
@@ -14,7 +20,7 @@ Namespace Models
         Public Property Id As String
         Public Property Name As String
         Public Property Order As Integer
-        Public Property Kind As String
+        Public Property Kind As ConceptKind = ConceptKind.Attributo
         Public Property ValueKind As String
         Public Property AllowedValues As List(Of String) = New List(Of String)()
         Public Property Grammar As CategoryGrammar
@@ -79,7 +85,7 @@ Namespace Models
     Public Class Concept
         Public Property Category As String
         Public Property Value As String
-        Public Property Kind As String
+        Public Property Kind As ConceptKind = ConceptKind.Attributo
         ''' <summary>Vincolo resolution unit: years, months, weeks, days.</summary>
         Public Property Unit As String
     End Class
@@ -138,6 +144,7 @@ Namespace Models
     End Class
 
     Public Class AgentTurnInput
+        ''' <summary>Pre-parsed slots from an external agent (e.g. ElevenLabs webhook); not VB-extracted.</summary>
         Public Property IncomingConcepts As List(Of Concept) = New List(Of Concept)()
         Public Property Transcript As String
         Public Property ConfirmImplicitConcepts As Boolean

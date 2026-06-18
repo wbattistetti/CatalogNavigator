@@ -15,10 +15,10 @@ Public Module TestBundleFactory
                 .StartQuestion = "Come posso aiutarla?",
                 .ConfirmationPreamble = "Confermo:",
                 .Categories = New List(Of CategoryDefinition) From {
-                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = "attributo", .AllowedValues = New List(Of String) From {"cardiologica"}},
-                    New CategoryDefinition With {.Id = "c2", .Name = "tipo visita", .Order = 1, .Kind = "attributo", .AllowedValues = New List(Of String) From {"prima"}},
-                    New CategoryDefinition With {.Id = "c3", .Name = "target", .Order = 2, .Kind = "attributo", .AllowedValues = New List(Of String) From {"adulto", "pediatrica"}},
-                    New CategoryDefinition With {.Id = "c4", .Name = "fascia di età", .Order = 3, .Kind = "vincolo", .AllowedValues = New List(Of String) From {"> 17 anni", "da 6 anni a 15 anni"}}
+                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"cardiologica"}},
+                    New CategoryDefinition With {.Id = "c2", .Name = "tipo visita", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"prima"}},
+                    New CategoryDefinition With {.Id = "c3", .Name = "target", .Order = 2, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"adulto", "pediatrica"}},
+                    New CategoryDefinition With {.Id = "c4", .Name = "fascia di età", .Order = 3, .Kind = ConceptKind.Vincolo, .ValueKind = "age_years", .AllowedValues = New List(Of String) From {"> 17 anni", "da 6 anni a 15 anni"}}
                 },
                 .Nodes = New List(Of DialogNode) From {
                     New DialogNode With {.Path = adultPath, .ConfirmationText = "Visita cardiologica adulta"},
@@ -28,16 +28,16 @@ Public Module TestBundleFactory
             .Catalog = New Catalog With {
                 .Items = New List(Of CatalogItem) From {
                     BuildCatalogItem(adultPath, {
-                        ("cardiologica", "specialità", "attributo"),
-                        ("prima", "tipo visita", "attributo"),
-                        ("adulto", "target", "attributo"),
-                        ("> 17 anni", "fascia di età", "vincolo")
+                        ("cardiologica", "specialità", ConceptKind.Attributo),
+                        ("prima", "tipo visita", ConceptKind.Attributo),
+                        ("adulto", "target", ConceptKind.Attributo),
+                        ("> 17 anni", "fascia di età", ConceptKind.Vincolo)
                     }, minAge:=18, maxAge:=Nothing),
                     BuildCatalogItem(pediatricPath, {
-                        ("cardiologica", "specialità", "attributo"),
-                        ("prima", "tipo visita", "attributo"),
-                        ("pediatrica", "target", "attributo"),
-                        ("da 6 anni a 15 anni", "fascia di età", "vincolo")
+                        ("cardiologica", "specialità", ConceptKind.Attributo),
+                        ("prima", "tipo visita", ConceptKind.Attributo),
+                        ("pediatrica", "target", ConceptKind.Attributo),
+                        ("da 6 anni a 15 anni", "fascia di età", ConceptKind.Vincolo)
                     }, minAge:=6, maxAge:=15)
                 }
             }
@@ -53,15 +53,50 @@ Public Module TestBundleFactory
             .Ontology = New Ontology With {
                 .StartQuestion = "Come posso aiutarla?",
                 .Categories = New List(Of CategoryDefinition) From {
-                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = "attributo", .AllowedValues = New List(Of String) From {"cardiologica"}},
-                    New CategoryDefinition With {.Id = "c2", .Name = "target", .Order = 1, .Kind = "attributo", .AllowedValues = New List(Of String) From {"adulto", "pediatrica"}}
+                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"cardiologica"}},
+                    New CategoryDefinition With {.Id = "c2", .Name = "target", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"adulto", "pediatrica"}}
                 },
                 .Nodes = New List(Of DialogNode)()
             },
             .Catalog = New Catalog With {
                 .Items = New List(Of CatalogItem) From {
-                    BuildCatalogItem(adultPath, {("cardiologica", "specialità", "attributo"), ("adulto", "target", "attributo")}),
-                    BuildCatalogItem(pediatricPath, {("cardiologica", "specialità", "attributo"), ("pediatrica", "target", "attributo")})
+                    BuildCatalogItem(adultPath, {("cardiologica", "specialità", ConceptKind.Attributo), ("adulto", "target", ConceptKind.Attributo)}),
+                    BuildCatalogItem(pediatricPath, {("cardiologica", "specialità", ConceptKind.Attributo), ("pediatrica", "target", ConceptKind.Attributo)})
+                }
+            }
+        }
+    End Function
+
+    Public Function BuildOptionalEcgBundle() As AgentBundle
+        Dim basePath = "cardiologica.prima"
+        Dim ecgPath = "cardiologica.prima.ecg"
+
+        Return New AgentBundle With {
+            .Meta = New AgentBundleMeta With {.DocumentName = "Cardio ECG"},
+            .Ontology = New Ontology With {
+                .StartQuestion = "Come posso aiutarla?",
+                .ConfirmationPreamble = "Confermo:",
+                .Categories = New List(Of CategoryDefinition) From {
+                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"cardiologica"}},
+                    New CategoryDefinition With {.Id = "c2", .Name = "tipo visita", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"prima"}},
+                    New CategoryDefinition With {.Id = "c3", .Name = "ECG", .Order = 2, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"ecg", "none"}}
+                },
+                .Nodes = New List(Of DialogNode) From {
+                    New DialogNode With {.Path = basePath, .ConfirmationText = "Visita cardiologica prima"},
+                    New DialogNode With {.Path = ecgPath, .ConfirmationText = "Visita cardiologica prima con ECG"}
+                }
+            },
+            .Catalog = New Catalog With {
+                .Items = New List(Of CatalogItem) From {
+                    BuildCatalogItem(basePath, {
+                        ("cardiologica", "specialità", ConceptKind.Attributo),
+                        ("prima", "tipo visita", ConceptKind.Attributo)
+                    }),
+                    BuildCatalogItem(ecgPath, {
+                        ("cardiologica", "specialità", ConceptKind.Attributo),
+                        ("prima", "tipo visita", ConceptKind.Attributo),
+                        ("ecg", "ECG", ConceptKind.Attributo)
+                    })
                 }
             }
         }
@@ -97,7 +132,7 @@ Public Module TestBundleFactory
 
     Private Function BuildCatalogItem(
         path As String,
-        concepts As (Value As String, Category As String, Kind As String)(),
+        concepts As (Value As String, Category As String, Kind As ConceptKind)(),
         Optional minAge As Integer? = Nothing,
         Optional maxAge As Integer? = Nothing
     ) As CatalogItem

@@ -3,7 +3,7 @@
  */
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { MoveCategoryToLibraryDialog } from './MoveCategoryToLibraryDialog';
-import { syncCategoriesWithTokens, removeTokenFromLayout } from '../../lib/dictionaryTree';
+import { reconcileCategoryGrammarsWithTokens } from '../../lib/categoryGrammar';
 import { addAlias, removeAlias, removeCanonicalToken } from '../../lib/tokenDictionary';
 import { TokenTreeEditor } from '../../components/DocumentViewer/TokenTreeEditor';
 import { CategoryGrammarSidePanel } from '../../components/DocumentViewer/CategoryGrammarSidePanel';
@@ -58,7 +58,7 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
   const aliasPickPhrase = aliasPickActive ? dictionaryAliasPick?.normalizedPhrase ?? null : null;
 
   const handleTokensChange = useCallback((next: typeof tokens) => {
-    const synced = syncCategoriesWithTokens(categories, next);
+    const synced = reconcileCategoryGrammarsWithTokens(categories, next);
     setSessionTokens(dictionaryId, next);
     setSessionCategories(dictionaryId, synced);
   }, [setSessionTokens, setSessionCategories, dictionaryId, categories]);
@@ -69,8 +69,7 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
 
   const handleRemoveCanonical = useCallback((text: string) => {
     handleTokensChange(removeCanonicalToken(tokens, text));
-    handleCategoriesChange(removeTokenFromLayout(categories, text));
-  }, [tokens, categories, handleTokensChange, handleCategoriesChange]);
+  }, [tokens, handleTokensChange]);
 
   const handleRemoveAlias = useCallback((text: string) => {
     handleTokensChange(removeAlias(tokens, text));

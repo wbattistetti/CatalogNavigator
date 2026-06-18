@@ -2,12 +2,13 @@
  * Single contextual toolbar for the active editor tab.
  */
 import {
-  BookOpen, Braces, FlaskConical, Loader2, MessageSquare, Mic,
+  BookOpen, Braces, FileSpreadsheet, Loader2, MessageSquare, Mic,
   RefreshCw, RotateCcw, Save, Wand2, X,
 } from 'lucide-react';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 import { findCategoriesMissingGrammar } from '../../lib/categoryGrammar';
+import { exportOntologyToExcel } from '../../lib/exportOntologyExcel';
 
 export function DocumentEditorToolbar() {
   const {
@@ -18,8 +19,6 @@ export function DocumentEditorToolbar() {
     analysisApi,
     dictState,
     setAffinaOpen,
-    testOpen,
-    setTestOpen,
     convaiOpen,
     setConvaiOpen,
     convaiNoBeOpen,
@@ -28,8 +27,12 @@ export function DocumentEditorToolbar() {
     agentDictionaryContext,
     agentNeedsUpdate,
     canRefreshOntology,
+    refreshingOntology,
+    ontologyRefreshProgress,
+    cancelOntologyRefresh,
     refreshOntology,
     buildLiveLoadedRefs,
+    leafDescriptionMap,
   } = useDocumentEditorController();
   const { activeTab, setActiveTab } = useDocumentEditorTab();
 
@@ -41,25 +44,51 @@ export function DocumentEditorToolbar() {
     saving, analysisDirty, hasMessages, agentReady, hasTaxonomy,
   } = analysisApi;
 
+  const ontologyRefreshButton = (label: string, highlight = false) => {
+    const progressLabel = refreshingOntology && ontologyRefreshProgress
+      ? ontologyRefreshProgress.phase === 'building'
+        ? 'Costruzione albero…'
+        : `${ontologyRefreshProgress.current.toLocaleString('it-IT')} / ${ontologyRefreshProgress.total.toLocaleString('it-IT')}`
+      : 'Ricreazione ontologia…';
+
+    return (canRefreshOntology || refreshingOntology) ? (
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={refreshOntology}
+          disabled={refreshingOntology}
+          className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded transition-colors disabled:opacity-70 ${
+            highlight
+              ? 'text-emerald-900 bg-amber-400 hover:bg-amber-300'
+              : 'text-sky-100 border border-sky-400/50 hover:bg-sky-400/15'
+          }`}
+          title="Ricalcola i path dell'albero dal dizionario corrente (ordine categorie incluso)"
+        >
+          {refreshingOntology
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <RefreshCw className="w-3.5 h-3.5" />}
+          {refreshingOntology ? progressLabel : label}
+        </button>
+        {refreshingOntology && (
+          <button
+            type="button"
+            onClick={cancelOntologyRefresh}
+            className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-red-300/90 border border-red-400/40 rounded hover:bg-red-400/10 transition-colors"
+            title="Interrompi la ricreazione ontologia"
+          >
+            <X className="w-3 h-3" />
+            Annulla
+          </button>
+        )}
+      </div>
+    ) : null;
+  };
+
   if (activeTab === EDITOR_TAB_IDS.ontology && dictionaryMode) {
 
     return (
       <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
-        {canRefreshOntology && (
-          <button
-            type="button"
-            onClick={refreshOntology}
-            className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded transition-colors ${
-              agentNeedsUpdate
-                ? 'text-emerald-900 bg-amber-400 hover:bg-amber-300'
-                : 'text-sky-100 border border-sky-400/50 hover:bg-sky-400/15'
-            }`}
-            title="Ricalcola i path dell'albero dal dizionario corrente (ordine categorie incluso)"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia'}
-          </button>
-        )}
+        {ontologyRefreshButton(hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia', agentNeedsUpdate)}
         <button
           type="button"
           onClick={() => void dictState?.save()}
@@ -112,17 +141,7 @@ export function DocumentEditorToolbar() {
 
     return (
       <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
-        {canRefreshOntology && agentNeedsUpdate && (
-          <button
-            type="button"
-            onClick={refreshOntology}
-            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-amber-400 rounded hover:bg-amber-300 transition-colors"
-            title="L'ordine categorie è cambiato — ricrea l'albero ontologia"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Ricrea ontologia
-          </button>
-        )}
+        {ontologyRefreshButton('Ricrea ontologia', agentNeedsUpdate)}
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -214,24 +233,30 @@ export function DocumentEditorToolbar() {
         void generateMessagesFromText(documentText, doc.name).catch(() => {});
       }
     };
+    const runExportOntology = () => {
+      if (!analysis || !agentDictionaryContext) return;
+      const descriptions = dictState?.getDescriptions()
+        ?? agentDictionaryContext.descriptions;
+      try {
+        exportOntologyToExcel({
+          documentName: doc.name,
+          dictionary: agentDictionaryContext.dictionary,
+          descriptions,
+          analysis,
+          loadedRefs: buildLiveLoadedRefs(),
+          leafDescriptionMap: leafDescriptionMap ?? undefined,
+          dictionaryDirty: dictState?.dirty,
+          analysisDirty,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Export ontologia fallito.';
+        window.alert(message);
+      }
+    };
 
     return (
       <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
-        {canRefreshOntology && (
-          <button
-            type="button"
-            onClick={refreshOntology}
-            className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded transition-colors ${
-              agentNeedsUpdate
-                ? 'text-emerald-900 bg-amber-400 hover:bg-amber-300'
-                : 'text-sky-100 border border-sky-400/50 hover:bg-sky-400/15'
-            }`}
-            title="Ricalcola i path dell'albero dal dizionario corrente"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia'}
-          </button>
-        )}
+        {ontologyRefreshButton(hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia', agentNeedsUpdate)}
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -293,6 +318,16 @@ export function DocumentEditorToolbar() {
             </button>
             <button
               type="button"
+              onClick={runExportOntology}
+              disabled={!hasTaxonomy || !agentDictionaryContext}
+              title="Scarica catalogo ontologia in Excel (descrizione + categorie usate)"
+              className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 text-emerald-300/70 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-200"
+            >
+              <FileSpreadsheet className="w-3 h-3" />
+              Esporta ontologia
+            </button>
+            <button
+              type="button"
               onClick={() => setConvaiOpen(true)}
               disabled={!hasTaxonomy || !agentDictionaryContext}
               title="Export per ElevenLabs Convai"
@@ -318,22 +353,6 @@ export function DocumentEditorToolbar() {
             >
               Convalida no be
             </button>
-            {hasMessages && (
-              <button
-                type="button"
-                onClick={() => setTestOpen((v) => !v)}
-                className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors ${
-                  testOpen
-                    ? 'text-emerald-300 border-emerald-400/50 bg-emerald-400/10'
-                    : agentReady
-                      ? 'text-emerald-400/60 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-400/90'
-                      : 'text-amber-400/60 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-400/90'
-                }`}
-              >
-                <FlaskConical className="w-3 h-3" />
-                Test
-              </button>
-            )}
           </>
         )}
       </div>

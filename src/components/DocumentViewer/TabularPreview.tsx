@@ -60,6 +60,24 @@ const ROLE_CONFIG: Record<ColumnRole, {
 
 const ROLES: ColumnRole[] = ['description', 'selector', 'data', 'ignore'];
 
+/** Shrink-wrap column width to cell content (mono ~7px per char + horizontal padding). */
+function autoColumnWidthPx(
+  header: string,
+  rows: string[][],
+  colIdx: number,
+  extraHeaderChars = 0,
+): number {
+  const CHAR_PX = 7;
+  const PADDING_PX = 36;
+  const MIN_PX = 56;
+  const MAX_PX = 420;
+  let maxChars = header.length + extraHeaderChars;
+  for (const row of rows) {
+    maxChars = Math.max(maxChars, (row[colIdx] ?? '').length);
+  }
+  return Math.min(MAX_PX, Math.max(MIN_PX, maxChars * CHAR_PX + PADDING_PX));
+}
+
 export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated }: TabularPreviewProps) {
   const { headers, rows } = tabular;
   const [filter, setFilter] = useState('');
@@ -100,6 +118,19 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
 
   const ignoredCount = headers.filter((h) => columnRoles[h] === 'ignore').length;
 
+  const columnWidths = useMemo(
+    () =>
+      visibleIndices.map((ci, vi) =>
+        autoColumnWidthPx(
+          headers[ci]!,
+          rows,
+          ci,
+          vi === 0 ? ` ${rows.length} righe`.length : 0,
+        ),
+      ),
+    [headers, rows, visibleIndices],
+  );
+
   const handleRoleChange = async (colName: string, role: ColumnRole) => {
     const previousRoles = columnRoles;
     const newRoles = { ...columnRoles };
@@ -123,7 +154,7 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
   };
 
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
       {/* Filter bar */}
       <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-[#1a3a2a] bg-[#0a1510]">
         <input
@@ -148,12 +179,17 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
         )}
       </div>
 
-      {/* Table */}
-      <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
-        <table className="text-left border-collapse">
+      {/* Table — h-0 + flex-1 forces scroll inside viewport instead of expanding the page */}
+      <div className="flex-1 min-h-0 h-0 min-w-0 w-full max-w-full overflow-auto overscroll-contain">
+        <table className="text-left border-collapse w-max table-auto">
+          <colgroup>
+            {visibleIndices.map((ci, vi) => (
+              <col key={ci} style={{ width: columnWidths[vi] }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-[#1a3a2a]">
-              {visibleIndices.map((ci) => {
+              {visibleIndices.map((ci, vi) => {
                 const h = headers[ci]!;
                 const role = columnRoles[h];
                 const cfg = role ? ROLE_CONFIG[role] : null;
@@ -161,18 +197,17 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
                 return (
                   <th
                     key={ci}
-                    className={`group relative px-4 pt-2 pb-1.5 font-mono text-xs font-semibold uppercase tracking-wider whitespace-nowrap border-r border-[#1a3a2a] last:border-r-0 select-none transition-colors ${
+                    className={`group relative px-3 pt-2 pb-1.5 font-mono text-xs font-semibold uppercase tracking-wider whitespace-nowrap border-r border-[#1a3a2a] last:border-r-0 select-none transition-colors align-top ${
                       cfg ? `${cfg.thBg} ${cfg.thText}` : 'bg-[#0a1510] text-emerald-400/70'
                     }`}
+                    style={{ width: columnWidths[vi], maxWidth: columnWidths[vi] }}
                   >
                     {/* Header row */}
-                    <div className="flex items-center justify-between gap-2 mb-1.5 w-full min-w-0">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {cfg && (
-                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                        )}
-                        <span className="truncate">{h}</span>
-                      </div>
+                    <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                      {cfg && (
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+                      )}
+                      <span className="truncate">{h}</span>
                       {ci === visibleIndices[0] && (
                         <span className="flex-shrink-0 font-mono text-[9px] font-normal normal-case tracking-normal text-emerald-400/40 tabular-nums">
                           {filter ? `${filtered.length}/${rows.length}` : rows.length} righe
@@ -180,8 +215,8 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
                       )}
                     </div>
 
-                    {/* Role toolbar — always rendered, visible on group-hover */}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-150">
+                    {/* Role toolbar — hidden from layout until hover so columns stay auto-sized */}
+                    <div className="absolute left-0 top-full z-20 mt-0.5 hidden group-hover:flex items-center gap-0.5 rounded border border-[#1a3a2a] bg-[#0a1510] p-0.5 shadow-lg">
                       {ROLES.map((r) => {
                         const rcfg = ROLE_CONFIG[r];
                         const isActive = role === r;
@@ -214,18 +249,21 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
                   ri % 2 === 0 ? 'bg-[#0d0d0d]' : 'bg-[#0f0f0f]'
                 }`}
               >
-                {visibleIndices.map((ci) => {
+                {visibleIndices.map((ci, vi) => {
                   const h = headers[ci]!;
                   const role = columnRoles[h];
                   const cfg = role ? ROLE_CONFIG[role] : null;
+                  const cell = row[ci] ?? '';
                   return (
                     <td
                       key={ci}
-                      className={`px-4 py-1.5 font-mono text-xs whitespace-nowrap border-r border-[#111] last:border-r-0 transition-colors ${
+                      title={cell}
+                      className={`px-3 py-1.5 font-mono text-xs whitespace-nowrap border-r border-[#111] last:border-r-0 transition-colors overflow-hidden text-ellipsis ${
                         cfg ? cfg.tdBg : ''
                       } ${role === 'ignore' ? 'text-gray-400/35' : 'text-emerald-300/80'}`}
+                      style={{ width: columnWidths[vi], maxWidth: columnWidths[vi] }}
                     >
-                      {row[ci] ?? ''}
+                      {cell}
                     </td>
                   );
                 })}

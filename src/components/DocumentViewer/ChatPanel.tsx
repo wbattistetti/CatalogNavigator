@@ -136,7 +136,7 @@ export function ChatPanel({ agentBundle = null, onClose }: ChatPanelProps) {
 
   if (!agentBundle) {
     return (
-      <div className="flex flex-col h-full border-l border-[#1a3a2a] bg-[#080e0a] p-4" style={{ width: 360, flexShrink: 0 }}>
+      <div className="flex flex-col h-full min-h-0 w-[360px] flex-shrink-0 border-l border-[#1a3a2a] bg-[#080e0a] p-4">
         <p className="font-mono text-[10px] text-emerald-400/45">Compila e pubblica il bundle per testare il motore VB.</p>
         <button onClick={onClose} className="mt-4 font-mono text-xs text-emerald-400/60">Chiudi</button>
       </div>
@@ -146,7 +146,7 @@ export function ChatPanel({ agentBundle = null, onClose }: ChatPanelProps) {
   const isDone = state.selectedPath !== null;
 
   return (
-    <div className="flex flex-col h-full border-l border-[#1a3a2a] bg-[#080e0a]" style={{ width: 360, flexShrink: 0 }}>
+    <div className="flex flex-col h-full min-h-0 w-[360px] flex-shrink-0 border-l border-[#1a3a2a] bg-[#080e0a]">
       <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-[#1a3a2a] bg-[#060c08]">
         <div className="flex items-center gap-2 min-w-0">
           <Bot className="w-3.5 h-3.5 text-emerald-400/70 flex-shrink-0" />

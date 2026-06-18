@@ -12,6 +12,7 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
     content,
     dicts,
     descriptionColumn,
+    ontologyColumns,
     onDocUpdated,
     setDictState,
     handleDictionaryAfterSave,
@@ -43,10 +44,12 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
   }
 
   return (
-    <DictionaryPanel
+    <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+      <DictionaryPanel
       doc={doc}
       tabular={content.tabular}
       dicts={dicts}
+      ontologyColumns={ontologyColumns}
       descriptionColumn={descriptionColumn}
       onDocUpdated={onDocUpdated}
       onStateChange={setDictState}
@@ -56,5 +59,6 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
       syncNotice={syncNotice}
       error={analysisApi.error}
     />
+    </div>
   );
 });

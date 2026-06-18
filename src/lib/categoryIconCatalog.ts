@@ -14,6 +14,10 @@ import {
   HEALTHCARE_TOKEN_KEYWORD_RULES,
   type CategoryIconSpec,
 } from './healthcareIconCatalogData';
+import {
+  PHARMA_CATEGORY_KEYWORD_RULES,
+  PHARMA_EXACT_CATEGORY_ICONS,
+} from './pharmaIconCatalogData';
 
 export type { CategoryIconSpec };
 export { CATEGORY_COLOR };
@@ -109,8 +113,10 @@ function lookupTokenIcon(normalized: string): CategoryIconSpec | null {
 export function resolveCategoryIcon(categoryName: string): CategoryIconSpec {
   const normalized = normalizeIconLabel(categoryName);
   if (!normalized) return DEFAULT_CATEGORY_ICON;
-  return HEALTHCARE_EXACT_CATEGORY_ICONS[normalized]
+  return PHARMA_EXACT_CATEGORY_ICONS[normalized]
+    ?? HEALTHCARE_EXACT_CATEGORY_ICONS[normalized]
     ?? GENERAL_EXACT_CATEGORY_ICONS[normalized]
+    ?? lookupByKeyword(normalized, PHARMA_CATEGORY_KEYWORD_RULES)
     ?? lookupByKeyword(normalized, HEALTHCARE_CATEGORY_KEYWORD_RULES)
     ?? lookupByKeyword(normalized, GENERAL_CATEGORY_KEYWORD_RULES)
     ?? DEFAULT_CATEGORY_ICON;

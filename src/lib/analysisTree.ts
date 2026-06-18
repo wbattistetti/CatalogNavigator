@@ -5,7 +5,6 @@ import type { AnalysisRow } from '../hooks/useAnalysis';
 import { compareTokenSegmentOrder, type TokenCategory } from './dictionaryTree';
 import { findCategoriesMissingGrammar, isCategoryGrammarsLayerReady } from './categoryGrammar';
 import {
-  isPrefixAmbiguityNode,
   isTerminalItemSlot,
   resolveItemPaths,
 } from './itemPaths';
@@ -599,7 +598,6 @@ export function formatInteractiveMessagesPrompt(
   itemPathsInput?: string[] | null,
   categories?: TokenCategory[],
 ): string {
-  const itemPaths = resolveItemPaths(slots, itemPathsInput);
   const interactive = getInteractiveMessageSlots(slots, itemPathsInput, categories);
 
   if (interactive.length === 0) {
@@ -608,11 +606,9 @@ export function formatInteractiveMessagesPrompt(
 
   const lines = interactive.map((slot) => {
     const children = listDisambiguationChildren(slots, slot, categories);
-    const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
-      ? ' (disambiguazione: semplice vs estensione figlio-item)'
-      : children.length <= 3
-        ? ' (elenca opzioni nella domanda)'
-        : ' (domanda aperta)';
+    const childNote = children.length <= 3
+      ? ' (elenca opzioni nella domanda)'
+      : ' (domanda aperta)';
     return `- ${slot}\n  opzioni disambiguazione: ${children.join(', ')}${childNote}`;
   });
 
@@ -680,11 +676,9 @@ export function formatInternalNodesSection(
 
   const internalLines = internal.map((slot) => {
     const children = listDisambiguationChildren(slots, slot, categories);
-    const childNote = isPrefixAmbiguityNode(slots, slot, itemPaths)
-      ? ' (item con figlio-item → disambiguazione semplice vs estensione)'
-      : children.length <= 3
-        ? ' (2-3 figli → elenca opzioni nella domanda)'
-        : ' (>=4 figli → domanda aperta)';
+    const childNote = children.length <= 3
+      ? ' (2-3 figli → elenca opzioni nella domanda)'
+      : ' (>=4 figli → domanda aperta)';
     return `- ${slot}\n  opzioni disambiguazione: ${children.join(', ')}${childNote}`;
   });
 

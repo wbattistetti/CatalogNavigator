@@ -1,6 +1,6 @@
 /**
  * Grammar matching: score each corpus item by how many path nodes match the text;
- * the item with the most matches wins; prefix-ambiguous ties prefer the parent item.
+ * the item with the most matches wins.
  */
 import type { AnalysisRow, GrammarEntry } from '../hooks/useAnalysis';
 import { normalizeSlotKey } from './analysisTree';
@@ -154,21 +154,8 @@ function leafMatchesAnchor(itemPath: string, anchorPath: string): boolean {
   return itemPath === anchorPath || itemPath.startsWith(`${anchorPath}.`);
 }
 
-/** Picks winner; when parent and child items tie, prefer parent for disambiguation. */
+/** Picks the best-scoring candidate item path. */
 function pickWinningScore(candidates: ItemScore[], anchor: string | null): ItemScore {
-  const prefixAmbiguityParents = candidates.filter((c) =>
-    candidates.some(
-      (o) => o.itemPath !== c.itemPath && o.itemPath.startsWith(`${c.itemPath}.`),
-    ),
-  );
-
-  if (prefixAmbiguityParents.length > 0) {
-    prefixAmbiguityParents.sort(
-      (a, b) => a.itemPath.split('.').length - b.itemPath.split('.').length,
-    );
-    return prefixAmbiguityParents[0]!;
-  }
-
   const sorted = [...candidates].sort((a, b) => {
     if (anchor) {
       const aAnchor = leafMatchesAnchor(a.itemPath, anchor) ? 1 : 0;

@@ -59,18 +59,19 @@ app.UseCors();
 
 
 var jsonOptions = new JsonSerializerOptions
-
 {
-
     PropertyNameCaseInsensitive = true,
-
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-
 };
+jsonOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
 
-
+static ConceptKind ParseConceptKind(string? kind)
+{
+    if (string.Equals(kind, "vincolo", StringComparison.OrdinalIgnoreCase))
+        return ConceptKind.Vincolo;
+    return ConceptKind.Attributo;
+}
 
 static AgentTurnInput ParseTurnInput(JsonElement root)
 
@@ -96,7 +97,7 @@ static AgentTurnInput ParseTurnInput(JsonElement root)
 
             var unit = item.TryGetProperty("unit", out var unitEl) ? unitEl.GetString()?.Trim() : null;
 
-            incoming.Add(new Concept { Category = category, Value = value, Kind = kind, Unit = unit });
+            incoming.Add(new Concept { Category = category, Value = value, Kind = ParseConceptKind(kind), Unit = unit });
 
         }
 
@@ -149,14 +150,6 @@ static AgentTurnInput ParseTurnInput(JsonElement root)
 static AgentTurnResult RunTurn(AgentBundle bundle, AgentSessionState state, AgentTurnInput turn)
 
 {
-
-    if (turn.IncomingConcepts.Count > 0)
-
-        return AgentTurnEngine.ProcessAgentTurn(bundle, state, turn);
-
-    if (!string.IsNullOrWhiteSpace(turn.Transcript))
-
-        return AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, turn.Transcript);
 
     return AgentTurnEngine.ProcessAgentTurn(bundle, state, turn);
 

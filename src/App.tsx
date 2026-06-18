@@ -73,7 +73,7 @@ export default function App() {
   const fileUrl = selectedDoc ? getFileUrl(selectedDoc.storage_path) : null;
 
   return (
-    <div className="flex h-screen bg-[#0d0d0d] text-emerald-300 overflow-hidden">
+    <div className="flex flex-col h-screen w-full max-w-full overflow-hidden bg-[#0d0d0d] text-emerald-300">
       {/* Top bar */}
       <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-2 px-4 py-2 bg-[#050a06] border-b border-[#1a3a2a] h-10">
         <Database className="w-4 h-4 text-emerald-400" />
@@ -89,7 +89,7 @@ export default function App() {
       </div>
 
       {/* Layout below top bar */}
-      <div className="flex flex-1 min-h-0 mt-10">
+      <div className="flex flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden mt-10">
         <Sidebar
           documents={documents}
           loading={loading}
@@ -100,7 +100,7 @@ export default function App() {
           <UploadZone onFiles={handleFiles} uploading={uploading} />
         </Sidebar>
 
-        <main className="flex flex-1 min-h-0 min-w-0">
+        <main className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
           {selectedDoc && fileUrl ? (
             <MainPanel
               key={selectedDoc.id}

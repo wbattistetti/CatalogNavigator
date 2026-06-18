@@ -5,7 +5,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export type ColumnRole = 'selector' | 'data' | 'description' | 'ignore';
+export type ColumnRole = 'selector' | 'data' | 'description' | 'ontology' | 'ignore';
 
 /** Saved token dictionary for deterministic segmentation. */
 export interface SavedTokenDictionary {

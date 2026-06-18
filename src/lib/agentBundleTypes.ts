@@ -9,6 +9,9 @@ export type AgentBundleMode = 'preview' | 'published';
 
 export type ConstraintKind = 'age_years';
 
+/** Category semantic type: attributo (catalog dimension) or vincolo (eligibility rule). */
+export type ConceptKind = 'attributo' | 'vincolo';
+
 /** Compile-time age constraint derived from a vincolo token. */
 export interface CompiledAgeConstraint {
   kind: 'age_years';
@@ -131,7 +134,7 @@ export interface AgentTurnInput {
 export interface AgentConcept {
   category: string;
   value: string;
-  kind?: 'attributo' | 'vincolo';
+  kind?: ConceptKind;
   unit?: string;
 }
 

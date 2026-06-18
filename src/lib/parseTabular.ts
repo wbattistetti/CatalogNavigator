@@ -7,11 +7,20 @@ export interface ParsedTabular {
   rows: string[][];
 }
 
+/** Detect field separator from the first line (TSV, European `;` CSV, or comma CSV). */
+export function detectSeparator(firstLine: string): '\t' | ';' | ',' {
+  if (firstLine.includes('\t')) return '\t';
+  const semicolons = (firstLine.match(/;/g) ?? []).length;
+  const commas = (firstLine.match(/,/g) ?? []).length;
+  if (semicolons > commas) return ';';
+  return ',';
+}
+
 export function parseTabularText(text: string): ParsedTabular | null {
   const lines = text.trim().split('\n').filter((l) => l.trim());
   if (lines.length < 2) return null;
 
-  const separator = lines[0].includes('\t') ? '\t' : ',';
+  const separator = detectSeparator(lines[0]);
   const headers = lines[0].split(separator).map((h) => h.trim().replace(/^"|"$/g, ''));
   if (headers.length < 2) return null;
 

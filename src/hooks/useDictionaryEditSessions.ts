@@ -81,11 +81,14 @@ export function useDictionaryEditSessions(
   );
 
   /** Bumps when any session categories/grammars change — for bundle compile memoization. */
-  const sessionsRevision = [...sessions.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([id, session]) => `${id}:${session.categories.map((c) =>
-      `${c.id}:${c.grammar?.regex?.length ?? 0}`).join(',')}`)
-    .join('|');
+  const sessionsRevision = useMemo(
+    () => [...sessions.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, session]) => `${id}:${session.categories.map((c) =>
+        `${c.id}:${c.grammar?.regex?.length ?? 0}`).join(',')}`)
+      .join('|'),
+    [sessions],
+  );
 
   /** Pushes session state to the external store after commit (never during setState). */
   useLayoutEffect(() => {

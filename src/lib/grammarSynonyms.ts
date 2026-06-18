@@ -11,7 +11,6 @@ import {
   normalizeGrammarEntry,
   validateGrammarRegex,
 } from './grammarNormalize';
-import { isItemSlot, resolveItemPaths } from './itemPaths';
 import { requiresInteractiveNode } from './nluQuestionRules';
 import { getTokenTextForSlot } from './tokenGrammar';
 
@@ -109,7 +108,7 @@ export function defaultSynonymsForSlot(slot: string): string[] {
   return [...synonyms];
 }
 
-/** Default negative/simple answer tokens for a parent-item panel (prefix ambiguity). */
+/** Default decline/simple answer tokens for turn-level NONE option. */
 export function defaultParentAnswerSynonyms(): string[] {
   return ['semplice', 'solo', 'senza', 'no', 'base', 'solamente', 'normale', 'standard'];
 }
@@ -127,14 +126,14 @@ export function defaultParentContextualSynonyms(parentSlot: string): string[] {
   ]);
 }
 
-/** Contextual answer synonyms for a child column (segment + optional affirmatives). */
+/** Contextual answer synonyms for a disambiguation option (segment + optional affirmatives). */
 export function defaultChildContextualSynonyms(
   childPath: string,
-  prefixDisambiguation: boolean,
+  includeAffirmatives = false,
 ): string[] {
   const segment = lastSegment(childPath);
   const base = expandSegmentVariants(segment);
-  const extra = prefixDisambiguation ? defaultAffirmativeAnswerSynonyms() : [];
+  const extra = includeAffirmatives ? defaultAffirmativeAnswerSynonyms() : [];
   return normalizeSortedSynonymList([...base, ...extra]);
 }
 
@@ -215,34 +214,19 @@ export function extractSimpleSynonyms(grammar: GrammarEntry, slot: string): stri
 export function buildInteractivePanels(
   slot: string,
   slots: string[],
-  itemPathsInput?: string[] | null,
+  _itemPathsInput?: string[] | null,
   categories?: TokenCategory[],
 ): GrammarEditorPanel[] {
-  const itemPaths = resolveItemPaths(slots, itemPathsInput);
-  const panels: GrammarEditorPanel[] = [];
   const children = categories?.length
     ? (getSiblingChoiceChildren(slots, slot, categories) ?? [])
     : getDirectChildSlots(slots, slot);
 
-  if (isItemSlot(slot, itemPaths)) {
-    panels.push({
-      targetPath: slot,
-      label: `Padre · ${lastSegment(slot)}`,
-      isParent: true,
-      synonyms: [],
-    });
-  }
-
-  for (const child of children) {
-    panels.push({
-      targetPath: child,
-      label: lastSegment(child),
-      isParent: false,
-      synonyms: [],
-    });
-  }
-
-  return panels;
+  return children.map((child) => ({
+    targetPath: child,
+    label: lastSegment(child),
+    isParent: false,
+    synonyms: [],
+  }));
 }
 
 /** Merges extracted synonyms into panel definitions. */
@@ -264,19 +248,19 @@ export function hydratePanelsFromGrammar(
 /** Seeds contextual answer synonyms when grammar is missing or empty. */
 export function seedDefaultPanels(
   panels: GrammarEditorPanel[],
-  slot: string,
+  _slot: string,
 ): GrammarEditorPanel[] {
-  const hasParentPanel = panels.some((p) => p.isParent);
+  const includeAffirmatives = panels.length === 2;
   return panels.map((panel) => {
     if (panel.synonyms.length > 0) {
       return { ...panel, synonyms: sortSynonymsAlphabetically(panel.synonyms) };
     }
     if (panel.isParent) {
-      return { ...panel, synonyms: defaultParentContextualSynonyms(slot) };
+      return { ...panel, synonyms: defaultParentContextualSynonyms(panel.targetPath) };
     }
     return {
       ...panel,
-      synonyms: defaultChildContextualSynonyms(panel.targetPath, hasParentPanel),
+      synonyms: defaultChildContextualSynonyms(panel.targetPath, includeAffirmatives),
     };
   });
 }

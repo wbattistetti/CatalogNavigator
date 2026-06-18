@@ -63,7 +63,7 @@ Public Module ConstraintValidation
     End Function
 
     Private Function ParseItalianAgeWord(raw As String) As Integer?
-        Dim key = CategoryNormalization.NormalizeCategoryKey(raw.Replace("'", ""))
+        Dim key = CategoryNormalization.NormalizeWordKey(raw)
         If ItalianAgeWords.TryGetValue(key, Nothing) Then
             Dim age = ItalianAgeWords(key)
             If age >= 0 AndAlso age <= 120 Then Return age

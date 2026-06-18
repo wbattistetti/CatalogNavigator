@@ -37,7 +37,7 @@ export function DictionariesDockPanel(props: IDockviewPanelProps) {
 
   return (
     <DockPanelRetained mounted={mounted}>
-      {content.loading || dicts.loading
+      {content.loading && dicts.loading
         ? <LoadingPlaceholder label="Caricamento…" />
         : <DictionariesWorkspace />}
     </DockPanelRetained>

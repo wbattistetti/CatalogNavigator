@@ -32,7 +32,7 @@ import {
   mergeTaxonomyForMessageRegen,
   mergeTaxonomyWithExistingNlu,
 } from '../lib/nluQuestionRules';
-import { reconcileItemPaths, resolveItemPaths } from '../lib/itemPaths';
+import { syncExplicitItemPaths, resolveItemPaths } from '../lib/itemPaths';
 import {
   buildRowFieldEditUpdate,
   stampAiMessageSubtree,
@@ -60,6 +60,7 @@ import {
 import { applyCategoryGrammars, findCategoriesMissingGrammar } from '../lib/categoryGrammar';
 import {
   segmentAllDescriptionsFromLoadedRefs,
+  segmentAllDescriptionsFromLoadedRefsAsync,
   type LoadedDictionaryRef,
 } from '../lib/multiDictionarySegment';
 import {
@@ -86,6 +87,7 @@ import type {
   GrammarEditMode,
   GrammarEditTarget,
   GrammarEntry,
+  OntologySyncPhase,
   RowStatus,
 } from '../lib/analysisTypes';
 
@@ -139,7 +141,7 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     answer_grammar: r.answer_grammar ?? null,
     confirmation_text: r.confirmation_text ?? null,
   }));
-  const itemPaths = reconcileItemPaths(
+  const itemPaths = syncExplicitItemPaths(
     rawRows.map((r) => r.slot_filling),
     data.item_paths ?? null,
   );
@@ -149,7 +151,7 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     ...data,
     start_question: data.start_question ?? null,
     confirmation_preamble: data.confirmation_preamble ?? 'Quindi confermo:',
-    item_paths: reconcileItemPaths(slots, data.item_paths ?? null),
+    item_paths: syncExplicitItemPaths(slots, data.item_paths ?? null),
     rows,
   };
 }
@@ -171,8 +173,8 @@ function draftAnalysis(
   const now = new Date().toISOString();
   const slots = rows.map((r) => r.slot_filling);
   const resolvedItems = item_paths !== undefined
-    ? reconcileItemPaths(slots, item_paths)
-    : reconcileItemPaths(slots, existing?.item_paths ?? null);
+    ? syncExplicitItemPaths(slots, item_paths)
+    : syncExplicitItemPaths(slots, existing?.item_paths ?? null);
   return {
     id: existing?.id ?? '',
     document_id: documentId,
@@ -532,7 +534,7 @@ export function useAnalysis(documentId: string) {
     existing?: Analysis | null,
   ) => {
     if (result.pathsUnchanged) {
-      setSyncNotice(null);
+      setSyncNotice('Ontologia aggiornata — path invariati rispetto al corpus corrente.');
       return;
     }
     setAnalysis(draftAnalysis(documentId, result.rows, existing ?? null, result.item_paths));
@@ -602,6 +604,42 @@ export function useAnalysis(documentId: string) {
     try {
       const { leafPaths } = segmentAllDescriptionsFromLoadedRefs(descriptions, loadedRefs);
       return applyLeafPathSync(leafPaths, { loadedRefs });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  }, [applyLeafPathSync]);
+
+  /** Async variant: batched segmentation with progress and cancel (for Ricrea ontologia). */
+  const syncTaxonomyFromLoadedRefsAsync = useCallback(async (
+    descriptions: string[],
+    loadedRefs: LoadedDictionaryRef[],
+    options?: {
+      onProgress?: (current: number, total: number) => void;
+      onPhase?: (phase: OntologySyncPhase) => void;
+      shouldCancel?: () => boolean;
+    },
+  ): Promise<{ result: TaxonomySyncResult | null; cancelled: boolean }> => {
+    setError(null);
+    try {
+      options?.onPhase?.('segmentation');
+      const { leafPaths, cancelled } = await segmentAllDescriptionsFromLoadedRefsAsync(
+        descriptions,
+        loadedRefs,
+        {
+          yieldEvery: 50,
+          onProgress: options?.onProgress,
+          shouldCancel: options?.shouldCancel,
+        },
+      );
+      if (cancelled) return { result: null, cancelled: true };
+      if (leafPaths.length === 0) {
+        throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
+      }
+      options?.onPhase?.('building');
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const result = applyLeafPathSync(leafPaths, { loadedRefs });
+      return { result, cancelled: false };
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       throw e;
@@ -1121,7 +1159,7 @@ export function useAnalysis(documentId: string) {
     setAnalysis({
       ...analysis,
       rows: newRows,
-      item_paths: reconcileItemPaths(slots, nextItems),
+      item_paths: syncExplicitItemPaths(slots, nextItems),
     });
     setAnalysisDirty(true);
   }, [analysis]);
@@ -1193,7 +1231,7 @@ export function useAnalysis(documentId: string) {
     setAnalysis({
       ...analysis,
       rows: newRows,
-      item_paths: reconcileItemPaths(slots, analysis.item_paths),
+      item_paths: syncExplicitItemPaths(slots, analysis.item_paths),
     });
     setAnalysisDirty(true);
   }, [analysis]);
@@ -1233,7 +1271,7 @@ export function useAnalysis(documentId: string) {
       setAnalysis({
         ...analysis,
         rows: newRows,
-        item_paths: reconcileItemPaths(slots, remappedItems),
+        item_paths: syncExplicitItemPaths(slots, remappedItems),
       });
       setAnalysisDirty(true);
     } catch (e) {
@@ -1327,7 +1365,7 @@ export function useAnalysis(documentId: string) {
     generateMessagesFromDictionary, generateMessagesOnly, reviewMessagesWithAi, generateGrammars, generateDictionaryCategoryGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
     updateRow, deleteRow, addRow, restructurePath,
     dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree, regenSubtreeFull,
-    syncTaxonomyFromDictionary, syncTaxonomyFromLoadedRefs, syncNotice, clearSyncNotice,
+    syncTaxonomyFromDictionary, syncTaxonomyFromLoadedRefs, syncTaxonomyFromLoadedRefsAsync, syncNotice, clearSyncNotice,
     bindGrammarTokens, bindPathOrderingCategories, syncGrammarsFromTokens, updateTokenGrammar,
   };
 }

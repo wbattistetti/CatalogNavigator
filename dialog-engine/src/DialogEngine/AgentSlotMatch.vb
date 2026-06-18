@@ -5,6 +5,8 @@ Imports System.Globalization
 
 Public Module AgentSlotMatch
 
+    Private Const MissingCategoryValue As String = "none"
+
     Public Class InferredDisambiguation
         Public Property CategoryName As String
         Public Property Options As List(Of String) = New List(Of String)()
@@ -15,157 +17,190 @@ Public Module AgentSlotMatch
         Public Property Value As String
     End Class
 
-    Private Class CategoryDistinctValues
-        Public Property CategoryName As String
-        Public Property Kind As String
-        Public Property Options As List(Of String) = New List(Of String)()
-    End Class
+    Public Function CandidatePaths(candidates As IList(Of Models.CatalogItem)) As List(Of String)
+        If candidates Is Nothing Then Return New List(Of String)()
+        Return candidates.Select(Function(item) item.Path).ToList()
+    End Function
 
     Private Function ConceptMatchesCatalogConcept(
         catalogConcept As Models.Concept,
-        categoryKey As String,
+        categoryName As String,
         conceptValue As String
     ) As Boolean
-        Return CategoryNormalization.NormalizeCategoryKey(catalogConcept.Category) = categoryKey AndAlso
-               CategoryNormalization.NormalizeConceptValue(catalogConcept.Value) =
-               CategoryNormalization.NormalizeConceptValue(conceptValue)
+        Return catalogConcept.Category = categoryName AndAlso
+               catalogConcept.Value = conceptValue
     End Function
 
     Public Function ShouldAskAge(
         bundle As Models.AgentBundle,
-        candidatePaths As IList(Of String),
+        candidates As IList(Of Models.CatalogItem),
         conversation As Models.AgentSessionState
     ) As Boolean
         If ConceptOps.FindAcquiredAgeYears(AcquiredList(conversation)).HasValue Then Return False
-        If candidatePaths.Count <= 1 Then Return False
+        If candidates Is Nothing OrElse candidates.Count <= 1 Then Return False
 
-        Dim catalogMap = BundleAccess.CatalogByPath(bundle)
-        If AnyPathHasAgeConstraint(candidatePaths, catalogMap) Then
-            Return candidatePaths.Count > 1
+        If AnyItemHasAgeConstraint(candidates) Then
+            Return candidates.Count > 1
         End If
 
-        Return HasUnresolvedAgeVincoloAmongCandidates(bundle, candidatePaths, AcquiredList(conversation))
+        Return HasUnresolvedAgeVincoloAmongCandidates(bundle, candidates, AcquiredList(conversation))
     End Function
 
-    Public Function AnyPathHasAgeConstraint(
-        paths As IList(Of String),
-        catalogMap As Dictionary(Of String, Models.CatalogItem)
-    ) As Boolean
-        Return paths.Any(Function(path)
-                             If Not catalogMap.TryGetValue(path, Nothing) Then Return False
-                             Return catalogMap(path).AgeConstraints IsNot Nothing AndAlso catalogMap(path).AgeConstraints.Count > 0
-                         End Function)
+    Private Function AnyItemHasAgeConstraint(candidates As IList(Of Models.CatalogItem)) As Boolean
+        Return candidates.Any(
+            Function(item) item IsNot Nothing AndAlso
+                            item.AgeConstraints IsNot Nothing AndAlso
+                            item.AgeConstraints.Count > 0)
     End Function
 
-    Private Function CollectCategoryDistinctValues(
-        bundle As Models.AgentBundle,
-        candidatePaths As IList(Of String),
-        acquired As IList(Of Models.Concept),
-        catalogMap As Dictionary(Of String, Models.CatalogItem)
-    ) As List(Of CategoryDistinctValues)
-        Dim acquiredKeys = ConceptOps.AcquiredCategoryKeys(acquired)
-        Dim categories = CategoryNormalization.NormalizeCategoryOrders(bundle.Ontology.Categories).
-            Where(Function(c) c.AllowedValues IsNot Nothing AndAlso c.AllowedValues.Count > 0).
-            ToList()
+    Private Function CandidateCategoryNames(candidates As IList(Of Models.CatalogItem)) As HashSet(Of String)
+        Dim names As New HashSet(Of String)(StringComparer.Ordinal)
+        Dim items = If(candidates IsNot Nothing, candidates, New List(Of Models.CatalogItem)())
 
-        Dim results As New List(Of CategoryDistinctValues)()
-
-        For Each category In categories
-            Dim key = CategoryNormalization.NormalizeCategoryKey(category.Name)
-            If acquiredKeys.Contains(key) Then Continue For
-
-            Dim values As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
-            For Each path In candidatePaths
-                If Not catalogMap.TryGetValue(path, Nothing) Then Continue For
-                Dim concept = catalogMap(path).Concepts.FirstOrDefault(
-                    Function(c) CategoryNormalization.NormalizeCategoryKey(c.Category) = key
-                )
-                If concept IsNot Nothing AndAlso Not String.IsNullOrEmpty(concept.Value) Then
-                    values.Add(concept.Value)
-                End If
+        For Each item In items
+            If item Is Nothing OrElse item.Concepts Is Nothing Then Continue For
+            For Each concept In item.Concepts
+                If concept Is Nothing OrElse String.IsNullOrWhiteSpace(concept.Category) Then Continue For
+                names.Add(concept.Category.Trim())
             Next
-
-            If values.Count = 0 Then Continue For
-
-            results.Add(New CategoryDistinctValues With {
-                .CategoryName = category.Name,
-                .Kind = If(category.Kind = "vincolo", "vincolo", "attributo"),
-                .Options = values.OrderBy(Function(v) v, StringComparer.Create(New CultureInfo("it-IT"), False)).ToList()
-            })
         Next
 
-        Return results
+        Return names
+    End Function
+
+    Private Function OrderedCandidateCategories(
+        bundle As Models.AgentBundle,
+        candidates As IList(Of Models.CatalogItem),
+        kindFilter As Models.ConceptKind
+    ) As List(Of Models.CategoryDefinition)
+        Dim names = CandidateCategoryNames(candidates)
+        If names.Count = 0 Then Return New List(Of Models.CategoryDefinition)()
+        If bundle Is Nothing OrElse bundle.Ontology Is Nothing OrElse bundle.Ontology.Categories Is Nothing Then
+            Return New List(Of Models.CategoryDefinition)()
+        End If
+
+        Return bundle.Ontology.Categories.
+            Where(Function(c) c IsNot Nothing AndAlso
+                             Not String.IsNullOrWhiteSpace(c.Name) AndAlso
+                             names.Contains(c.Name) AndAlso
+                             (c.Kind = kindFilter)).
+            OrderBy(Function(c) c.Order).
+            ToList()
+    End Function
+
+    Private Function DistinctValuesForCategory(
+        candidates As IList(Of Models.CatalogItem),
+        categoryName As String
+    ) As HashSet(Of String)
+        Dim values As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        Dim items = If(candidates IsNot Nothing, candidates, New List(Of Models.CatalogItem)())
+
+        For Each item In items
+            If item Is Nothing Then Continue For
+            Dim concept As Models.Concept = Nothing
+            If item.Concepts IsNot Nothing Then
+                concept = item.Concepts.FirstOrDefault(
+                    Function(c) c IsNot Nothing AndAlso c.Category = categoryName)
+            End If
+
+            If concept IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(concept.Value) Then
+                values.Add(concept.Value.Trim())
+            Else
+                values.Add(MissingCategoryValue)
+            End If
+        Next
+
+        Return values
+    End Function
+
+    Private Function SortOptions(values As IEnumerable(Of String)) As List(Of String)
+        Return values.
+            OrderBy(Function(v) v, StringComparer.Create(New CultureInfo("it-IT"), False)).
+            ToList()
+    End Function
+
+    Private Function HasMeaningfulDistinctValues(values As HashSet(Of String)) As Boolean
+        If values Is Nothing OrElse values.Count = 0 Then Return False
+        If values.Count = 1 AndAlso values.Contains(MissingCategoryValue) Then Return False
+        Return True
     End Function
 
     Public Function HasUnresolvedAgeVincoloAmongCandidates(
         bundle As Models.AgentBundle,
-        candidatePaths As IList(Of String),
+        candidates As IList(Of Models.CatalogItem),
         acquired As IList(Of Models.Concept)
     ) As Boolean
-        Dim catalogMap = BundleAccess.CatalogByPath(bundle)
-        Dim distinct = CollectCategoryDistinctValues(bundle, candidatePaths, acquired, catalogMap)
-        Return distinct.Any(Function(entry) entry.Kind = "vincolo" AndAlso entry.Options.Count > 0)
+        For Each category In OrderedCandidateCategories(bundle, candidates, Models.ConceptKind.Vincolo)
+            If ConceptOps.HasAcquiredCategory(acquired, category.Name) Then Continue For
+
+            Dim values = DistinctValuesForCategory(candidates, category.Name)
+            If HasMeaningfulDistinctValues(values) Then Return True
+        Next
+        Return False
     End Function
 
     Public Function FindDisambiguationTarget(
         bundle As Models.AgentBundle,
-        candidatePaths As IList(Of String),
+        candidates As IList(Of Models.CatalogItem),
         acquired As IList(Of Models.Concept)
     ) As InferredDisambiguation
-        Dim catalogMap = BundleAccess.CatalogByPath(bundle)
-        Dim distinct = CollectCategoryDistinctValues(bundle, candidatePaths, acquired, catalogMap)
-        Dim target = distinct.FirstOrDefault(Function(entry) entry.Kind = "attributo" AndAlso entry.Options.Count >= 2)
-        If target Is Nothing Then Return Nothing
+        For Each category In OrderedCandidateCategories(bundle, candidates, Models.ConceptKind.Attributo)
+            If ConceptOps.HasAcquiredCategory(acquired, category.Name) Then Continue For
 
-        Return New InferredDisambiguation With {
-            .CategoryName = target.CategoryName,
-            .Options = target.Options
-        }
-    End Function
+            Dim values = DistinctValuesForCategory(candidates, category.Name)
+            If values.Count < 2 Then Continue For
 
-    Public Function FindInferredConcept(
-        bundle As Models.AgentBundle,
-        candidatePaths As IList(Of String),
-        acquired As IList(Of Models.Concept)
-    ) As InferredConcept
-        Dim catalogMap = BundleAccess.CatalogByPath(bundle)
-        Dim distinct = CollectCategoryDistinctValues(bundle, candidatePaths, acquired, catalogMap)
-
-        For Each entry In distinct
-            If entry.Kind <> "attributo" OrElse entry.Options.Count <> 1 Then Continue For
-            Return New InferredConcept With {
-                .CategoryName = entry.CategoryName,
-                .Value = entry.Options(0)
+            Return New InferredDisambiguation With {
+                .CategoryName = category.Name,
+                .Options = SortOptions(values)
             }
         Next
         Return Nothing
     End Function
 
-    Public Function ConceptMatchesCorpusOnPaths(
+    Public Function FindInferredConcept(
         bundle As Models.AgentBundle,
-        candidatePaths As IList(Of String),
+        candidates As IList(Of Models.CatalogItem),
+        acquired As IList(Of Models.Concept)
+    ) As InferredConcept
+        For Each category In OrderedCandidateCategories(bundle, candidates, Models.ConceptKind.Attributo)
+            If ConceptOps.HasAcquiredCategory(acquired, category.Name) Then Continue For
+
+            Dim values = DistinctValuesForCategory(candidates, category.Name)
+            If values.Count <> 1 Then Continue For
+
+            Return New InferredConcept With {
+                .CategoryName = category.Name,
+                .Value = values.First()
+            }
+        Next
+        Return Nothing
+    End Function
+
+    Public Function ConceptMatchesCorpusOnCandidates(
+        bundle As Models.AgentBundle,
+        candidates As IList(Of Models.CatalogItem),
         concept As Models.Concept
     ) As Boolean
-        Dim categoryKey = CategoryNormalization.NormalizeCategoryKey(concept.Category)
-        Dim catalogMap = BundleAccess.CatalogByPath(bundle)
+        If concept Is Nothing OrElse String.IsNullOrWhiteSpace(concept.Category) Then Return False
+        Dim items = If(candidates IsNot Nothing, candidates, New List(Of Models.CatalogItem)())
 
-        For Each path In candidatePaths
-            If Not catalogMap.TryGetValue(path, Nothing) Then Continue For
-            Dim hasMatch = catalogMap(path).Concepts.Any(
-                Function(c) BundleAccess.IsAttributoConcept(c) AndAlso ConceptMatchesCatalogConcept(c, categoryKey, concept.Value)
+        For Each item In items
+            If item Is Nothing OrElse item.Concepts Is Nothing Then Continue For
+            Dim hasMatch = item.Concepts.Any(
+                Function(c) (c.Kind = Models.ConceptKind.Attributo) AndAlso
+                            ConceptMatchesCatalogConcept(c, concept.Category, concept.Value)
             )
             If hasMatch Then Return True
         Next
         Return False
     End Function
 
-    Public Function PriorCandidatePaths(
+    Public Function PriorCandidates(
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState
-    ) As List(Of String)
-        Return CatalogFilter.FilterCandidates(bundle.Catalog, conversation).
-            Select(Function(item) item.Path).
-            ToList()
+    ) As List(Of Models.CatalogItem)
+        Return CatalogFilter.FilterCandidates(bundle.Catalog, conversation)
     End Function
 
     Private Function AcquiredList(conversation As Models.AgentSessionState) As IList(Of Models.Concept)

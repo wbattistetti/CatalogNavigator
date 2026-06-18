@@ -3,46 +3,39 @@
 ''' </summary>
 Public Module ConceptOps
 
-    Public Function IsAgeConcept(concept As Models.Concept) As Boolean
-        Return concept IsNot Nothing AndAlso
-               CategoryNormalization.IsAgeCategoryKey(CategoryNormalization.NormalizeCategoryKey(concept.Category))
-    End Function
-
-    Public Function IsVincoloConcept(concept As Models.Concept) As Boolean
-        Return concept IsNot Nothing AndAlso
-               String.Equals(concept.Kind, "vincolo", StringComparison.OrdinalIgnoreCase)
-    End Function
-
-    Public Function AttributeConcepts(concepts As IList(Of Models.Concept)) As List(Of Models.Concept)
-        If concepts Is Nothing Then Return New List(Of Models.Concept)()
-        Return concepts.Where(Function(c) c IsNot Nothing AndAlso Not IsAgeConcept(c) AndAlso Not IsVincoloConcept(c)).ToList()
-    End Function
-
-    ''' <summary>Merges incoming concepts into acquired list (replace by category key).</summary>
+    ''' <summary>Merges incoming concepts into acquired list (replace by category name).</summary>
     Public Function MergeAcquired(
         existing As IList(Of Models.Concept),
-        incoming As IList(Of Models.Concept)
+        incoming As IList(Of Models.Concept),
+        Optional ontology As Models.Ontology = Nothing
     ) As List(Of Models.Concept)
         Dim merged = CloneConceptList(existing)
         Dim items = If(incoming IsNot Nothing, incoming, New List(Of Models.Concept)())
 
         For Each concept In items
             If concept Is Nothing Then Continue For
-            Dim key = CategoryNormalization.NormalizeCategoryKey(concept.Category)
-            If String.IsNullOrEmpty(key) OrElse String.IsNullOrWhiteSpace(concept.Value) Then Continue For
+            Dim category = CategoryTypes.FindCategoryByName(ontology, concept.Category)
+            Dim categoryName = If(category IsNot Nothing, category.Name, concept.Category.Trim())
+            Dim kind = ResolveKind(concept, ontology)
+            Dim value = CategoryNormalization.CanonicalizeConceptValue(concept.Value, kind, category)
+            If String.IsNullOrWhiteSpace(categoryName) OrElse String.IsNullOrWhiteSpace(value) Then Continue For
 
-            merged.RemoveAll(Function(c) CategoryNormalization.NormalizeCategoryKey(c.Category) = key)
+            merged.RemoveAll(Function(c) c.Category = categoryName)
             merged.Add(New Models.Concept With {
-                .Category = concept.Category,
-                .Value = concept.Value.Trim(),
-                .Kind = If(String.IsNullOrWhiteSpace(concept.Kind),
-                    If(IsAgeConcept(concept), "vincolo", "attributo"),
-                    concept.Kind),
+                .Category = categoryName,
+                .Value = value,
+                .Kind = kind,
                 .Unit = concept.Unit
             })
         Next
 
         Return merged
+    End Function
+
+    Private Function ResolveKind(concept As Models.Concept, ontology As Models.Ontology) As Models.ConceptKind
+        Dim category = CategoryTypes.FindCategoryByName(ontology, concept.Category)
+        If category IsNot Nothing Then Return category.Kind
+        Return concept.Kind
     End Function
 
     Public Function CloneConceptList(concepts As IList(Of Models.Concept)) As List(Of Models.Concept)
@@ -57,16 +50,15 @@ Public Module ConceptOps
             }).ToList()
     End Function
 
-    Public Function HasAcquiredCategory(concepts As IList(Of Models.Concept), categoryKey As String) As Boolean
-        If concepts Is Nothing OrElse String.IsNullOrWhiteSpace(categoryKey) Then Return False
-        Dim key = CategoryNormalization.NormalizeCategoryKey(categoryKey)
-        Return concepts.Any(Function(c) CategoryNormalization.NormalizeCategoryKey(c.Category) = key)
+    Public Function HasAcquiredCategory(concepts As IList(Of Models.Concept), categoryName As String) As Boolean
+        If concepts Is Nothing OrElse String.IsNullOrWhiteSpace(categoryName) Then Return False
+        Return concepts.Any(Function(c) c.Category = categoryName)
     End Function
 
     Public Function FindAcquiredAgeYears(concepts As IList(Of Models.Concept)) As Integer?
         If concepts Is Nothing Then Return Nothing
         For Each concept In concepts
-            If Not IsAgeConcept(concept) Then Continue For
+            If concept.Kind <> Models.ConceptKind.Vincolo Then Continue For
             Dim age = ResolveTurnAge.ParseAgeYearsFromConcept(concept)
             If age.HasValue Then Return age
         Next
@@ -75,18 +67,6 @@ Public Module ConceptOps
 
     Public Function AcquiredCount(concepts As IList(Of Models.Concept)) As Integer
         Return If(concepts?.Count, 0)
-    End Function
-
-    ''' <summary>Legacy: category key → value map for disambiguation helpers.</summary>
-    Public Function AcquiredCategoryKeys(concepts As IList(Of Models.Concept)) As HashSet(Of String)
-        Dim keys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
-        If concepts Is Nothing Then Return keys
-        For Each concept In concepts
-            If concept Is Nothing Then Continue For
-            Dim key = CategoryNormalization.NormalizeCategoryKey(concept.Category)
-            If Not String.IsNullOrEmpty(key) Then keys.Add(key)
-        Next
-        Return keys
     End Function
 
 End Module

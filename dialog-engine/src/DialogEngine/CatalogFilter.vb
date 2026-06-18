@@ -11,17 +11,11 @@ Public Module CatalogFilter
             Return New List(Of Models.CatalogItem)()
         End If
 
-        Dim concepts = AcquiredFromConversation(conversation)
-        If concepts.Count = 0 Then Return New List(Of Models.CatalogItem)()
-
-        Return catalog.Items.Where(Function(item) ItemSatisfiesAllConcepts(item, concepts)).ToList()
-    End Function
-
-    Private Function AcquiredFromConversation(conversation As Models.AgentSessionState) As List(Of Models.Concept)
-        If conversation Is Nothing OrElse conversation.AcquiredConcepts Is Nothing Then
-            Return New List(Of Models.Concept)()
+        If conversation Is Nothing OrElse conversation.AcquiredConcepts Is Nothing OrElse conversation.AcquiredConcepts.Count = 0 Then
+            Return New List(Of Models.CatalogItem)()
         End If
-        Return conversation.AcquiredConcepts
+
+        Return catalog.Items.Where(Function(item) ItemSatisfiesAllConcepts(item, conversation.AcquiredConcepts)).ToList()
     End Function
 
     Public Function ItemSatisfiesAllConcepts(
@@ -41,23 +35,20 @@ Public Module CatalogFilter
 
     Public Function ItemSatisfiesConcept(item As Models.CatalogItem, concept As Models.Concept) As Boolean
         If item Is Nothing OrElse concept Is Nothing Then Return False
+        If String.IsNullOrWhiteSpace(concept.Category) Then Return False
 
-        Dim categoryKey = CategoryNormalization.NormalizeCategoryKey(concept.Category)
-        If String.IsNullOrEmpty(categoryKey) Then Return False
-
-        If ConceptOps.IsVincoloConcept(concept) OrElse ConceptOps.IsAgeConcept(concept) Then
-            Return ItemSatisfiesAgeConcept(item, concept.Value)
+        If concept.Kind = Models.ConceptKind.Vincolo Then
+            Return ItemSatisfiesVincoloConcept(item, concept.Value)
         End If
 
         Return item.Concepts.Any(
-            Function(c) BundleAccess.IsAttributoConcept(c) AndAlso
-                        CategoryNormalization.NormalizeCategoryKey(c.Category) = categoryKey AndAlso
-                        CategoryNormalization.NormalizeConceptValue(c.Value) =
-                        CategoryNormalization.NormalizeConceptValue(concept.Value)
+            Function(c) (c.Kind = Models.ConceptKind.Attributo) AndAlso
+                        c.Category = concept.Category AndAlso
+                        c.Value = concept.Value
         )
     End Function
 
-    Private Function ItemSatisfiesAgeConcept(item As Models.CatalogItem, value As String) As Boolean
+    Private Function ItemSatisfiesVincoloConcept(item As Models.CatalogItem, value As String) As Boolean
         Dim age = ResolveTurnAge.ParseAgeYearsFromSlotValue(value)
         If Not age.HasValue Then Return True
         Return ConstraintValidation.PathSatisfiesAgeConstraints(age.Value, item.AgeConstraints)

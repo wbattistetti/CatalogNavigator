@@ -1,5 +1,5 @@
 /**
- * NLU question rules: sibling choice, prefix-ambiguity disambiguation, structural passthrough.
+ * NLU question rules: sibling choice, vincolo age questions, structural passthrough.
  */
 import type { AnalysisRow } from '../hooks/useAnalysis';
 import {
@@ -14,16 +14,14 @@ import {
   isCategoryGrammarsLayerReady,
 } from './categoryGrammar';
 import {
-  buildPrefixDisambiguationQuestion,
+  isItemSlot,
   isTerminalItemSlot,
   resolveItemPaths,
 } from './itemPaths';
 import { AGE_YEARS_QUESTION } from './constraintValidation';
 import type { TokenCategory } from './dictionaryTree';
 import {
-  getPrefixAmbiguityTargets,
   getSiblingChoiceChildren,
-  hasAttributoPrefixAmbiguity,
   requiresCategoryAwareInteractiveNode,
   requiresVincoloSegmentQuestionNode,
 } from './nluCategoryRules';
@@ -85,7 +83,7 @@ export function invalidateNluAtSlots(
   });
 }
 
-/** True when an internal node is structural-only (single child, not prefix-ambiguous). */
+/** True when an internal node is structural-only (single child, no disambiguation). */
 export function isPassthroughNode(
   slots: string[],
   slot: string,
@@ -127,16 +125,6 @@ export function applyNluQuestionRules(
     }
 
     if (isTerminalItemSlot(slot, itemPaths)) return row;
-
-    if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) {
-      if (row.question?.trim()) return row;
-      const targets = getPrefixAmbiguityTargets(slot, itemPaths, categories);
-      return {
-        ...row,
-        question: buildPrefixDisambiguationQuestion(slot, targets),
-        status: row.status ?? null,
-      };
-    }
 
     const children = getSiblingChoiceChildren(slots, slot, categories);
     if (!children || children.length < 2) {

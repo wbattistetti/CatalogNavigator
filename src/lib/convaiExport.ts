@@ -31,9 +31,7 @@ import {
 } from './convaiPromptDebugTrace';
 import { buildInteractiveMessageFallback } from './messageAssembly';
 import {
-  getPrefixAmbiguityTargets,
   getSiblingChoiceChildren,
-  hasAttributoPrefixAmbiguity,
   requiresVincoloSegmentQuestionNode,
 } from './nluCategoryRules';
 import { requiresInteractiveNode } from './nluQuestionRules';
@@ -88,7 +86,7 @@ export interface ConvaiCorpusItem {
   unmatched: string[];
 }
 
-export type ConvaiInteractiveNodeType = 'sibling_choice' | 'prefix_ambiguity';
+export type ConvaiInteractiveNodeType = 'sibling_choice';
 
 export interface ConvaiInteractiveNode {
   slot: string;
@@ -99,8 +97,6 @@ export interface ConvaiInteractiveNode {
    */
   prompt_hint: string;
   children?: string[];
-  parent_item?: string;
-  child_items?: string[];
 }
 
 export interface ConvaiLeafData {
@@ -243,17 +239,6 @@ function buildInteractiveNodes(
         type: 'sibling_choice',
         prompt_hint: promptHint,
         children: [],
-      });
-      continue;
-    }
-
-    if (hasAttributoPrefixAmbiguity(slots, slot, itemPaths, categories)) {
-      nodes.push({
-        slot,
-        type: 'prefix_ambiguity',
-        prompt_hint: promptHint,
-        parent_item: slot,
-        child_items: getPrefixAmbiguityTargets(slot, itemPaths, categories),
       });
       continue;
     }
@@ -438,7 +423,7 @@ export function compileConvaiSystemPrompt(input: ConvaiSystemPromptInput): strin
     '2. NON costruire path nuovi: scegli solo tra item_paths definiti nell\'ontologia.',
     '3. Per ogni item_path conta quanti segmenti/nodi del path sono evidenziati nel testo (usa corpus_items.segments come riferimento ordinato).',
     '4. Vince l\'item con il conteggio più alto.',
-    '5. Se padre-item e figlio-item hanno lo stesso conteggio → preferisci il padre-item (prefix ambiguity).',
+    '5. In caso di parità, preferisci il path con meno segmenti (più specifico nel corpus).',
     '6. Accumula le frasi dell\'utente nel corso della conversazione prima di ricalcolare il match.',
     '',
     'VINCOLI (segmenti con category_type = vincolo)',
@@ -449,7 +434,7 @@ export function compileConvaiSystemPrompt(input: ConvaiSystemPromptInput): strin
     '11. NON chiedere "quale fascia?" tra token vincolo se l\'utente non ha ancora dato l\'età: chiedi prima l\'età, poi filtra.',
     '',
     'ATTRIBUTI E RICHIESTE GENERICHE',
-    '12. Per segmenti attributo, usa sibling_choice / prefix_ambiguity come da interactive_nodes.',
+    '12. Per segmenti attributo, usa sibling_choice come da interactive_nodes.',
     '13. Se la richiesta è generica e molti item_paths corrispondono (es. solo il tipo di esame), NON elencare tutto il catalogo.',
     '14. Usa dictionary.categories (type=attributo) per guidare: indica le dimensioni ancora mancanti e 2–3 esempi concreti da corpus_items o leaf_data.source_text.',
     '15. Chiedi una dimensione attributo alla volta, rispettando category.order.',
@@ -457,17 +442,16 @@ export function compileConvaiSystemPrompt(input: ConvaiSystemPromptInput): strin
     'FORMULAZIONE VOCALE (prompt_hint)',
     '- interactive_nodes[].prompt_hint è una bozza secca creata a design time: NON leggerla parola per parola.',
     '- Riformulala in italiano parlato, naturale e asciutto (massimo 2 frasi).',
-    '- Mantieni invariato: dimensione da chiedere, opzioni ammesse (children / child_items), significato clinico.',
+    '- Mantieni invariato: dimensione da chiedere, opzioni ammesse (children), significato clinico.',
     '- Le opzioni ammesse sono SOLO quelle strutturali nel nodo; non aggiungerne altre.',
     '- start_question e leaf_data.confirmation_text sono anch\'essi bozze parafrasabili, non script rigidi.',
     '',
     'NAVIGAZIONE DIALOGO',
-    '16. Nodo con un solo figlio e NON prefix_ambiguity → trasparente, prosegui senza domanda.',
-    '17. prefix_ambiguity (padre-item + figlio-item) → disambigua usando prompt_hint del nodo PADRE.',
-    '18. sibling_choice (2+ figli) → disambigua usando prompt_hint del nodo corrispondente.',
-    '19. Item terminale → conferma usando leaf_data.confirmation_text come bozza (prefisso opzionale da confirmation_preamble).',
-    '20. Se non capisci la risposta: ripeti con formulazione diversa e più semplice; non elencare tutto il catalogo.',
-    '21. Tieni traccia del nodo interattivo corrente (currentPath) e se stai attendendo una disambiguazione.',
+    '16. Nodo con un solo figlio → trasparente, prosegui senza domanda.',
+    '17. sibling_choice (2+ figli) → disambigua usando prompt_hint del nodo corrispondente.',
+    '18. Item terminale → conferma usando leaf_data.confirmation_text come bozza (prefisso opzionale da confirmation_preamble).',
+    '19. Se non capisci la risposta: ripeti con formulazione diversa e più semplice; non elencare tutto il catalogo.',
+    '20. Tieni traccia del nodo interattivo corrente (currentPath) e se stai attendendo una disambiguazione.',
     ...formatConvaiDebugTraceLines(),
     ...formatConstraintCategoryHints(input.categories ?? []),
   ];

@@ -1,17 +1,14 @@
 /**
- * Tests for category-aware NLU sibling and prefix rules.
+ * Tests for category-aware NLU sibling and vincolo rules.
  */
 import { describe, expect, it } from 'vitest';
 import type { TokenCategory } from './dictionaryTree';
 import {
   findSiblingChoiceGroup,
   getSiblingChoiceChildren,
-  getPrefixAmbiguityTargets,
-  hasAttributoPrefixAmbiguity,
   requiresCategoryAwareInteractiveNode,
   requiresVincoloSegmentQuestionNode,
 } from './nluCategoryRules';
-import { isPrefixAmbiguityNode } from './itemPaths';
 import { applyNluQuestionRules } from './nluQuestionRules';
 import { AGE_YEARS_QUESTION } from './constraintValidation';
 
@@ -64,8 +61,7 @@ describe('findSiblingChoiceGroup', () => {
 });
 
 describe('requiresCategoryAwareInteractiveNode', () => {
-  it('does not mark controllo interactive when only deep item extensions exist', () => {
-    expect(isPrefixAmbiguityNode(slots, 'allergologica.controllo', itemPaths)).toBe(false);
+  it('does not mark controllo interactive when only deep item leaves exist', () => {
     expect(requiresCategoryAwareInteractiveNode(
       slots,
       'allergologica.controllo',
@@ -88,7 +84,7 @@ describe('requiresCategoryAwareInteractiveNode', () => {
 });
 
 describe('applyNluQuestionRules', () => {
-  it('does not build prefix question on controllo with only deep leaves', () => {
+  it('does not build question on controllo with only deep leaves', () => {
     const rows = slots.map((slot_filling) => ({
       slot_filling,
       question: null,
@@ -154,19 +150,21 @@ describe('vincolo segment messages', () => {
   ];
 
   const vincoloItemPaths = [
-    'ecodoppler.controllo',
     'ecodoppler.controllo.> 17 anni',
   ];
 
-  it('does not offer vincolo in prefix targets on controllo', () => {
-    expect(isPrefixAmbiguityNode(vincoloSlots, 'ecodoppler.controllo', vincoloItemPaths)).toBe(true);
-    expect(hasAttributoPrefixAmbiguity(vincoloSlots, 'ecodoppler.controllo', vincoloItemPaths, vincoloCategories)).toBe(false);
+  it('asks age on vincolo segment, not on controllo parent', () => {
     expect(requiresVincoloSegmentQuestionNode('ecodoppler.controllo', vincoloItemPaths, vincoloCategories)).toBe(false);
     expect(requiresVincoloSegmentQuestionNode('ecodoppler.controllo.> 17 anni', vincoloItemPaths, vincoloCategories)).toBe(true);
-    expect(getPrefixAmbiguityTargets('ecodoppler.controllo', vincoloItemPaths, vincoloCategories)).toEqual([]);
+    expect(requiresCategoryAwareInteractiveNode(
+      vincoloSlots,
+      'ecodoppler.controllo',
+      vincoloItemPaths,
+      vincoloCategories,
+    )).toBe(false);
   });
 
-  it('asks patient age on vincolo child, not on controllo parent', () => {
+  it('clears stale prefix question on controllo and asks age on vincolo child', () => {
     const rows = vincoloSlots.map((slot_filling) => ({
       slot_filling,
       question: slot_filling === 'ecodoppler.controllo'
@@ -185,43 +183,5 @@ describe('vincolo segment messages', () => {
     const vincolo = out.find((r) => r.slot_filling === 'ecodoppler.controllo.> 17 anni');
     expect(controllo?.question).toBeNull();
     expect(vincolo?.question).toBe(AGE_YEARS_QUESTION);
-  });
-
-  it('prefix question lists only attributo child when mixed with vincolo', () => {
-    const mixedSlots = [
-      'x.controllo',
-      'x.controllo.> 17 anni',
-      'x.controllo.incluso prick test',
-    ];
-    const mixedItemPaths = [
-      'x.controllo',
-      'x.controllo.> 17 anni',
-      'x.controllo.incluso prick test',
-    ];
-    const mixedCategories: TokenCategory[] = [
-      { id: 'c1', name: 'tipo', order: 0, tokenTexts: ['controllo'] },
-      { id: 'c2', name: 'fascia di età', order: 1, tokenTexts: ['> 17 anni'], type: 'vincolo' },
-      { id: 'c3', name: 'inclusione', order: 2, tokenTexts: ['incluso prick test'] },
-    ];
-
-    expect(requiresVincoloSegmentQuestionNode('x.controllo', mixedItemPaths, mixedCategories)).toBe(false);
-    expect(hasAttributoPrefixAmbiguity(mixedSlots, 'x.controllo', mixedItemPaths, mixedCategories)).toBe(true);
-    expect(getPrefixAmbiguityTargets('x.controllo', mixedItemPaths, mixedCategories)).toEqual(['x.controllo.incluso prick test']);
-
-    const rows = mixedSlots.map((slot_filling) => ({
-      slot_filling,
-      question: null,
-      grammar: null,
-      answer_grammar: null,
-      no_match_1: null,
-      no_match_2: null,
-      no_match_3: null,
-      confirmation_text: null,
-      status: null,
-    }));
-    const out = applyNluQuestionRules(mixedSlots, rows, mixedItemPaths, mixedCategories);
-    const controllo = out.find((r) => r.slot_filling === 'x.controllo');
-    expect(controllo?.question).toContain('incluso prick test');
-    expect(controllo?.question).not.toContain('> 17 anni');
   });
 });

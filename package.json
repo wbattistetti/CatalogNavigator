@@ -15,7 +15,9 @@
     "functions:serve": "supabase functions serve analyze-document --env-file supabase/functions/.env",
     "be:gateway": "tsx backend/server.ts",
     "vb:api": "dotnet run --project dialog-engine/src/DialogEngine.Api/DialogEngine.Api.csproj",
-    "db:migrate": "supabase db push"
+    "db:migrate": "supabase db push",
+    "db:seed-pharma": "tsx scripts/seed-pharma-dictionary.ts",
+    "db:populate-pharma": "tsx scripts/populate-pharma-from-csv.ts"
   },
   "dependencies": {
     "@ngrok/ngrok": "^1.4.1",

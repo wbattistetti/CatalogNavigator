@@ -105,6 +105,7 @@ function readStoredCategoriesPanelWidth(): number {
 
 function TokenRow({
   entry,
+  displayLabel,
   selected,
   dragging,
   aliasPickActive,
@@ -128,6 +129,8 @@ function TokenRow({
   onLabelDoubleClick,
 }: {
   entry: TokenEntry;
+  /** Shown when not editing; includes aliases as `canonico: syn1, syn2`. */
+  displayLabel?: string;
   selected: boolean;
   dragging?: boolean;
   aliasPickActive?: boolean;
@@ -151,6 +154,7 @@ function TokenRow({
   onLabelDoubleClick?: (e: React.MouseEvent) => void;
 }) {
   const pickable = Boolean(aliasPickActive);
+  const label = displayLabel ?? entry.text;
 
   if (editing) {
     return (
@@ -227,9 +231,9 @@ function TokenRow({
           className={`min-w-0 ${TREE_LABEL} ${
             splittingActive ? '' : 'truncate'
           } ${entry.enabled ? 'text-emerald-200/90' : 'text-emerald-400/65'}`}
-          title={splitError ?? entry.text}
+          title={splitError ?? label}
         >
-          {entry.text}
+          {label}
         </span>
         {!pickable && !splittingActive && (
           <>
@@ -672,6 +676,18 @@ export function TokenTreeEditor({
     () => tokens.filter((t) => !t.aliasOf).length,
     [tokens],
   );
+
+  const tokenDisplayLabelByText = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of tokens) {
+      if (!isCanonicalToken(t)) continue;
+      map.set(
+        t.text,
+        formatConceptEditorLine(t.text, listAliasesForCanonical(tokens, t.text)),
+      );
+    }
+    return map;
+  }, [tokens]);
 
   useEffect(() => {
     if (activeCategoryKey === NO_CATEGORY_SENTINEL) return;
@@ -1391,6 +1407,7 @@ export function TokenTreeEditor({
                       >
                         <MemoTokenRow
                           entry={entry}
+                          displayLabel={tokenDisplayLabelByText.get(text) ?? text}
                           selected={isSelected}
                           dragging={anyTokenDragActive && isSelected}
                           aliasPickActive={aliasPickActive}

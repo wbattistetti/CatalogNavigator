@@ -13,8 +13,12 @@ interface MainPanelProps {
 
 export function MainPanel({ doc, fileUrl, onDocUpdated }: MainPanelProps) {
   return (
-    <DocumentEditorProvider doc={doc} fileUrl={fileUrl} onDocUpdated={onDocUpdated}>
-      <DocumentEditorShell />
-    </DocumentEditorProvider>
+    <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
+      <DocumentEditorProvider doc={doc} fileUrl={fileUrl} onDocUpdated={onDocUpdated}>
+        <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
+          <DocumentEditorShell />
+        </div>
+      </DocumentEditorProvider>
+    </div>
   );
 }

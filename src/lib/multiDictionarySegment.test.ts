@@ -6,6 +6,10 @@ import type { TokenCategory } from './dictionaryTree';
 import type { KbDictionary } from './dictionaryLibrary';
 import {
   buildLoadedRefs,
+  findHighlightSpansFromLoadedRefs,
+  mergeAllDictionarySessionsIntoLoadedRefs,
+  segmentAllDescriptionsFromLoadedRefs,
+  segmentAllDescriptionsFromLoadedRefsAsync,
   segmentDescriptionMulti,
   type LoadedDictionaryRef,
 } from './multiDictionarySegment';
@@ -121,5 +125,95 @@ describe('segmentDescriptionMulti category order', () => {
 
     const text = 'angiologica inferiori > 17 anni';
     expect(segmentDescriptionMulti(text, loaded).path).toBe('angiologica.> 17 anni.inferiori');
+  });
+
+  it('does not match token removed from library live session', () => {
+    const categories: TokenCategory[] = [
+      { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
+      { id: 'c2', name: 'tipo visita', order: 1, tokenTexts: ['prima'] },
+    ];
+    const projectDict = makeDict('proj', categories, [
+      { text: 'cardiologica' },
+      { text: 'prima' },
+    ]);
+    const libraryDict = makeDict('lib-visite', categories, [
+      { text: 'cardiologica' },
+      { text: 'prima' },
+      { text: 'incluso eventuale ecg' },
+    ]);
+    const loaded = buildLoadedRefs([projectDict], [{ dictionary: libraryDict, sortOrder: 0 }]);
+    const liveLoaded = mergeAllDictionarySessionsIntoLoadedRefs(loaded, (id) => (
+      id === libraryDict.id
+        ? {
+          tokens: libraryDict.tokens.filter((t) => t.text !== 'incluso eventuale ecg'),
+          categories,
+        }
+        : null
+    ));
+
+    const text = 'prima visita cardiologica incluso eventuale ecg';
+    const result = segmentDescriptionMulti(text, liveLoaded);
+    expect(result.path).toBe('cardiologica.prima');
+    expect(result.segments.map((s) => s.text)).not.toContain('incluso eventuale ecg');
+    expect(result.unmatched.join(' ')).toContain('ecg');
+  });
+
+  it('description highlights match segmentation phrases for live loaded refs', () => {
+    const categories: TokenCategory[] = [
+      { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
+      { id: 'c2', name: 'tipo visita', order: 1, tokenTexts: ['prima'] },
+    ];
+    const projectDict = makeDict('proj', categories, [
+      { text: 'cardiologica' },
+      { text: 'prima' },
+    ]);
+    const loaded = buildLoadedRefs([projectDict], []);
+    const text = 'prima visita cardiologica';
+    const segmented = segmentDescriptionMulti(text, loaded).segments.map((s) => s.text);
+    const highlighted = findHighlightSpansFromLoadedRefs(text, loaded).map((s) => s.canonical);
+    expect(highlighted.sort()).toEqual(segmented.sort());
+  });
+
+  it('segmentAllDescriptionsFromLoadedRefsAsync reports progress and supports cancel', async () => {
+    const categories: TokenCategory[] = [
+      { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
+      { id: 'c2', name: 'tipo visita', order: 1, tokenTexts: ['prima'] },
+    ];
+    const projectDict = makeDict('proj', categories, [
+      { text: 'cardiologica' },
+      { text: 'prima' },
+    ]);
+    const loaded = buildLoadedRefs([projectDict], []);
+    const descriptions = Array.from({ length: 120 }, (_, i) =>
+      i % 2 === 0 ? 'prima visita cardiologica' : '  ',
+    );
+
+    const progressCalls: Array<[number, number]> = [];
+    let cancelAfter = 0;
+
+    const { leafPaths, cancelled } = await segmentAllDescriptionsFromLoadedRefsAsync(
+      descriptions,
+      loaded,
+      {
+        yieldEvery: 10,
+        onProgress: (current, total) => progressCalls.push([current, total]),
+        shouldCancel: () => {
+          cancelAfter += 1;
+          return cancelAfter > 25;
+        },
+      },
+    );
+
+    expect(cancelled).toBe(true);
+    expect(leafPaths.length).toBeGreaterThan(0);
+    expect(leafPaths.length).toBeLessThan(descriptions.filter((d) => d.trim()).length);
+    expect(progressCalls.length).toBeGreaterThan(0);
+    expect(progressCalls[0]).toEqual([0, descriptions.length]);
+
+    const syncResult = segmentAllDescriptionsFromLoadedRefs(
+      descriptions.filter((d) => d.trim()),
+      loaded,
+    );
+    expect(syncResult.leafPaths.length).toBeGreaterThan(leafPaths.length);
   });
 });

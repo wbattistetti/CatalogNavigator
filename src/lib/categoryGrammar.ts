@@ -5,7 +5,7 @@
 import type { GrammarEntry } from './analysisTypes';
 import { groupNameFromSlotSegment, normalizeGrammarEntry, validateGrammarRegex } from './grammarNormalize';
 import type { TokenCategory } from './dictionaryTree';
-import { normalizeCategoryOrders } from './dictionaryTree';
+import { normalizeCategoryOrders, syncCategoriesWithTokens } from './dictionaryTree';
 import {
   defaultSynonymsForSlot,
   escapeRegexLiteral,
@@ -223,4 +223,16 @@ export function matchCategoryGrammar(
     categoryName: category.name,
     canonicalValue: result.targetPath,
   };
+}
+
+/**
+ * Prunes category token lists and rebuilds grammars from the live token set.
+ * Call after token removal so stale regex groups (e.g. deleted "vasi") cannot match.
+ */
+export function reconcileCategoryGrammarsWithTokens(
+  categories: TokenCategory[],
+  tokens: TokenEntry[],
+): TokenCategory[] {
+  const synced = syncCategoriesWithTokens(categories, tokens);
+  return applyCategoryGrammars(synced, tokens, true);
 }

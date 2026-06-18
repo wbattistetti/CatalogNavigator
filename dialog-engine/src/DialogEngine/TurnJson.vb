@@ -55,18 +55,25 @@ Public Module TurnJson
                     If String.IsNullOrWhiteSpace(prop.Name) OrElse prop.Value.ValueKind <> JsonValueKind.String Then Continue For
                     Dim value = prop.Value.GetString()
                     If String.IsNullOrWhiteSpace(value) Then Continue For
-                    Dim kind = If(CategoryNormalization.IsAgeCategoryKey(prop.Name), "vincolo", "attributo")
+                    Dim kind = If(LegacyLooksLikeAgeCategory(prop.Name), Models.ConceptKind.Vincolo, Models.ConceptKind.Attributo)
                     concepts.Add(New Models.Concept With {
                         .Category = prop.Name,
                         .Value = value.Trim(),
                         .Kind = kind,
-                        .Unit = If(kind = "vincolo", "years", Nothing)
+                        .Unit = If((kind = Models.ConceptKind.Vincolo), "years", Nothing)
                     })
                 Next
             End If
         End If
 
         Return concepts
+    End Function
+
+    ''' <summary>Legacy session migration only — pre-bundle category names.</summary>
+    Private Function LegacyLooksLikeAgeCategory(name As String) As Boolean
+        If String.IsNullOrWhiteSpace(name) Then Return False
+        Return name.IndexOf("fascia", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso
+               name.IndexOf("et", StringComparison.OrdinalIgnoreCase) >= 0
     End Function
 
     Public Function SerializeTurnResult(result As Models.AgentTurnResult) As String

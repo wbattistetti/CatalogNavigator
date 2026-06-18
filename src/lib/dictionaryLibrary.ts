@@ -46,6 +46,10 @@ export interface CreateDictionaryInput {
   projectId?: string | null;
 }
 
+/** Metadata columns for library catalog listing (avoids downloading large token payloads). */
+const LIBRARY_CATALOG_COLUMNS =
+  'id, name, industry, industry_custom, description, scope, project_id, icon_key, icon_color, created_at, updated_at';
+
 function rowToDictionary(row: Record<string, unknown>): KbDictionary {
   return {
     id: String(row.id),
@@ -61,6 +65,25 @@ function rowToDictionary(row: Record<string, unknown>): KbDictionary {
       { categories: Array.isArray(row.categories) ? (row.categories as TokenCategory[]) : [] },
     ),
     tokens: Array.isArray(row.tokens) ? (row.tokens as TokenEntry[]) : [],
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
+}
+
+/** Library catalog row without tokens/categories (full payload loaded when linked to a project). */
+function rowToDictionaryCatalog(row: Record<string, unknown>): KbDictionary {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    industry: String(row.industry),
+    industry_custom: row.industry_custom != null ? String(row.industry_custom) : null,
+    description: row.description != null ? String(row.description) : null,
+    scope: row.scope as DictionaryScope,
+    project_id: row.project_id != null ? String(row.project_id) : null,
+    icon_key: String(row.icon_key ?? 'BookOpen'),
+    icon_color: String(row.icon_color ?? '#38bdf8'),
+    categories: [],
+    tokens: [],
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   };
@@ -111,7 +134,11 @@ export async function ensureProjectForDocument(doc: KbDocument): Promise<{
 /** Lists all library dictionaries plus project-scoped dictionaries for a project. */
 export async function listAvailableDictionaries(projectId: string): Promise<KbDictionary[]> {
   const [libRes, projRes] = await Promise.all([
-    supabase.from('kb_dictionaries').select('*').eq('scope', 'library').order('name'),
+    supabase
+      .from('kb_dictionaries')
+      .select(LIBRARY_CATALOG_COLUMNS)
+      .eq('scope', 'library')
+      .order('name'),
     supabase
       .from('kb_dictionaries')
       .select('*')
@@ -121,9 +148,13 @@ export async function listAvailableDictionaries(projectId: string): Promise<KbDi
   ]);
   if (libRes.error) throw new Error(libRes.error.message);
   if (projRes.error) throw new Error(projRes.error.message);
-  return [...(libRes.data ?? []), ...(projRes.data ?? [])].map((row) =>
+  const library = (libRes.data ?? []).map((row) =>
+    rowToDictionaryCatalog(row as Record<string, unknown>),
+  );
+  const project = (projRes.data ?? []).map((row) =>
     rowToDictionary(row as Record<string, unknown>),
   );
+  return [...library, ...project];
 }
 
 /** Project-scoped custom dictionaries owned by the project. */
@@ -247,16 +278,17 @@ export async function updateDictionary(
     payload.tokens = normalized.tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
       text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
     }));
-    payload.categories = normalized.categories.map(({
-      id: catId, name, order, tokenTexts, type, iconKey, iconColor,
-    }) => ({
-      id: catId,
-      name,
-      order,
-      tokenTexts,
-      type: normalizeCategoryType(type),
-      iconKey,
-      iconColor,
+    payload.categories = normalized.categories.map((cat) => ({
+      id: cat.id,
+      name: cat.name,
+      order: cat.order,
+      tokenTexts: cat.tokenTexts,
+      type: normalizeCategoryType(cat.type),
+      grammar: cat.grammar?.regex?.trim() ? cat.grammar : null,
+      resolution: cat.resolution ?? null,
+      valueKind: cat.valueKind === 'age_years' ? 'age_years' : null,
+      iconKey: cat.iconKey,
+      iconColor: cat.iconColor,
     }));
   }
 

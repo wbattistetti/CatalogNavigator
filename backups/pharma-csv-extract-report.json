@@ -1,0 +1,804 @@
+{
+  "generatedAt": "2026-06-17T13:47:02.131Z",
+  "dictionaryId": "6ea7daa8-f258-438c-b95f-d91bbc3be2c6",
+  "dictionaryName": "Farmaci",
+  "csvPath": "c:\\Users\\LENOVO\\Downloads\\FRM_VET_2_90_20260615.csv",
+  "totalRows": 11035,
+  "processedRows": 11035,
+  "uniqueTokens": 11926,
+  "batchesCompleted": 276,
+  "conflicts": [
+    {
+      "text": "soluzione",
+      "existing": "Indicazione clinica",
+      "incoming": "Forma farmaceutica",
+      "batch": 0
+    },
+    {
+      "text": "50 SIRINGHE DA 7.49 g",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 1
+    },
+    {
+      "text": "1 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 1
+    },
+    {
+      "text": "Ricetta in triplice copia non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Vincoli / controindicazioni",
+      "batch": 3
+    },
+    {
+      "text": "Ricetta non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Vincoli / controindicazioni",
+      "batch": 3
+    },
+    {
+      "text": "Ricetta ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Vincoli / controindicazioni",
+      "batch": 3
+    },
+    {
+      "text": "Senza obbligo di prescrizione - libera vendita",
+      "existing": "Regime di prescrizione",
+      "incoming": "Vincoli / controindicazioni",
+      "batch": 3
+    },
+    {
+      "text": "compresse",
+      "existing": "Forma farmaceutica",
+      "incoming": "Modalità di somministrazione",
+      "batch": 3
+    },
+    {
+      "text": "applicatori",
+      "existing": "Forma farmaceutica",
+      "incoming": "Modalità di somministrazione",
+      "batch": 3
+    },
+    {
+      "text": "Ricetta speciale stupefacente",
+      "existing": "Vincoli / controindicazioni",
+      "incoming": "Regime di prescrizione",
+      "batch": 3
+    },
+    {
+      "text": "10 blister da 10 compresse",
+      "existing": "Quantità confezione",
+      "incoming": "Forma di confezionamento",
+      "batch": 4
+    },
+    {
+      "text": "blister da 4 compresse",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 4
+    },
+    {
+      "text": "6 blister da 10 compresse",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 4
+    },
+    {
+      "text": "1 blister da 2 compresse",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 4
+    },
+    {
+      "text": "Ricetta ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 4
+    },
+    {
+      "text": "Ricetta non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 4
+    },
+    {
+      "text": "Ricetta in triplice copia non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 4
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "siringhe",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "scatola",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "pipette",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "scatola",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "scatola",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 5
+    },
+    {
+      "text": "60 compresse",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 5
+    },
+    {
+      "text": "100 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 5
+    },
+    {
+      "text": "1000 dosi",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 5
+    },
+    {
+      "text": "flaconcino da 100 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 5
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 6
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 6
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 6
+    },
+    {
+      "text": "flaconcini",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 6
+    },
+    {
+      "text": "flaconcini",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 6
+    },
+    {
+      "text": "flaconcino",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 6
+    },
+    {
+      "text": "1 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 6
+    },
+    {
+      "text": "senza obbligo di prescrizione",
+      "existing": "Regime di prescrizione",
+      "incoming": "Vincoli / controindicazioni",
+      "batch": 6
+    },
+    {
+      "text": "Ricetta speciale stupefacente",
+      "existing": "Vincoli / controindicazioni",
+      "incoming": "Regime di prescrizione",
+      "batch": 7
+    },
+    {
+      "text": "Ricetta ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 8
+    },
+    {
+      "text": "Ricetta non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 8
+    },
+    {
+      "text": "Senza obbligo di prescrizione",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 8
+    },
+    {
+      "text": "Ricetta in triplice copia non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 8
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 9
+    },
+    {
+      "text": "scatola",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 9
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 9
+    },
+    {
+      "text": "flacone da 20 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 9
+    },
+    {
+      "text": "spot-on",
+      "existing": "Forma farmaceutica",
+      "incoming": "Modalità di somministrazione",
+      "batch": 9
+    },
+    {
+      "text": "soluzione",
+      "existing": "Indicazione clinica",
+      "incoming": "Forma farmaceutica",
+      "batch": 10
+    },
+    {
+      "text": "iniettabile",
+      "existing": "Modalità di somministrazione",
+      "incoming": "Forma farmaceutica",
+      "batch": 10
+    },
+    {
+      "text": "flacone",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 10
+    },
+    {
+      "text": "scatola",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 10
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 10
+    },
+    {
+      "text": "10 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 10
+    },
+    {
+      "text": "100 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 10
+    },
+    {
+      "text": "50 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Dosaggio / concentrazione",
+      "batch": 10
+    },
+    {
+      "text": "soluzione",
+      "existing": "Indicazione clinica",
+      "incoming": "Forma farmaceutica",
+      "batch": 11
+    },
+    {
+      "text": "spot on",
+      "existing": "Modalità di somministrazione",
+      "incoming": "Forma farmaceutica",
+      "batch": 11
+    },
+    {
+      "text": "fiala",
+      "existing": "Forma di confezionamento",
+      "incoming": "Forma farmaceutica",
+      "batch": 11
+    },
+    {
+      "text": "iniettabile",
+      "existing": "Modalità di somministrazione",
+      "incoming": "Forma farmaceutica",
+      "batch": 11
+    },
+    {
+      "text": "scatola",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 11
+    },
+    {
+      "text": "blister",
+      "existing": "Forma farmaceutica",
+      "incoming": "Forma di confezionamento",
+      "batch": 11
+    },
+    {
+      "text": "Ricetta in triplice copia non ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 11
+    },
+    {
+      "text": "Senza obbligo di prescrizione",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 11
+    },
+    {
+      "text": "Ricetta ripetibile",
+      "existing": "Regime di prescrizione",
+      "incoming": "Modalità di somministrazione",
+      "batch": 11
+    },
+    {
+      "text": "flacone da 250 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Forma di confezionamento",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 250 ml",
+      "existing": "Quantità confezione",
+      "incoming": "Forma di confezionamento",
+      "batch": 12
+    },
+    {
+      "text": "barattolo da 1 kg",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone di plastica da 250 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "2 pipette da 1,34 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 100 g",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 1000 g",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "blister contenente 3 pipette",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 100 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "scatola da 180 cpr",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "scatola con 1 blister",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "bottiglia da 500 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 100 ml in vetro",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 50 ml in pet",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "fusto da 3000 g",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "collare per gatto",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "barattolo da 1000 g",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "sacco da 10 kg",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    },
+    {
+      "text": "flacone da 10 ml",
+      "existing": "Forma di confezionamento",
+      "incoming": "Quantità confezione",
+      "batch": 12
+    }
+  ],
+  "conflictCount": 3755,
+  "ambiguousCount": 0,
+  "categories": [
+    {
+      "category": "Principio attivo",
+      "count": 1340,
+      "samples": [
+        "2-metil-2-fenossiPropionato sodico",
+        "Acepromazina",
+        "acepromazina maleato",
+        "acetilcisteina",
+        "acetilmetionina",
+        "ACIDO ACETILSALICILICO",
+        "acido adenosin-5'-monofosforico",
+        "ACIDO ASCORBICO"
+      ]
+    },
+    {
+      "category": "Nome commerciale",
+      "count": 2671,
+      "samples": [
+        "AAGENT",
+        "ABINAC",
+        "ACA CERULEN",
+        "ACA CERULEN R",
+        "ACA CERULEN R - SPRAY AURICOLARE",
+        "ACARENE SPRAY",
+        "ACQUA PER PREPARAZIONE INIETTABILI ACME",
+        "ACQUA PER PREPARAZIONI INIETTABILI S.A.L.F."
+      ]
+    },
+    {
+      "category": "Classe terapeutica",
+      "count": 808,
+      "samples": [
+        "EXTRA-OMEOPATICI",
+        "Q102AD02",
+        "Q102AD02-BVD virus diarrea bovina",
+        "QA01AD05-ACETYLSALICYLIC ACID",
+        "QA02AF02-ORDINARY SALT COMBINATIONS AND ANTIFLATULENTS",
+        "QA02BA01-CIMETIDINE",
+        "QA02BA02-RANITIDINE",
+        "QA02BC01"
+      ]
+    },
+    {
+      "category": "Forma farmaceutica",
+      "count": 226,
+      "samples": [
+        "antisiero",
+        "applicatore spot-on",
+        "applicatori",
+        "blister",
+        "bombola spray",
+        "bottiglia",
+        "buste",
+        "bustina"
+      ]
+    },
+    {
+      "category": "Forma di confezionamento",
+      "count": 2418,
+      "samples": [
+        "0,5 mg/ml 10 flaconcini da 10 ml",
+        "0,5 MG/ML FLAC DA 980 ML DI PRODOTTO +DOSATORE 4-12 ML DI SOLUZ.",
+        "0.5 mg - 2 flaconcini da 1 ml",
+        "0.5 mg - flacone da 10 ml di sospensione orale per gatti",
+        "0.5 mg/ml - SOSPENSIONE ORALE PER GATTI IN FLACONE DA 15 ML CON UNA SIRINGA DOSATRICE DA 1 ML",
+        "1 applicatore spot-on gatti",
+        "1 BLISTER (ACLAR/PVC/ALU) DA 1 COMPRESSA MASTICABILE DA 28,3 MG",
+        "1 blister da 1 compressa"
+      ]
+    },
+    {
+      "category": "Dosaggio / concentrazione",
+      "count": 1918,
+      "samples": [
+        "0 g",
+        "0 grammo",
+        "0 grammo (I)",
+        "0 mg",
+        "0 MILLIGRAMMO",
+        "0,01 grammo",
+        "0,075 mg/ml",
+        "0,1 grammo"
+      ]
+    },
+    {
+      "category": "Quantità confezione",
+      "count": 2002,
+      "samples": [
+        "0,250 kg",
+        "0,500 kg",
+        "1 applicatore",
+        "1 applicatore da 0.74 ml",
+        "1 applicatore da 1.18 ml",
+        "1 blister",
+        "1 blister 1 cpr",
+        "1 blister 2 cpr"
+      ]
+    },
+    {
+      "category": "Indicazione clinica",
+      "count": 16,
+      "samples": [
+        "analgesia",
+        "antielmintico",
+        "dermatite",
+        "disturbi neurologici",
+        "induzione del calore",
+        "induzione del parto",
+        "infezioni",
+        "infezioni batteriche"
+      ]
+    },
+    {
+      "category": "Vincoli / controindicazioni",
+      "count": 181,
+      "samples": [
+        "ad uso esclusivo del medico veterinario",
+        "FRAZIONI:12",
+        "FRAZIONI:16",
+        "Frazioni:40",
+        "in caso di induzione del parto, la somministrazione deve essere effettuata esclusivamente dal medico veterinario",
+        "L'uso per via intrarticolare deve essere effettuato esclusivamente dal medico veterinario",
+        "L'uso per via intrarticolare deve essere effettuato esclusivamente dal medico veterinario. Uso non autorizzato in cavalle che producono latte per il consumo umano",
+        "La somministrazione del medicinale deve essere effettuata dal medico veterinario o sotto sua responsabilità"
+      ]
+    },
+    {
+      "category": "Modalità di somministrazione",
+      "count": 90,
+      "samples": [
+        "acqua da bere",
+        "applicatore corto",
+        "applicatore lungo",
+        "auricolare",
+        "collari",
+        "cutaneo",
+        "da somministrare dal medico veterinario",
+        "da somministrare nell'acqua da bere"
+      ]
+    },
+    {
+      "category": "Regime di prescrizione",
+      "count": 9,
+      "samples": [
+        "ricetta in triplice copia non ripetibile",
+        "Ricetta in triplice copia non ripetibile - libera vendita",
+        "Ricetta in triplice copia ripetibile",
+        "ricetta non ripetibile",
+        "Ricetta non ripetibile - libera vendita",
+        "ricetta ripetibile",
+        "senza obbligo di prescrizione",
+        "senza obbligo di prescrizione - libera vendita"
+      ]
+    },
+    {
+      "category": "Target paziente / fascia di età",
+      "count": 247,
+      "samples": [
+        "agnelli",
+        "animali",
+        "animali che producono latte per consumo umano",
+        "animali da compagnia",
+        "animali da reddito",
+        "animali destinati alla produzione di alimenti",
+        "animali di grande taglia",
+        "animali di grossa taglia"
+      ]
+    },
+    {
+      "category": "Indicazioni regolatorie",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "category": "Stabilità e conservazione",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "category": "Via di eliminazione / metabolismo",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "category": "Interazioni farmacologiche rilevanti",
+      "count": 0,
+      "samples": []
+    }
+  ]
+}

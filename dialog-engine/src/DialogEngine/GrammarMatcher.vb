@@ -15,11 +15,11 @@ Public Module GrammarMatcher
         Dim text = If(utterance, String.Empty).Trim().ToLowerInvariant()
         If text.Length = 0 Then Return concepts
 
-        Dim categories = CategoryNormalization.NormalizeCategoryOrders(ontology.Categories)
+        Dim categories = ontology.Categories.Where(Function(c) c IsNot Nothing).OrderBy(Function(c) c.Order)
         For Each category In categories
             If category Is Nothing Then Continue For
 
-            If String.Equals(category.Kind, "vincolo", StringComparison.OrdinalIgnoreCase) Then
+            If category.Kind = Models.ConceptKind.Vincolo Then
                 Dim vincoloConcept = MatchVincoloResolution(text, category)
                 If vincoloConcept IsNot Nothing Then concepts.Add(vincoloConcept)
                 Continue For
@@ -33,7 +33,7 @@ Public Module GrammarMatcher
             concepts.Add(New Models.Concept With {
                 .Category = category.Name,
                 .Value = canonical,
-                .Kind = "attributo"
+                .Kind = Models.ConceptKind.Attributo
             })
         Next
 
@@ -48,23 +48,7 @@ Public Module GrammarMatcher
                     .Category = category.Name,
                     .Value = quantity.Value.ToString(),
                     .Unit = quantity.Unit,
-                    .Kind = "vincolo"
-                }
-            End If
-            Return Nothing
-        End If
-
-        If category.Grammar Is Nothing OrElse String.IsNullOrWhiteSpace(category.Grammar.Regex) Then Return Nothing
-        If Not Regex.IsMatch(text, category.Grammar.Regex, RegexOptions.IgnoreCase) Then Return Nothing
-
-        If CategoryNormalization.IsAgeCategoryKey(CategoryNormalization.NormalizeCategoryKey(category.Name)) Then
-            Dim age = ConstraintValidation.ExtractAgeYearsFromText(text)
-            If age.HasValue Then
-                Return New Models.Concept With {
-                    .Category = category.Name,
-                    .Value = age.Value.ToString(),
-                    .Unit = "years",
-                    .Kind = "vincolo"
+                    .Kind = Models.ConceptKind.Vincolo
                 }
             End If
         End If
@@ -84,7 +68,7 @@ Public Module GrammarMatcher
                 For Each groupName In grammar.Mappings.Keys
                     Dim group = match.Groups(groupName)
                     If group.Success AndAlso Not String.IsNullOrEmpty(group.Value) Then
-                        Return grammar.Mappings(groupName)
+                        Return CategoryNormalization.ResolveCatalogValue(grammar.Mappings(groupName), category)
                     End If
                 Next
             End If
@@ -92,7 +76,7 @@ Public Module GrammarMatcher
             For Each group As Group In match.Groups
                 If group.Name = "0" Then Continue For
                 If group.Success AndAlso Not String.IsNullOrEmpty(group.Value) Then
-                    Return group.Value.Trim().ToLowerInvariant()
+                    Return CategoryNormalization.ResolveCatalogValue(group.Value, category)
                 End If
             Next
         Catch
