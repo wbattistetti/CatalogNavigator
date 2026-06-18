@@ -17,7 +17,7 @@ export interface GrammarEditTarget {
 
 export type RowStatus = 'approved' | 'rejected' | 'uncertain' | null;
 
-export type GeneratingPhase = 'taxonomy' | 'messages' | 'grammars' | null;
+export type GeneratingPhase = 'taxonomy' | 'messages' | 'grammars' | 'disambiguation' | null;
 
 export type OntologySyncPhase = 'segmentation' | 'building';
 
@@ -56,6 +56,8 @@ export interface AnalysisRow {
   field_meta?: MessageFieldMetaMap;
 }
 
+import type { DisambiguationPlanStorage } from './disambiguationPlanTypes';
+
 export interface Analysis {
   id: string;
   document_id: string;
@@ -63,6 +65,7 @@ export interface Analysis {
   item_paths: string[] | null;
   start_question: string | null;
   confirmation_preamble: string | null;
+  disambiguation_plan?: DisambiguationPlanStorage | null;
   created_at: string;
   updated_at: string;
 }

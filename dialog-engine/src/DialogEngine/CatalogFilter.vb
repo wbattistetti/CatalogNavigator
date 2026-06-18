@@ -3,6 +3,8 @@
 ''' </summary>
 Public Module CatalogFilter
 
+    Private ReadOnly MissingCategoryValue As String = CategoryTypes.MissingCategoryValue
+
     Public Function FilterCandidates(
         catalog As Models.Catalog,
         conversation As Models.AgentSessionState
@@ -41,6 +43,11 @@ Public Module CatalogFilter
             Return ItemSatisfiesVincoloConcept(item, concept.Value)
         End If
 
+        If String.Equals(concept.Value, CategoryTypes.MissingCategoryValue, StringComparison.OrdinalIgnoreCase) OrElse
+           CategoryTypes.IsMissingCategoryValue(concept.Value) Then
+            Return ItemMissingCategoryValue(item, concept.Category)
+        End If
+
         Return item.Concepts.Any(
             Function(c) (c.Kind = Models.ConceptKind.Attributo) AndAlso
                         c.Category = concept.Category AndAlso
@@ -52,6 +59,19 @@ Public Module CatalogFilter
         Dim age = ResolveTurnAge.ParseAgeYearsFromSlotValue(value)
         If Not age.HasValue Then Return True
         Return ConstraintValidation.PathSatisfiesAgeConstraints(age.Value, item.AgeConstraints)
+    End Function
+
+    Private Function ItemMissingCategoryValue(item As Models.CatalogItem, categoryName As String) As Boolean
+        If item Is Nothing OrElse String.IsNullOrWhiteSpace(categoryName) Then Return False
+        If item.Concepts Is Nothing OrElse item.Concepts.Count = 0 Then Return True
+
+        Dim categoryConcept = item.Concepts.FirstOrDefault(
+            Function(c) c IsNot Nothing AndAlso
+                        c.Kind = Models.ConceptKind.Attributo AndAlso
+                        String.Equals(c.Category, categoryName, StringComparison.Ordinal))
+
+        If categoryConcept Is Nothing Then Return True
+        Return String.Equals(categoryConcept.Value, MissingCategoryValue, StringComparison.OrdinalIgnoreCase)
     End Function
 
     Public Function FilterCandidatePathsByAge(

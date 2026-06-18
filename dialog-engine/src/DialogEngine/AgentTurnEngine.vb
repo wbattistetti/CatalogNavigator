@@ -94,10 +94,12 @@ Public Module AgentTurnEngine
     ) As List(Of Models.Concept)
         If String.IsNullOrWhiteSpace(transcript) Then Return New List(Of Models.Concept)()
 
-        Dim pendingOnly = IsCollectingConstraintValue(conversation)
-        Dim pendingCategory = If(pendingOnly, PendingVincoloCategoryName(conversation, bundle), Nothing)
+        Dim pendingOnly = IsCollectingPendingInput(conversation)
+        Dim pendingCategory = If(pendingOnly, PendingCategoryName(conversation, bundle), Nothing)
+        Dim pendingValueKind = If(conversation?.PendingConstraint?.ValueKind, Nothing)
+        Dim pendingAllowedTokens = ResolvePendingAllowedTokens(bundle, conversation, pendingCategory, pendingValueKind)
         Dim extracted = ConceptExtraction.ExtractConceptsFromUtterance(
-            transcript, bundle.Ontology, pendingCategory, pendingOnly)
+            transcript, bundle.Ontology, pendingCategory, pendingOnly, pendingValueKind, pendingAllowedTokens, bundle)
         Return ConceptExtraction.NormalizeExtractedConcepts(extracted, bundle.Ontology)
     End Function
 
@@ -129,12 +131,47 @@ Public Module AgentTurnEngine
         transcript As String
     ) As Models.AgentTurnResult
         Dim priorConversation = conversation
+
+        If IsDisambiguationAnswerMiss(priorConversation, conceptsThisTurn, transcript) Then
+            Dim pending = priorConversation.PendingConstraint
+            Dim categoryName = pending.CategoryName
+            Dim options = DisambiguationAnswer.ResolveOptionsForPending(bundle, priorConversation, categoryName)
+            Dim nextConversation = CloneConversationWithNoMatch(priorConversation)
+            Dim priorCandidates = AgentSlotMatch.PriorCandidates(bundle, priorConversation)
+            Dim target = New AgentSlotMatch.InferredDisambiguation With {
+                .CategoryName = categoryName,
+                .Options = options
+            }
+            Return TurnResultBuilder.Disambiguate(
+                bundle, nextConversation, conceptsThisTurn, target, AgentSlotMatch.CandidatePaths(priorCandidates))
+        End If
+
         conversation = MergeIntoConversation(bundle, conversation, conceptsThisTurn, transcript)
 
         Dim candidates = CatalogFilter.FilterCandidates(bundle.Catalog, conversation)
         Dim confirmImplicit = turn IsNot Nothing AndAlso turn.ConfirmImplicitConcepts
 
         Return NextStep(bundle, priorConversation, conversation, conceptsThisTurn, candidates, confirmImplicit)
+    End Function
+
+    Private Function IsDisambiguationAnswerMiss(
+        conversation As Models.AgentSessionState,
+        conceptsThisTurn As IList(Of Models.Concept),
+        transcript As String
+    ) As Boolean
+        If Not IsCollectingDisambiguationAnswer(conversation) Then Return False
+        If String.IsNullOrWhiteSpace(transcript) Then Return False
+        Return conceptsThisTurn Is Nothing OrElse conceptsThisTurn.Count = 0
+    End Function
+
+    Private Function CloneConversationWithNoMatch(conversation As Models.AgentSessionState) As Models.AgentSessionState
+        Return New Models.AgentSessionState With {
+            .AcquiredConcepts = ConceptOps.CloneConceptList(conversation.AcquiredConcepts),
+            .SelectedPath = conversation.SelectedPath,
+            .NoMatchCount = Math.Min(conversation.NoMatchCount + 1, 2),
+            .LastTranscript = conversation.LastTranscript,
+            .PendingConstraint = conversation.PendingConstraint
+        }
     End Function
 
     Private Function MergeIntoConversation(
@@ -196,7 +233,7 @@ Public Module AgentTurnEngine
 
         Dim disambiguation = AgentSlotMatch.FindDisambiguationTarget(bundle, candidates, conversation.AcquiredConcepts)
         If disambiguation IsNot Nothing Then
-            Return TurnResultBuilder.Disambiguate(conversation, conceptsInUtterance, disambiguation, survivingPaths)
+            Return TurnResultBuilder.Disambiguate(bundle, conversation, conceptsInUtterance, disambiguation, survivingPaths)
         End If
 
         Return TurnResultBuilder.NoMatch(
@@ -205,12 +242,21 @@ Public Module AgentTurnEngine
             candidates.Count, survivingPaths)
     End Function
 
+    Private Function IsCollectingPendingInput(conversation As Models.AgentSessionState) As Boolean
+        Return conversation IsNot Nothing AndAlso conversation.PendingConstraint IsNot Nothing
+    End Function
+
     Private Function IsCollectingConstraintValue(conversation As Models.AgentSessionState) As Boolean
-        Return conversation IsNot Nothing AndAlso conversation.PendingConstraint IsNot Nothing AndAlso
+        Return IsCollectingPendingInput(conversation) AndAlso
                String.Equals(conversation.PendingConstraint.ValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase)
     End Function
 
-    Private Function PendingVincoloCategoryName(
+    Private Function IsCollectingDisambiguationAnswer(conversation As Models.AgentSessionState) As Boolean
+        Return IsCollectingPendingInput(conversation) AndAlso
+               String.Equals(conversation.PendingConstraint.ValueKind, CategoryTypes.ValueKindCanonicalToken, StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Function PendingCategoryName(
         conversation As Models.AgentSessionState,
         bundle As Models.AgentBundle
     ) As String
@@ -221,6 +267,36 @@ Public Module AgentTurnEngine
         Dim fromBundle = CategoryTypes.FirstAgeVincoloCategory(If(bundle IsNot Nothing, bundle.Ontology, Nothing))
         If fromBundle IsNot Nothing Then Return fromBundle.Name
         Return "fascia di età"
+    End Function
+
+    Private Function ResolvePendingAllowedTokens(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState,
+        pendingCategory As String,
+        pendingValueKind As String
+    ) As IList(Of String)
+        If conversation Is Nothing OrElse String.IsNullOrWhiteSpace(pendingCategory) Then
+            Return Nothing
+        End If
+
+        Dim isDisambiguationPending =
+            String.Equals(pendingValueKind, CategoryTypes.ValueKindCanonicalToken, StringComparison.OrdinalIgnoreCase) OrElse
+            (conversation.PendingConstraint IsNot Nothing AndAlso
+             conversation.PendingConstraint.AllowedTokens IsNot Nothing AndAlso
+             conversation.PendingConstraint.AllowedTokens.Count > 0)
+
+        If Not isDisambiguationPending Then Return conversation.PendingConstraint?.AllowedTokens
+
+        Dim resolved = DisambiguationAnswer.ResolveOptionsForPending(bundle, conversation, pendingCategory)
+        If resolved.Count = 0 Then Return conversation.PendingConstraint?.AllowedTokens
+        Return resolved
+    End Function
+
+    Private Function PendingVincoloCategoryName(
+        conversation As Models.AgentSessionState,
+        bundle As Models.AgentBundle
+    ) As String
+        Return PendingCategoryName(conversation, bundle)
     End Function
 
     Private Function FinishTurn(

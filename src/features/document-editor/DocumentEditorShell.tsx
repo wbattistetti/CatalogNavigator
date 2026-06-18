@@ -7,6 +7,7 @@ import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { DocumentEditorTabStrip } from './DocumentEditorTabStrip';
 import { DocumentEditorWorkspace } from './DocumentEditorWorkspace';
 import { DocumentEditorTestRail } from './DocumentEditorTestRail';
+import { ResizableTestRail } from './ResizableTestRail';
 import { OntologyRefreshProgressBar } from './OntologyRefreshProgressBar';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 
@@ -80,7 +81,11 @@ export function DocumentEditorShell() {
         <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
           <DocumentEditorWorkspace />
         </div>
-        {showTestRail && <DocumentEditorTestRail />}
+        {showTestRail && (
+          <ResizableTestRail>
+            <DocumentEditorTestRail />
+          </ResizableTestRail>
+        )}
       </div>
     </div>
   );

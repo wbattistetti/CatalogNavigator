@@ -12,6 +12,7 @@ import type {
 } from './agentBundleTypes';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import { compileVincoloResolutionPipeline } from './vincoloResolutionPipeline';
+import { compileDisambiguationAnswerGrammar } from './disambiguationPlanMessages';
 
 function canonicalConceptValue(value: string): string {
   return value.trim().toLowerCase();
@@ -42,6 +43,17 @@ export interface VbCatalogItem {
   ageConstraints: Array<{ categoryName: string; min: number | null; max: number | null }>;
 }
 
+export interface VbDisambiguationMessage {
+  signature: string;
+  categoryName: string;
+  question: string | null;
+  noMatch1: string | null;
+  noMatch2: string | null;
+  noMatch3: string | null;
+  style: string;
+  answerGrammar?: { regex: string; mappings: Record<string, string> } | null;
+}
+
 export interface VbAgentBundlePayload {
   meta: AgentBundle['meta'];
   ontology: {
@@ -60,6 +72,10 @@ export interface VbAgentBundlePayload {
       resolution?: Record<string, unknown> | null;
     }>;
     nodes: Array<{ path: string; confirmationText: string | null }>;
+    disambiguationPlan?: {
+      computedAt: string | null;
+      messages: VbDisambiguationMessage[];
+    } | null;
   };
   catalog: {
     items: VbCatalogItem[];
@@ -128,6 +144,30 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
     return [{ path, confirmationText }];
   });
 
+  const plan = analysis.disambiguation_plan;
+  const disambiguationPlan = plan?.messages?.length
+    ? {
+      computedAt: plan.computedAt ?? null,
+      messages: plan.messages
+        .filter((m) => m.question?.trim() || (m.options?.length ?? 0) > 0)
+        .map((m) => {
+          const answerGrammar = m.answer_grammar ?? compileDisambiguationAnswerGrammar(m.options ?? []);
+          return {
+            signature: m.signature,
+            categoryName: m.categoryName,
+            question: m.question ?? null,
+            noMatch1: m.no_match_1,
+            noMatch2: m.no_match_2,
+            noMatch3: m.no_match_3,
+            style: m.style,
+            answerGrammar: answerGrammar?.regex?.trim()
+              ? { regex: answerGrammar.regex, mappings: answerGrammar.mappings }
+              : undefined,
+          };
+        }),
+    }
+    : null;
+
   const catalogItems: VbCatalogItem[] = bundle.corpusItems.map((item) => ({
     path: item.path,
     concepts: item.segments
@@ -159,6 +199,7 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
       confirmationPreamble: analysis.confirmation_preamble,
       categories: vbCategories,
       nodes,
+      disambiguationPlan,
     },
     catalog: { items: catalogItems },
   };
@@ -176,20 +217,32 @@ function convertPendingConstraintFromVb(raw: unknown): PendingSlotContract[] | n
   const valueKindRaw = typeof constraint.valueKind === 'string' ? constraint.valueKind.trim() : '';
   const description = typeof constraint.description === 'string' ? constraint.description : '';
   if (!categoryName || !isExpectedSlotValueKind(valueKindRaw)) return null;
-  return [{ categoryName, valueKind: valueKindRaw, description }];
+  const allowedTokens = Array.isArray(constraint.allowedTokens)
+    ? constraint.allowedTokens.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+    : undefined;
+  return [{
+    categoryName,
+    valueKind: valueKindRaw,
+    description,
+    ...(allowedTokens?.length ? { allowedTokens } : {}),
+  }];
 }
 
 /** Maps TS pendingExpectedInput → VB PendingConstraint shape. */
 function convertPendingConstraintToVb(
   pendingExpectedInput: PendingSlotContract[] | null | undefined,
-): Record<string, string> | null {
+): Record<string, unknown> | null {
   const pending = pendingExpectedInput?.[0];
   if (!pending?.categoryName?.trim() || !pending.valueKind) return null;
-  return {
+  const payload: Record<string, unknown> = {
     categoryName: pending.categoryName.trim(),
     valueKind: pending.valueKind,
     description: pending.description ?? '',
   };
+  if (pending.allowedTokens?.length) {
+    payload.allowedTokens = pending.allowedTokens;
+  }
+  return payload;
 }
 
 /** Maps TS session state → VB session JSON. */

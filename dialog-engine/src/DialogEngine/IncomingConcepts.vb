@@ -17,6 +17,18 @@ Public Module IncomingConcepts
         Return Not String.IsNullOrWhiteSpace(concept.Value)
     End Function
 
+    Private Function ConceptMatchesPendingDisambiguation(
+        concept As Models.Concept,
+        pending As Models.ExpectedConstraint
+    ) As Boolean
+        If pending Is Nothing Then Return False
+        If Not String.Equals(concept.Category, pending.CategoryName, StringComparison.Ordinal) Then Return False
+        If String.IsNullOrWhiteSpace(concept.Value) Then Return False
+        If pending.AllowedTokens Is Nothing OrElse pending.AllowedTokens.Count = 0 Then Return True
+        Return pending.AllowedTokens.Any(
+            Function(token) String.Equals(token?.Trim(), concept.Value.Trim(), StringComparison.OrdinalIgnoreCase))
+    End Function
+
     Public Function FilterIncomingConcepts(
         bundle As Models.AgentBundle,
         incoming As IList(Of Models.Concept),
@@ -28,6 +40,11 @@ Public Module IncomingConcepts
         If pending IsNot Nothing AndAlso
            String.Equals(pending.ValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase) Then
             Return items.Where(Function(c) ConceptMatchesPendingConstraint(c, pending)).ToList()
+        End If
+
+        If pending IsNot Nothing AndAlso
+           String.Equals(pending.ValueKind, CategoryTypes.ValueKindCanonicalToken, StringComparison.OrdinalIgnoreCase) Then
+            Return items.Where(Function(c) ConceptMatchesPendingDisambiguation(c, pending)).ToList()
         End If
 
         Return items.Where(Function(c) AgentSlotMatch.ConceptMatchesCorpusOnCandidates(bundle, candidates, c)).ToList()

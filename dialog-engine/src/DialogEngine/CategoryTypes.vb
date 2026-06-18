@@ -4,6 +4,14 @@
 Public Module CategoryTypes
 
     Public Const ValueKindAgeYears As String = "age_years"
+    Public Const ValueKindCanonicalToken As String = "canonical_token"
+
+    ''' <summary>Sentinel: path without this category segment (optional branch).</summary>
+    Public Const MissingCategoryValue As String = "none"
+
+    Public Function IsMissingCategoryValue(value As String) As Boolean
+        Return String.Equals(value?.Trim(), MissingCategoryValue, StringComparison.OrdinalIgnoreCase)
+    End Function
 
     Public Function IsAgeYearsCategory(category As Models.CategoryDefinition) As Boolean
         Return category IsNot Nothing AndAlso

@@ -16,8 +16,13 @@ import { matchGrammarInput } from './grammarMatch';
 
 export { NONE_CANONICAL };
 
+/** Runtime/catalog sentinel for "path without this category segment". */
+export function isNoneOption(option: string): boolean {
+  return option === NONE_CANONICAL || option.trim().toLowerCase() === 'none';
+}
+
 function optionGroupName(option: string, usedNames: Set<string>): string {
-  if (option === NONE_CANONICAL) return 'none';
+  if (isNoneOption(option)) return 'none';
   let base = groupNameFromSlotSegment(option) || 'opzione';
   let groupName = base;
   let suffix = 0;
@@ -30,12 +35,16 @@ function optionGroupName(option: string, usedNames: Set<string>): string {
 }
 
 function synonymsForTurnOption(option: string, optionCount: number): string[] {
-  if (option === NONE_CANONICAL) {
+  if (isNoneOption(option)) {
     return normalizeSynonymList([
       ...defaultParentAnswerSynonyms(),
       'no',
       'niente',
       'neanche',
+      'nessuno',
+      'nessuna',
+      'nessun esame',
+      'senza esame',
     ]);
   }
 

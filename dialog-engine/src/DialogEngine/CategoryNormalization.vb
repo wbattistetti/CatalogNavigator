@@ -39,6 +39,7 @@ Public Module CategoryNormalization
         Optional category As Models.CategoryDefinition = Nothing
     ) As String
         If String.IsNullOrWhiteSpace(value) Then Return String.Empty
+        If CategoryTypes.IsMissingCategoryValue(value) Then Return CategoryTypes.MissingCategoryValue
         If kind = Models.ConceptKind.Vincolo Then Return value.Trim()
         Return ResolveCatalogValue(value, category)
     End Function

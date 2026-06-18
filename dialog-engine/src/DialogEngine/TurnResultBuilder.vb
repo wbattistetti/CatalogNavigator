@@ -72,12 +72,16 @@ Public Module TurnResultBuilder
     End Function
 
     Public Function Disambiguate(
+        bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
         parsedThisTurn As IList(Of Models.Concept),
         target As AgentSlotMatch.InferredDisambiguation,
         survivingPaths As IList(Of String)
     ) As Models.AgentTurnResult
-        Return Build(
+        Dim resolved = DisambiguationCopy.ResolveDisambiguationHint(
+            bundle, conversation, target.CategoryName, target.Options)
+
+        Dim result = Build(
             conversation,
             parsedThisTurn,
             New Models.AgentTurnInstruction With {
@@ -85,8 +89,11 @@ Public Module TurnResultBuilder
                 .CategoryName = target.CategoryName,
                 .Options = target.Options.ToList()
             },
-            DialogPhrases.BuildAttributeSpokenHint(target.CategoryName, target.Options),
+            resolved.Text,
             survivingPaths)
+        result.SpokenHintSource = resolved.Source
+        result.DisambiguationSignature = resolved.Signature
+        Return result
     End Function
 
     Public Function ConfirmImplicit(

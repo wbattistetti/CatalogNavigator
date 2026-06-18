@@ -7,15 +7,29 @@ Public Module ConceptExtraction
         utterance As String,
         ontology As Models.Ontology,
         Optional pendingCategoryName As String = Nothing,
-        Optional pendingOnly As Boolean = False
+        Optional pendingOnly As Boolean = False,
+        Optional pendingValueKind As String = Nothing,
+        Optional pendingAllowedTokens As IList(Of String) = Nothing,
+        Optional bundle As Models.AgentBundle = Nothing
     ) As List(Of Models.Concept)
         Dim text = If(utterance, String.Empty).Trim()
         If String.IsNullOrWhiteSpace(text) Then Return New List(Of Models.Concept)()
 
         If pendingOnly AndAlso Not String.IsNullOrWhiteSpace(pendingCategoryName) Then
-            Dim vincoloConcept = VincoloConceptFromUtterance(text, pendingCategoryName, ontology)
-            If vincoloConcept Is Nothing Then Return New List(Of Models.Concept)()
-            Return New List(Of Models.Concept) From {vincoloConcept}
+            If String.Equals(pendingValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase) Then
+                Dim vincoloConcept = VincoloConceptFromUtterance(text, pendingCategoryName, ontology)
+                If vincoloConcept Is Nothing Then Return New List(Of Models.Concept)()
+                Return New List(Of Models.Concept) From {vincoloConcept}
+            End If
+
+            If String.Equals(pendingValueKind, CategoryTypes.ValueKindCanonicalToken, StringComparison.OrdinalIgnoreCase) OrElse
+               (pendingAllowedTokens IsNot Nothing AndAlso pendingAllowedTokens.Count > 0 AndAlso
+                Not String.Equals(pendingValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase)) Then
+                Dim disambiguationConcept = DisambiguationAnswer.ExtractConceptFromUtterance(
+                    bundle, pendingCategoryName, pendingAllowedTokens, text)
+                If disambiguationConcept Is Nothing Then Return New List(Of Models.Concept)()
+                Return New List(Of Models.Concept) From {disambiguationConcept}
+            End If
         End If
 
         Return ConceptsFromUtterance(text, ontology)

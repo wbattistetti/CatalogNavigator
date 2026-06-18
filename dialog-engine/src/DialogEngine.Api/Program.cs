@@ -239,6 +239,10 @@ app.MapPost("/api/runtime/agent-turn", async (HttpRequest request) =>
 
             spokenHint = result.SpokenHint,
 
+            spokenHintSource = result.SpokenHintSource,
+
+            disambiguationSignature = result.DisambiguationSignature,
+
             candidateCount = result.CandidateCount,
 
             candidatePaths = result.SurvivingPaths,
@@ -328,6 +332,10 @@ app.MapPost("/api/test/text-turn", async (HttpRequest request) =>
             ok = true,
 
             spokenHint = result.SpokenHint,
+
+            spokenHintSource = result.SpokenHintSource,
+
+            disambiguationSignature = result.DisambiguationSignature,
 
             selectedPath = result.NextState.SelectedPath,
 

@@ -15,9 +15,13 @@ import {
 
 const VB_ENGINE_BASE = import.meta.env.VITE_VB_ENGINE_URL ?? '/vb-engine';
 
+export type SpokenHintSource = 'disambiguation_plan' | 'disambiguation_plan_no_match' | 'template';
+
 export interface VbTextTurnResponse {
   ok: boolean;
   spokenHint?: string;
+  spokenHintSource?: SpokenHintSource | string;
+  disambiguationSignature?: string;
   selectedPath?: string | null;
   nextState?: AgentSessionState;
   instruction?: AgentTurnInstruction;
@@ -61,9 +65,16 @@ export async function postVbTextTurn(params: {
     throw new Error(body.error ?? `VB engine HTTP ${res.status}`);
   }
 
-  if (body.nextState) {
-    body.nextState = convertSessionStateFromVb(body.nextState) ?? initAgentSession();
-  }
+      if (body.nextState) {
+        body.nextState = convertSessionStateFromVb(body.nextState) ?? initAgentSession();
+      }
+      if (Array.isArray(body.parsed)) {
+        body.parsed = body.parsed.map((p) => ({
+          category: String((p as { category?: string; categoryName?: string }).category
+            ?? (p as { categoryName?: string }).categoryName ?? ''),
+          value: String((p as { value?: string }).value ?? ''),
+        }));
+      }
 
   return body;
 }

@@ -79,6 +79,10 @@ import {
 } from '../lib/taxonomyPathSync';
 import { getPathOrderingCategories } from '../lib/pathCanonicalize';
 import type { TokenCategory } from '../lib/dictionaryTree';
+import type { DisambiguationEditorRow } from '../lib/disambiguationPlanMessages';
+import { compileDisambiguationAnswerGrammar, editorRowsToStorage } from '../lib/disambiguationPlanMessages';
+import type { DisambiguationPlanStorage } from '../lib/disambiguationPlanTypes';
+import { runGenerateDisambiguationMessages } from '../lib/runGenerateDisambiguationMessages';
 import type {
   AgentGenProgress,
   Analysis,
@@ -118,24 +122,62 @@ function findDirtyRoot(deletedSlot: string, remainingRows: AnalysisRow[]): strin
   return null;
 }
 
-async function persistAnalysis(documentId: string, analysis: Analysis): Promise<Analysis> {
-  await supabase.from('kb_analyses').delete().eq('document_id', documentId);
-  const { data: inserted, error } = await supabase
-    .from('kb_analyses')
-    .insert({
-      document_id: documentId,
-      rows: analysis.rows,
-      item_paths: analysis.item_paths ?? [],
-      start_question: analysis.start_question,
-      confirmation_preamble: analysis.confirmation_preamble,
-    })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  return inserted as Analysis;
+import type { DisambiguationPlanStorage } from './disambiguationPlanTypes';
+
+function parseDisambiguationPlan(raw: unknown): DisambiguationPlanStorage | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as DisambiguationPlanStorage;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === 'object' && Array.isArray((raw as DisambiguationPlanStorage).messages)) {
+    return raw as DisambiguationPlanStorage;
+  }
+  return null;
 }
 
-function normalizeLoadedAnalysis(data: Analysis): Analysis {
+async function persistAnalysis(documentId: string, analysis: Analysis): Promise<Analysis> {
+  await supabase.from('kb_analyses').delete().eq('document_id', documentId);
+  const payload = {
+    document_id: documentId,
+    rows: analysis.rows,
+    item_paths: analysis.item_paths ?? [],
+    start_question: analysis.start_question,
+    confirmation_preamble: analysis.confirmation_preamble,
+    disambiguation_plan: analysis.disambiguation_plan ?? null,
+  };
+  const { data: inserted, error } = await supabase
+    .from('kb_analyses')
+    .insert(payload)
+    .select()
+    .single();
+  if (error) {
+    if (
+      analysis.disambiguation_plan
+      && /disambiguation_plan|column|schema cache/i.test(error.message)
+    ) {
+      throw new Error(
+        `${error.message} — Esegui la migration Supabase: npx supabase db push (colonna disambiguation_plan).`,
+      );
+    }
+    throw new Error(error.message);
+  }
+  const persisted = inserted as Analysis;
+  if (analysis.disambiguation_plan && !parseDisambiguationPlan(persisted.disambiguation_plan)) {
+    throw new Error(
+      'disambiguation_plan non salvato nel database. Applica la migration: npx supabase db push',
+    );
+  }
+  return persisted;
+}
+
+function normalizeLoadedAnalysis(
+  data: Analysis,
+  pathOrderingCategories: TokenCategory[] = [],
+): Analysis {
   const rawRows = data.rows.map((r) => ({
     ...r,
     answer_grammar: r.answer_grammar ?? null,
@@ -145,12 +187,13 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     rawRows.map((r) => r.slot_filling),
     data.item_paths ?? null,
   );
-  const rows = migrateDualGrammars(normalizeGrammarRows(rawRows), itemPaths, pathOrderingCategoriesRef.current);
+  const rows = migrateDualGrammars(normalizeGrammarRows(rawRows), itemPaths, pathOrderingCategories);
   const slots = rows.map((r) => r.slot_filling);
   return {
     ...data,
     start_question: data.start_question ?? null,
     confirmation_preamble: data.confirmation_preamble ?? 'Quindi confermo:',
+    disambiguation_plan: parseDisambiguationPlan(data.disambiguation_plan),
     item_paths: syncExplicitItemPaths(slots, data.item_paths ?? null),
     rows,
   };
@@ -182,6 +225,7 @@ function draftAnalysis(
     item_paths: resolvedItems,
     start_question: existing?.start_question ?? null,
     confirmation_preamble: existing?.confirmation_preamble ?? 'Quindi confermo:',
+    disambiguation_plan: existing?.disambiguation_plan ?? null,
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
@@ -260,7 +304,9 @@ export function useAnalysis(documentId: string) {
         return;
       }
       setError(null);
-      const loaded = data ? normalizeLoadedAnalysis(data as Analysis) : null;
+      const loaded = data
+        ? normalizeLoadedAnalysis(data as Analysis, pathOrderingCategoriesRef.current)
+        : null;
       setAnalysis((prev) => {
         if (loaded?.rows.length) return loaded;
         if (prev?.rows.length && prev.document_id === documentId) return prev;
@@ -287,7 +333,7 @@ export function useAnalysis(documentId: string) {
     setError(null);
     try {
       const persisted = await persistAnalysis(documentId, analysis);
-      setAnalysis(normalizeLoadedAnalysis(persisted));
+      setAnalysis(normalizeLoadedAnalysis(persisted, pathOrderingCategoriesRef.current));
       setAnalysisDirty(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -341,6 +387,73 @@ export function useAnalysis(documentId: string) {
       throw e;
     } finally {
       setGeneratingConfirmations(false);
+    }
+  }, [analysis]);
+
+  const updateDisambiguationPlan = useCallback((plan: DisambiguationPlanStorage) => {
+    setAnalysis((prev) => (prev ? { ...prev, disambiguation_plan: plan } : prev));
+    setAnalysisDirty(true);
+  }, []);
+
+  /** Generates fluent disambiguation copy for plan signatures (IA). */
+  const generateDisambiguationMessages = useCallback(async (
+    editorRows: DisambiguationEditorRow[],
+    documentName: string,
+    documentText?: string,
+    options?: { forceAll?: boolean; computedAt?: string | null },
+  ) => {
+    if (!analysis) return;
+    const targets = options?.forceAll
+      ? editorRows
+      : editorRows.filter((r) => !r.question?.trim());
+
+    if (targets.length === 0) return;
+
+    setGenerating(true);
+    setGeneratingPhase('disambiguation');
+    setError(null);
+    try {
+      const generated = await runGenerateDisambiguationMessages(
+        targets,
+        documentName,
+        documentText,
+        generationAbortRef.current?.signal,
+      );
+      setAnalysis((prev) => {
+        if (!prev) return prev;
+        const bySig = new Map(
+          (prev.disambiguation_plan?.messages ?? []).map((m) => [m.signature, m]),
+        );
+        for (const row of generated) {
+          bySig.set(row.signature, row);
+        }
+        const mergedRows: DisambiguationEditorRow[] = editorRows.map((row) => {
+          const saved = bySig.get(row.signature);
+          if (!saved) return row;
+          return {
+            ...row,
+            question: saved.question,
+            no_match_1: saved.no_match_1,
+            no_match_2: saved.no_match_2,
+            no_match_3: saved.no_match_3,
+            answer_grammar: saved.answer_grammar ?? row.answer_grammar ?? compileDisambiguationAnswerGrammar(row.options),
+            source: saved.source ?? 'ai',
+            status: saved.status ?? null,
+          };
+        });
+        const storage = editorRowsToStorage(
+          mergedRows,
+          options?.computedAt ?? prev.disambiguation_plan?.computedAt ?? null,
+        );
+        return { ...prev, disambiguation_plan: storage };
+      });
+      setAnalysisDirty(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setGenerating(false);
+      setGeneratingPhase(null);
     }
   }, [analysis]);
 
@@ -1360,9 +1473,9 @@ export function useAnalysis(documentId: string) {
     generatingConfirmations, error, regenError,
     messagesReady, grammarsReady, hasMessages, agentReady, hasTaxonomy, canGenerateGrammars,
     missingGrammarCount,
-    load, saveAnalysis, discardAnalysisChanges, updateAgentConfig, generateConfirmations, cancelGeneration,
+    load, saveAnalysis, discardAnalysisChanges, updateAgentConfig, updateDisambiguationPlan, generateConfirmations, cancelGeneration,
     generateTaxonomy, generateMessagesFromText, createAgentFromDictionary,
-    generateMessagesFromDictionary, generateMessagesOnly, reviewMessagesWithAi, generateGrammars, generateDictionaryCategoryGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
+    generateMessagesFromDictionary, generateMessagesOnly, generateDisambiguationMessages, reviewMessagesWithAi, generateGrammars, generateDictionaryCategoryGrammars, generateGrammarsWithAi, generateAgent, refineTaxonomy,
     updateRow, deleteRow, addRow, restructurePath,
     dirtyRoots, regeningRoots, regenSubtree, regenGrammarsSubtree, regenSubtreeFull,
     syncTaxonomyFromDictionary, syncTaxonomyFromLoadedRefs, syncTaxonomyFromLoadedRefsAsync, syncNotice, clearSyncNotice,

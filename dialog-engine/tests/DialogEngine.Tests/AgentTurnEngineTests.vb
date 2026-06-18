@@ -51,6 +51,31 @@ Public Class AgentTurnEngineTests
         Assert.Equal(New List(Of String) From {"adulto", "pediatrica"}, result.Instruction.Options)
         Assert.Contains("adulto", result.SpokenHint)
         Assert.Contains("pediatrica", result.SpokenHint)
+        Assert.Equal("template", result.SpokenHintSource)
+    End Sub
+
+    <Fact>
+    Public Sub Disambiguates_WithPlanMessage_WhenConfigured()
+        Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
+        bundle.Ontology.DisambiguationPlan = New DisambiguationPlan With {
+            .Messages = New List(Of DisambiguationMessage) From {
+                New DisambiguationMessage With {
+                    .Signature = "target||adulto|pediatrica||choice",
+                    .CategoryName = "target",
+                    .Question = "La visita è per un adulto o per un minore?",
+                    .Style = "choice"
+                }
+            }
+        }
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+            }
+        })
+        Assert.Equal("disambiguate", result.Instruction.Action)
+        Assert.Equal("La visita è per un adulto o per un minore?", result.SpokenHint)
+        Assert.Equal("disambiguation_plan", result.SpokenHintSource)
+        Assert.Equal("target||adulto|pediatrica||choice", result.DisambiguationSignature)
     End Sub
 
     <Fact>
@@ -124,6 +149,109 @@ Public Class AgentTurnEngineTests
         Assert.Equal("disambiguate", result.Instruction.Action)
         Assert.Contains("ecg", result.Instruction.CategoryName.ToLowerInvariant())
         Assert.Equal(New List(Of String) From {"ecg", "none"}, result.Instruction.Options)
+        Assert.Equal(CategoryTypes.ValueKindCanonicalToken, result.NextState.PendingConstraint.ValueKind)
+        Assert.Equal(New List(Of String) From {"ecg", "none"}, result.NextState.PendingConstraint.AllowedTokens)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsBasePath_WhenOptionalCategoryDeclinedViaText()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "no")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima", result.NextState.SelectedPath)
+        Assert.Contains("Visita cardiologica prima", result.SpokenHint)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsExtendedPath_WhenOptionalCategoryAcceptedViaText()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "sì")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima.ecg", result.NextState.SelectedPath)
+        Assert.Contains("ECG", result.SpokenHint)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsExtendedPath_WhenOptionalCategoryNamedViaText()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "ecg")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima.ecg", result.NextState.SelectedPath)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsBasePath_WhenOptionalCategoryDeclinedViaNessuno()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "nessuno")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima", result.NextState.SelectedPath)
+        Assert.True(result.NextState.AcquiredConcepts.Any(
+            Function(ac) ac.Category = "ECG" AndAlso ac.Value = CategoryTypes.MissingCategoryValue))
+    End Sub
+
+    <Fact>
+    Public Sub ParsesSiAsCanonicalToken_WhenPendingDisambiguation()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "si")
+        Assert.Single(result.Parsed)
+        Assert.Equal("ECG", result.Parsed(0).Category)
+        Assert.Equal("ecg", result.Parsed(0).Value)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsAdultPath_WhenDisambiguationAnswerMatchesChoice()
+        Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "adulto")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Contains("adulto", result.NextState.SelectedPath)
+    End Sub
+
+    <Fact>
+    Public Sub Disambiguate_IncludesExpectedInputContract()
+        Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+            }
+        })
+        Assert.Equal("canonical_token", result.Instruction.ExpectedConstraints(0).ValueKind)
+        Assert.Equal("target", result.Instruction.ExpectedConstraints(0).CategoryName)
+        Assert.Equal(New List(Of String) From {"adulto", "pediatrica"}, result.Instruction.ExpectedConstraints(0).AllowedTokens)
     End Sub
 
     <Fact>

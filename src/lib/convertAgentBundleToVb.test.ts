@@ -154,4 +154,40 @@ describe('convertAgentBundleToVb', () => {
     expect(vb.catalog).toBeDefined();
     expect(vb.catalog.items.length).toBe(bundle.corpusItems.length);
   });
+
+  it('exports disambiguation plan messages when present on analysis', () => {
+    const analysis = buildAnalysis();
+    analysis.disambiguation_plan = {
+      computedAt: '2026-06-18T12:00:00.000Z',
+      messages: [{
+        signature: 'target||adulto|pediatrica||choice',
+        categoryName: 'target',
+        options: ['adulto', 'pediatrica'],
+        style: 'choice',
+        question: 'La visita è per un adulto o per un minore?',
+        no_match_1: 'Non ho capito.',
+        no_match_2: 'Può ripetere?',
+        no_match_3: 'Adulto o minore?',
+        contextCount: 1,
+      }],
+    };
+
+    const bundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary,
+      descriptions,
+      analysis,
+    });
+
+    const vb = convertAgentBundleToVb(bundle);
+
+    expect(vb.ontology.disambiguationPlan?.messages).toHaveLength(1);
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.question).toBe(
+      'La visita è per un adulto o per un minore?',
+    );
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.noMatch1).toBe('Non ho capito.');
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.regex).toBeTruthy();
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.mappings).toBeTruthy();
+  });
 });

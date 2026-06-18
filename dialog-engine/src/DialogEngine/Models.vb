@@ -64,6 +64,23 @@ Namespace Models
         Public Property ConfirmationText As String
     End Class
 
+    ''' <summary>Editable copy for one disambiguation signature (shared across contexts).</summary>
+    Public Class DisambiguationMessage
+        Public Property Signature As String
+        Public Property CategoryName As String
+        Public Property Question As String
+        Public Property NoMatch1 As String
+        Public Property NoMatch2 As String
+        Public Property NoMatch3 As String
+        Public Property Style As String
+        Public Property AnswerGrammar As CategoryGrammar
+    End Class
+
+    Public Class DisambiguationPlan
+        Public Property ComputedAt As String
+        Public Property Messages As List(Of DisambiguationMessage) = New List(Of DisambiguationMessage)()
+    End Class
+
     Public Class Ontology
         Public Property Id As String
         Public Property DocumentId As String
@@ -71,6 +88,7 @@ Namespace Models
         Public Property ConfirmationPreamble As String
         Public Property Categories As List(Of CategoryDefinition) = New List(Of CategoryDefinition)()
         Public Property Nodes As List(Of DialogNode) = New List(Of DialogNode)()
+        Public Property DisambiguationPlan As DisambiguationPlan
     End Class
 
     ' --- Catalog (prestazioni materializzate) ---
@@ -123,6 +141,7 @@ Namespace Models
         Public Property CategoryName As String
         Public Property ValueKind As String
         Public Property Description As String
+        Public Property AllowedTokens As List(Of String) = New List(Of String)()
     End Class
 
     Public Class AgentTurnInstruction
@@ -154,6 +173,9 @@ Namespace Models
         Public Property Instruction As AgentTurnInstruction
         Public Property Parsed As List(Of Concept) = New List(Of Concept)()
         Public Property SpokenHint As String
+        ''' <summary>disambiguation_plan | disambiguation_plan_no_match | template (test UI only).</summary>
+        Public Property SpokenHintSource As String
+        Public Property DisambiguationSignature As String
         Public Property CandidateCount As Integer
         Public Property SurvivingPaths As List(Of String)
         Public Property NextState As AgentSessionState
