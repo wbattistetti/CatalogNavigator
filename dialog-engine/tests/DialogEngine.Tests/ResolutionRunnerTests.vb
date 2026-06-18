@@ -1,4 +1,5 @@
 Imports DialogEngine.Models
+Imports System.Text.RegularExpressions
 Imports Xunit
 
 Public Class ResolutionRunnerTests
@@ -55,6 +56,26 @@ Public Class ResolutionRunnerTests
         Assert.NotNull(result)
         Assert.Equal(12, result.Value)
         Assert.Equal("months", result.Unit)
+    End Sub
+
+    <Fact>
+    Public Sub ResolvesCompoundWord_VentitréAnni()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim result = ResolutionRunner.Run(pipeline, "ventitré anni")
+        Assert.NotNull(result)
+        Assert.Equal(23, result.Value)
+        Assert.Equal("years", result.Unit)
+    End Sub
+
+    <Fact>
+    Public Sub WordUnitCapturePattern_UsesWordBoundaries()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim wordStep = pipeline.Steps.First(Function(s) s.Type = "word_unit_capture")
+        Assert.Contains("\bventitré\b", wordStep.Pattern)
+        Assert.Contains("\bventi\b", wordStep.Pattern)
+        Assert.Contains("ventitre", wordStep.Pattern)
+        Dim normalized = ResolutionRunner.NormalizeAgeUtterance("ventitré anni")
+        Assert.True(Regex.IsMatch(normalized, wordStep.Pattern, RegexOptions.IgnoreCase))
     End Sub
 
     <Fact>

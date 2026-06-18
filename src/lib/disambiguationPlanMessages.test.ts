@@ -132,6 +132,59 @@ describe('patchDisambiguationPlanMessage', () => {
   });
 });
 
+describe('buildVincoloAskSignature', () => {
+  it('builds per-category vincolo signature', async () => {
+    const { buildVincoloAskSignature, isVincoloAskSignature } = await import('./disambiguationPlanMessages');
+    expect(buildVincoloAskSignature('fascia di età')).toBe('vincolo||fascia di età||ask');
+    expect(isVincoloAskSignature('vincolo||fascia di età||ask')).toBe(true);
+  });
+});
+
+describe('buildDisambiguationEditorRows vincolo', () => {
+  it('includes ask_age rows from plan and dictionary vincolo categories', async () => {
+    const { buildDisambiguationEditorRows, buildVincoloAskSignature } = await import('./disambiguationPlanMessages');
+    const sig = buildVincoloAskSignature('fascia di età');
+    const plan = {
+      nodes: [{
+        key: 'k1',
+        signature: sig,
+        acquired: {},
+        ageYears: null,
+        action: 'ask_age' as const,
+        categoryName: 'fascia di età',
+        options: ['> 17 anni'],
+        style: 'ask_age' as const,
+        candidateCount: 2,
+        candidatePathsSample: [],
+      }],
+      stats: {
+        catalogItemCount: 1,
+        totalStates: 1,
+        disambiguateNodes: 0,
+        askAgeNodes: 1,
+        confirmStates: 0,
+        deadStates: 0,
+        stuckStates: 0,
+        uniqueDisambiguationBySignature: 0,
+        uniqueDisambiguationByFullKey: 0,
+        uniqueAgePatterns: 1,
+      },
+      computedAt: '2026-06-18',
+      warnings: [],
+    };
+    const rows = buildDisambiguationEditorRows(plan, null, [{
+      id: 'v1',
+      name: 'fascia di età',
+      order: 1,
+      tokenTexts: ['> 17 anni'],
+      type: 'vincolo',
+    }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.style).toBe('ask_age');
+    expect(rows[0]?.answer_grammar).toBeNull();
+  });
+});
+
 describe('buildPlanResultFromStorage', () => {
   it('builds a displayable plan from saved messages', () => {
     const plan = buildPlanResultFromStorage({

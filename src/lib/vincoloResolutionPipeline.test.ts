@@ -67,6 +67,21 @@ describe('compileAgeVincoloResolutionPipeline', () => {
     expect(runResolutionPipelineForTest(pipeline, 'dodici mesi')).toEqual({ value: 12, unit: 'months' });
   });
 
+  it('word_unit_capture alternation uses word boundaries', () => {
+    const pipeline = compileAgeVincoloResolutionPipeline();
+    const step = pipeline.steps.find((s) => s.type === 'word_unit_capture');
+    expect(step?.pattern).toMatch(/\\bventitré\\b/);
+    expect(step?.pattern).toMatch(/\\bventi\\b/);
+  });
+
+  it('resolves ventitré as 23 not 20', () => {
+    const pipeline = compileAgeVincoloResolutionPipeline();
+    expect(runResolutionPipelineForTest(pipeline, 'ventitré anni')).toEqual({
+      value: 23,
+      unit: 'years',
+    });
+  });
+
   it('resolves compound years (trentacinque anni)', () => {
     const pipeline = compileAgeVincoloResolutionPipeline();
     expect(runResolutionPipelineForTest(pipeline, 'trentacinque anni')).toEqual({

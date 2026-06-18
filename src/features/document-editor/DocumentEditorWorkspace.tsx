@@ -170,13 +170,6 @@ export function DocumentEditorWorkspace() {
               </WorkspacePanel>
             </>
           )}
-
-          <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.agent}>
-            <EditorWorkspacePanel
-              tabId={EDITOR_TAB_IDS.agent}
-              mounted={mountedTabs.has(EDITOR_TAB_IDS.agent)}
-            />
-          </WorkspacePanel>
         </>
       )}
     </div>

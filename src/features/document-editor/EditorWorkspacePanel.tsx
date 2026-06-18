@@ -4,7 +4,6 @@
 import { memo, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { DictionariesWorkspace } from '../dictionaries/DictionariesWorkspace';
-import { AgentWorkspace } from '../agent/AgentWorkspace';
 import { OntologyWorkspace } from '../ontology/OntologyWorkspace';
 import { useDocumentEditorController } from './DocumentEditorContext';
 import { DocumentWorkspace } from './DocumentWorkspace';
@@ -20,10 +19,6 @@ const MountedDictionariesWorkspace = memo(function MountedDictionariesWorkspace(
 
 const MountedOntologyWorkspace = memo(function MountedOntologyWorkspace() {
   return <OntologyWorkspace />;
-});
-
-const MountedAgentWorkspace = memo(function MountedAgentWorkspace() {
-  return <AgentWorkspace />;
 });
 
 function LoadingPlaceholder({ label }: { label: string }) {
@@ -87,12 +82,6 @@ export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
       return (
         <WorkspaceBody>
           <MountedOntologyWorkspace />
-        </WorkspaceBody>
-      );
-    case EDITOR_TAB_IDS.agent:
-      return (
-        <WorkspaceBody>
-          <MountedAgentWorkspace />
         </WorkspaceBody>
       );
     default:

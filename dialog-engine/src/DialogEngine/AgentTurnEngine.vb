@@ -217,7 +217,7 @@ Public Module AgentTurnEngine
         If AgentSlotMatch.ShouldAskAge(bundle, candidates, conversation) Then
             Dim ageCategory = CategoryTypes.FirstAgeVincoloCategory(bundle.Ontology)
             Dim categoryName = If(ageCategory IsNot Nothing, ageCategory.Name, "fascia di età")
-            Return TurnResultBuilder.AskAge(conversation, conceptsInUtterance, categoryName, survivingPaths)
+            Return TurnResultBuilder.AskAge(bundle, conversation, conceptsInUtterance, categoryName, survivingPaths)
         End If
 
         If candidates.Count = 1 Then

@@ -7,52 +7,25 @@ import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { DocumentEditorTabStrip } from './DocumentEditorTabStrip';
 import { DocumentEditorWorkspace } from './DocumentEditorWorkspace';
 import { DocumentEditorTestRail } from './DocumentEditorTestRail';
+import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
+import { DocumentEditorAgentOverlays } from './DocumentEditorAgentOverlays';
+import { AffinaTaxonomyPanel } from './AffinaTaxonomyPanel';
 import { ResizableTestRail } from './ResizableTestRail';
 import { OntologyRefreshProgressBar } from './OntologyRefreshProgressBar';
 import { EDITOR_TAB_IDS } from './editorTabIds';
+import { Loader2 } from 'lucide-react';
 
-function AgentGenerationProgress() {
+function DisambiguationGenerationProgress() {
   const { analysisApi } = useDocumentEditorController();
-  const { generating, generatingPhase, agentGenProgress } = analysisApi;
+  const { generating, generatingPhase } = analysisApi;
 
-  if (!generating || (generatingPhase !== 'messages' && generatingPhase !== 'grammars') || !agentGenProgress) {
-    return null;
-  }
+  if (!generating || generatingPhase !== 'disambiguation') return null;
 
   return (
     <div className="flex-shrink-0 px-4 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
-      <div className="flex items-center justify-between gap-2 mb-1.5 font-mono text-sm text-emerald-400/70">
-        <span>
-          {generatingPhase === 'grammars'
-            ? agentGenProgress.rootSlot === 'completato'
-              ? 'Grammatiche generate'
-              : agentGenProgress.rootSlot === 'preparazione'
-                ? 'Generazione grammatiche (istantaneo)…'
-                : `Generazione grammatiche — ${agentGenProgress.rootSlot.split('.').pop()}`
-            : 'Generazione messaggi'}{' '}
-          {generatingPhase === 'messages' && (
-            <span className="text-emerald-300">{agentGenProgress.rootSlot.split('.').pop()}</span>
-          )}
-        </span>
-        <span className="tabular-nums">
-          {generatingPhase === 'grammars' && agentGenProgress.rootSlot === 'preparazione'
-            ? '…'
-            : `${agentGenProgress.current}/${agentGenProgress.total}`}
-          {generatingPhase === 'messages' ? ' rami' : ' nodi'}
-        </span>
-      </div>
-      <div className="h-1.5 rounded-full bg-[#1a3a2a] overflow-hidden">
-        <div
-          className={`h-full transition-all duration-300 ${
-            generatingPhase === 'grammars' ? 'bg-sky-400' : 'bg-emerald-400'
-          }`}
-          style={{
-            width: `${Math.max(
-              8,
-              (agentGenProgress.current / Math.max(agentGenProgress.total, 1)) * 100,
-            )}%`,
-          }}
-        />
+      <div className="flex items-center gap-2 font-mono text-sm text-emerald-400/70">
+        <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+        Generazione messaggi dialogo con IA…
       </div>
     </div>
   );
@@ -60,10 +33,26 @@ function AgentGenerationProgress() {
 
 export function DocumentEditorShell() {
   const { activeTab } = useDocumentEditorTab();
-  const { dictionaryMode, testOpen } = useDocumentEditorController();
+  const {
+    dictionaryMode,
+    testOpen,
+    messagesPanelOpen,
+    setMessagesPanelOpen,
+    affinaOpen,
+    setAffinaOpen,
+    analysisApi,
+  } = useDocumentEditorController();
+
+  const { generating, generatingPhase, refineTaxonomy, hasTaxonomy } = analysisApi;
+
   const showTestRail = testOpen
     && dictionaryMode
-    && (activeTab === EDITOR_TAB_IDS.ontology || activeTab === EDITOR_TAB_IDS.agent);
+    && (activeTab === EDITOR_TAB_IDS.ontology || messagesPanelOpen);
+
+  const handleAffinaSubmit = (notes: string) => {
+    void refineTaxonomy(notes);
+    setAffinaOpen(false);
+  };
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
@@ -74,12 +63,25 @@ export function DocumentEditorShell() {
         <DocumentEditorToolbar />
       </div>
 
-      {activeTab === EDITOR_TAB_IDS.agent && <AgentGenerationProgress />}
+      {affinaOpen && hasTaxonomy && (
+        <AffinaTaxonomyPanel
+          onClose={() => setAffinaOpen(false)}
+          onSubmit={handleAffinaSubmit}
+          generating={generating && generatingPhase === 'taxonomy'}
+          hasTaxonomy={hasTaxonomy}
+        />
+      )}
+
+      <DisambiguationGenerationProgress />
       <OntologyRefreshProgressBar />
 
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
-          <DocumentEditorWorkspace />
+          {messagesPanelOpen ? (
+            <DocumentEditorMessagesPanel onClose={() => setMessagesPanelOpen(false)} />
+          ) : (
+            <DocumentEditorWorkspace />
+          )}
         </div>
         {showTestRail && (
           <ResizableTestRail>
@@ -87,6 +89,8 @@ export function DocumentEditorShell() {
           </ResizableTestRail>
         )}
       </div>
+
+      <DocumentEditorAgentOverlays />
     </div>
   );
 }

@@ -43,6 +43,7 @@ export function useDocumentEditorController({
 }: UseDocumentEditorControllerOptions) {
   const [dictState, setDictState] = useState<DictionaryPanelState | null>(null);
   const [affinaOpen, setAffinaOpen] = useState(false);
+  const [messagesPanelOpen, setMessagesPanelOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [convaiOpen, setConvaiOpen] = useState(false);
   const [convaiNoBeOpen, setConvaiNoBeOpen] = useState(false);
@@ -82,6 +83,7 @@ export function useDocumentEditorController({
   useEffect(() => {
     setDictState(null);
     setAffinaOpen(false);
+    setMessagesPanelOpen(false);
     setTestOpen(false);
     setConvaiOpen(false);
     setConvaiNoBeOpen(false);
@@ -402,6 +404,8 @@ export function useDocumentEditorController({
     setDictState: handleDictStateChange,
     affinaOpen,
     setAffinaOpen,
+    messagesPanelOpen,
+    setMessagesPanelOpen,
     testOpen,
     setTestOpen,
     convaiOpen,

@@ -39,7 +39,7 @@ Public Module AgeVincoloPipelineFactory
                 },
                 New Models.ResolutionStep With {
                     .Type = "regex_capture",
-                    .Pattern = "(?:ho|ha|sono|è|e|di)\s+(\d{1,3})(?:\s*(anni|anno|mesi|mese|giorni|giorno|settimane|settimana))?",
+                    .Pattern = "(?:ho|ha|sono|è|e|di)\s+(\d{1,3})(?:\s*(anni|anno|mesi|mese|giorni|giorno|settimane|settimana))?\b",
                     .ValueGroup = 1,
                     .UnitGroup = 2,
                     .UnitMap = UnitMap,
@@ -93,7 +93,7 @@ Public Module AgeVincoloPipelineFactory
                 Dim word = BuildItalianCompoundWord(tensPart.Word, onesPart.Word)
                 lexicon(word) = tensPart.Base + onesPart.Value
                 If onesPart.Word = "tre" Then
-                    lexicon(word.Normalize(NormalizationForm.FormD).Replace(ChrW(&H307), "")) = tensPart.Base + onesPart.Value
+                    lexicon(StripCombiningMarks(word)) = tensPart.Base + onesPart.Value
                 End If
             Next
         Next
@@ -118,6 +118,17 @@ Public Module AgeVincoloPipelineFactory
         Return tensWord & onesWord
     End Function
 
+    Private Function StripCombiningMarks(value As String) As String
+        Dim normalized = value.Normalize(NormalizationForm.FormD)
+        Dim builder As New StringBuilder()
+        For Each ch In normalized
+            If CharUnicodeInfo.GetUnicodeCategory(ch) <> UnicodeCategory.NonSpacingMark Then
+                builder.Append(ch)
+            End If
+        Next
+        Return builder.ToString().Normalize(NormalizationForm.FormC)
+    End Function
+
     Private Sub AddWords(target As Dictionary(Of String, Integer), source As Dictionary(Of String, Integer))
         For Each kvp In source
             target(kvp.Key) = kvp.Value
@@ -125,7 +136,9 @@ Public Module AgeVincoloPipelineFactory
     End Sub
 
     Public Function BuildAgeWordAlternation(lexicon As Dictionary(Of String, Integer)) As String
-        Return String.Join("|", lexicon.Keys.OrderByDescending(Function(w) w.Length).Select(AddressOf Regex.Escape))
+        Return String.Join("|", lexicon.Keys.
+            OrderByDescending(Function(w) w.Length).
+            Select(Function(w) "\b" & Regex.Escape(w) & "\b"))
     End Function
 
 End Module

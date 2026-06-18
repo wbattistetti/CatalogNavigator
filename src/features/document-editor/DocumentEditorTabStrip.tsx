@@ -1,7 +1,7 @@
 /**
  * Main navigation tabs — instant click switch; drag tab onto workspace to split side-by-side.
  */
-import { BookOpen, FileText, Library, Sparkles } from 'lucide-react';
+import { BookOpen, FileText, Library } from 'lucide-react';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_DRAG_MIME } from './documentEditorSplitLayout';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
@@ -15,7 +15,6 @@ const TABS: Array<{
   { id: EDITOR_TAB_IDS.document, label: 'Documento originale', icon: FileText },
   { id: EDITOR_TAB_IDS.dictionaries, label: 'Dizionari', icon: Library, dictionaryOnly: true },
   { id: EDITOR_TAB_IDS.ontology, label: 'Ontologia', icon: BookOpen, dictionaryOnly: true },
-  { id: EDITOR_TAB_IDS.agent, label: 'Agente Virtuale', icon: Sparkles },
 ];
 
 export function DocumentEditorTabStrip() {

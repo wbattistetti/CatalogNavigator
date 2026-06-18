@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { AlertTriangle, Calculator, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Calculator, Loader2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import { compileDisambiguationPlan } from '../../lib/compileDisambiguationPlan';
 
@@ -49,6 +49,12 @@ import type { DisambiguationPlanStorage } from '../../lib/disambiguationPlanType
 import { yieldToUi } from '../../lib/yieldToUi';
 
 import { DisambiguationMessagePanel } from './DisambiguationMessagePanel';
+
+function messageListTextColor(status: DisambiguationEditorRow['status']): string {
+  if (status === 'approved') return 'text-emerald-300/90';
+  if (status === 'rejected') return 'text-red-300/80';
+  return 'text-orange-300/85';
+}
 
 
 
@@ -276,6 +282,13 @@ export function DisambiguationWorkspace({
 
 
 
+  const vincoloCategories = useMemo(
+    () => (dictionary?.categories ?? []).filter((c) => c.type === 'vincolo'),
+    [dictionary?.categories],
+  );
+
+
+
   useEffect(() => {
 
     restoredPlanKeyRef.current = null;
@@ -322,7 +335,7 @@ export function DisambiguationWorkspace({
 
         setPlan(result);
 
-        const rows = buildDisambiguationEditorRows(result, analysis.disambiguation_plan);
+        const rows = buildDisambiguationEditorRows(result, analysis.disambiguation_plan, vincoloCategories);
 
         setMergeStats(summarizeFromRows(rows, analysis.disambiguation_plan));
 
@@ -358,7 +371,7 @@ export function DisambiguationWorkspace({
 
     };
 
-  }, [canCompute, analysis?.disambiguation_plan, savedPlanKey, compilePlan]);
+  }, [canCompute, analysis?.disambiguation_plan, savedPlanKey, compilePlan, vincoloCategories]);
 
 
 
@@ -366,9 +379,9 @@ export function DisambiguationWorkspace({
 
     if (!plan) return [];
 
-    return buildDisambiguationEditorRows(plan, analysis?.disambiguation_plan);
+    return buildDisambiguationEditorRows(plan, analysis?.disambiguation_plan, vincoloCategories);
 
-  }, [plan, analysis?.disambiguation_plan]);
+  }, [plan, analysis?.disambiguation_plan, vincoloCategories]);
 
 
 
@@ -390,9 +403,16 @@ export function DisambiguationWorkspace({
 
   );
 
+  const selectedVincoloCategory = useMemo(
+    () => vincoloCategories.find((c) => c.name === selectedRow?.categoryName) ?? null,
+    [vincoloCategories, selectedRow?.categoryName],
+  );
+
 
 
   const filledCount = editorRows.filter((r) => r.question?.trim()).length;
+  const validatedCount = editorRows.filter((r) => r.status === 'approved').length;
+  const rejectedCount = editorRows.filter((r) => r.status === 'rejected').length;
 
 
 
@@ -404,7 +424,7 @@ export function DisambiguationWorkspace({
 
   ) => {
 
-    const rows = buildDisambiguationEditorRows(result, previousPlan);
+    const rows = buildDisambiguationEditorRows(result, previousPlan, vincoloCategories);
 
     const { storage, stats } = mergeDisambiguationPlanAfterCompute(
 
@@ -422,7 +442,7 @@ export function DisambiguationWorkspace({
 
     setMergeStats(stats);
 
-    const mergedRows = buildDisambiguationEditorRows(result, storage);
+    const mergedRows = buildDisambiguationEditorRows(result, storage, vincoloCategories);
 
     const filled = mergedRows.filter((r) => r.question?.trim()).length;
 
@@ -438,7 +458,7 @@ export function DisambiguationWorkspace({
 
     );
 
-  }, [analysis?.id, documentId, onUpdatePlan]);
+  }, [analysis?.id, documentId, onUpdatePlan, vincoloCategories]);
 
 
 
@@ -554,7 +574,7 @@ export function DisambiguationWorkspace({
 
           <h2 className="font-mono text-sm font-bold text-emerald-300 tracking-wide uppercase">
 
-            Piano disambiguazione
+            Messaggi dialogo
 
           </h2>
 
@@ -562,7 +582,7 @@ export function DisambiguationWorkspace({
 
             {plan
 
-              ? `${filledCount}/${editorRows.length} messaggi compilati`
+              ? `${filledCount}/${editorRows.length} messaggi compilati${validatedCount > 0 || rejectedCount > 0 ? ` · ${validatedCount} validati · ${rejectedCount} da aggiustare` : ''}`
 
               : 'Calcola il piano, poi genera o modifica i messaggi'}
 
@@ -758,15 +778,29 @@ export function DisambiguationWorkspace({
 
                   return (
 
-                    <li key={row.signature}>
+                    <li key={row.signature} className="group">
 
-                      <button
+                      <div
 
-                        type="button"
+                        role="button"
+
+                        tabIndex={0}
 
                         onClick={() => setSelectedSignature(row.signature)}
 
-                        className={`w-full text-left px-3 py-2.5 font-mono text-xs transition-colors ${
+                        onKeyDown={(e) => {
+
+                          if (e.key === 'Enter' || e.key === ' ') {
+
+                            e.preventDefault();
+
+                            setSelectedSignature(row.signature);
+
+                          }
+
+                        }}
+
+                        className={`flex items-start gap-2 w-full text-left px-3 py-2.5 font-mono text-xs transition-colors cursor-pointer ${
 
                           selected
 
@@ -778,39 +812,93 @@ export function DisambiguationWorkspace({
 
                       >
 
-                        {hasQuestion ? (
+                        <span className={`flex-1 min-w-0 line-clamp-3 transition-colors ${
 
-                          <span className="text-emerald-200/85 line-clamp-3">{row.question}</span>
+                          hasQuestion ? messageListTextColor(row.status) : 'text-amber-400/60 italic'
 
-                        ) : (
+                        }`}>
 
-                          <span className="text-amber-400/60 italic">— da scrivere</span>
-
-                        )}
-
-                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
-
-                          {!hasQuestion && (
-
-                            <span className="text-[10px] text-amber-400/50 uppercase tracking-wide">nuovo</span>
-
-                          )}
-
-                          {row.source === 'ai' && hasQuestion && (
-
-                            <span className="text-[10px] text-sky-400/60 uppercase tracking-wide">IA</span>
-
-                          )}
-
-                          {row.source === 'manual' && hasQuestion && (
-
-                            <span className="text-[10px] text-emerald-400/45 uppercase tracking-wide">manuale</span>
-
-                          )}
+                          {hasQuestion ? row.question : '— da scrivere'}
 
                         </span>
 
-                      </button>
+                        {hasQuestion && (
+
+                          <span
+
+                            className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+
+                            onClick={(e) => e.stopPropagation()}
+
+                            onKeyDown={(e) => e.stopPropagation()}
+
+                          >
+
+                            <button
+
+                              type="button"
+
+                              title="Validato"
+
+                              onMouseDown={(e) => e.preventDefault()}
+
+                              onClick={() => handleSaveRow(row.signature, {
+
+                                status: row.status === 'approved' ? null : 'approved',
+
+                              })}
+
+                              className={`p-0.5 rounded transition-colors ${
+
+                                row.status === 'approved'
+
+                                  ? 'text-emerald-400'
+
+                                  : 'text-emerald-400/40 hover:text-emerald-400'
+
+                              }`}
+
+                            >
+
+                              <ThumbsUp className="w-3.5 h-3.5" />
+
+                            </button>
+
+                            <button
+
+                              type="button"
+
+                              title="Da aggiustare"
+
+                              onMouseDown={(e) => e.preventDefault()}
+
+                              onClick={() => handleSaveRow(row.signature, {
+
+                                status: row.status === 'rejected' ? null : 'rejected',
+
+                              })}
+
+                              className={`p-0.5 rounded transition-colors ${
+
+                                row.status === 'rejected'
+
+                                  ? 'text-red-400'
+
+                                  : 'text-red-400/40 hover:text-red-400'
+
+                              }`}
+
+                            >
+
+                              <ThumbsDown className="w-3.5 h-3.5" />
+
+                            </button>
+
+                          </span>
+
+                        )}
+
+                      </div>
 
                     </li>
 
@@ -850,7 +938,11 @@ export function DisambiguationWorkspace({
 
           <div className="flex-1 min-w-0 min-h-0 bg-[#0a0f0c]">
 
-            <DisambiguationMessagePanel row={selectedRow} onSave={handleSaveRow} />
+            <DisambiguationMessagePanel
+              row={selectedRow}
+              vincoloCategory={selectedVincoloCategory}
+              onSave={handleSaveRow}
+            />
 
           </div>
 

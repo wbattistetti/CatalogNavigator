@@ -32,6 +32,11 @@ REGOLE TASSATIVE:
 6. style=choice con signature che contiene "${DISAMBIGUATION_MULTI_CHOICE_MARKER}": domanda GENERICA sulla categoria (es. "Per quale specialità desidera prenotare?"), NON elencare decine di specialità.
 7. NON usare il template robotico "Per {categoria}, preferisce A o B?".
 8. Italiano formale ma caldo (Lei). Una sola domanda per question, con "?".
+9. style=ask_age (vincolo): chiedi UN solo dato grezzo dedotto dai token catalogo (es. età in anni, litri, peso).
+   - Se i token contengono "anni", "mesi", "settimane": chiedi l'età del paziente in forma naturale (es. "Quanti anni ha il paziente?").
+   - NON elencare fasce o range dal catalogo come menu ("da 6 a 15 anni", "over 17", ecc.).
+   - no_match: chiedi di rispondere con un numero (es. "Può indicare l'età in anni?").
+10. Per style=ask_age ignora opzioni/token nel testo della domanda — servono solo al motore per filtrare.
 
 IMPORTANTE: Rispondi SOLO con JSON valido.
 
@@ -58,8 +63,13 @@ export function buildDisambiguationMessagesUserMessage(
     : '';
 
   const lines = rows.map((row, index) => {
-    const opts = formatHumanOptions(row.options, row.style);
+    const opts = row.style === 'ask_age'
+      ? formatHumanOptions(row.options, row.style)
+      : formatHumanOptions(row.options, row.style);
     const id = disambiguationMessageId(index);
+    const vincoloNote = row.style === 'ask_age'
+      ? '\n  nota_vincolo: deduci il dato da chiedere dai token catalogo; non elencarli'
+      : '';
     return (
       `- id: ${id}\n` +
       `  signature: ${row.signature}\n` +
@@ -67,7 +77,8 @@ export function buildDisambiguationMessagesUserMessage(
       `  categoria: ${row.categoryName}\n` +
       `  tipo: ${row.style}\n` +
       `  opzioni: ${opts}\n` +
-      `  contesti simili: ${row.contextCount ?? 1}`
+      `  contesti simili: ${row.contextCount ?? 1}` +
+      vincoloNote
     );
   });
 
@@ -176,7 +187,9 @@ export function processDisambiguationMessagesAiResponse(
       source: 'ai',
       status: null,
       contextCount: target.contextCount,
-      answer_grammar: compileDisambiguationAnswerGrammar(target.options),
+      answer_grammar: target.style === 'ask_age'
+        ? null
+        : compileDisambiguationAnswerGrammar(target.options),
     });
   }
 

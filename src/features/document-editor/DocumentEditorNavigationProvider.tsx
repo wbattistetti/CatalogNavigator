@@ -39,7 +39,6 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
   const visibleTabs = useMemo(() => {
     const tabs = new Set<EditorTabId>([
       EDITOR_TAB_IDS.document,
-      EDITOR_TAB_IDS.agent,
     ]);
     if (controller.dictionaryMode) {
       tabs.add(EDITOR_TAB_IDS.dictionaries);

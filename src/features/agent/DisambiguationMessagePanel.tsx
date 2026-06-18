@@ -1,15 +1,31 @@
 /**
  * Detail editor for one disambiguation signature row.
  */
+import { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import type { DisambiguationEditorRow } from '../../lib/disambiguationPlanMessages';
-import { formatAcquiredContext, formatHumanOptions, formatTechnicalOptions, styleLabel } from '../../lib/disambiguationPlanMessages';
+import {
+  formatAcquiredContext,
+  formatHumanOptions,
+  formatTechnicalOptions,
+  styleLabel,
+} from '../../lib/disambiguationPlanMessages';
+import type { TokenCategory } from '../../lib/dictionaryTree';
+import { VincoloPipelinePanel } from './VincoloPipelinePanel';
+
+const META_TEXT = 'font-mono text-xs leading-relaxed';
 
 interface DisambiguationMessagePanelProps {
   row: DisambiguationEditorRow | null;
+  vincoloCategory?: TokenCategory | null;
   onSave: (signature: string, patch: Partial<DisambiguationEditorRow>) => void;
 }
 
-export function DisambiguationMessagePanel({ row, onSave }: DisambiguationMessagePanelProps) {
+export function DisambiguationMessagePanel({
+  row,
+  vincoloCategory = null,
+  onSave,
+}: DisambiguationMessagePanelProps) {
   if (!row) {
     return (
       <div className="flex items-center justify-center h-full font-mono text-sm text-emerald-400/30 p-6 text-center">
@@ -21,24 +37,35 @@ export function DisambiguationMessagePanel({ row, onSave }: DisambiguationMessag
   return (
     <div className="flex flex-col h-full min-h-0 overflow-auto p-4 gap-4">
       <div className="rounded border border-[#1a3a2a] bg-[#0d1510] px-3 py-2 space-y-1">
-        <p className="font-mono text-xs text-emerald-400/50">
+        <p className={`${META_TEXT} text-emerald-400/50`}>
           Categoria: <span className="text-emerald-300/80">{row.categoryName}</span>
         </p>
-        <p className="font-mono text-xs text-emerald-400/50">
-          Opzioni: <span className="text-emerald-200/80">{formatHumanOptions(row.options, row.style)}</span>
-          <span className="block text-[10px] text-emerald-400/35 mt-0.5">
-            {formatTechnicalOptions(row.options)}
-          </span>
-        </p>
-        <p className="font-mono text-xs text-emerald-400/50">
+        {row.style === 'ask_age' ? (
+          <VincoloTokensAccordion options={row.options} />
+        ) : (
+          <p className={`${META_TEXT} text-emerald-400/50`}>
+            Opzioni:{' '}
+            <span className="text-emerald-200/80">{formatHumanOptions(row.options, row.style)}</span>
+            {row.options.length > 0 && (
+              <span className={`block ${META_TEXT} text-emerald-400/55 mt-0.5`}>
+                {formatTechnicalOptions(row.options)}
+              </span>
+            )}
+          </p>
+        )}
+        <p className={`${META_TEXT} text-emerald-400/50`}>
           Tipo: <span className="text-emerald-200/80">{styleLabel(row.style)}</span>
           {' · '}
           {row.contextCount ?? 1} contesti
         </p>
-        <p className="font-mono text-xs text-emerald-400/50">
+        <p className={`${META_TEXT} text-emerald-400/50`}>
           Esempio contesto: <span className="text-emerald-200/70">{formatAcquiredContext(row.sampleAcquired)}</span>
         </p>
       </div>
+
+      {row.style === 'ask_age' && (
+        <VincoloPipelinePanel category={vincoloCategory} />
+      )}
 
       <Field
         label="Domanda"
@@ -69,6 +96,40 @@ export function DisambiguationMessagePanel({ row, onSave }: DisambiguationMessag
         <p className="font-mono text-xs text-emerald-400/40">
           Sorgente: {row.source}
           {row.status === 'approved' && ' · approvato'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function VincoloTokensAccordion({ options }: { options: string[] }) {
+  const [open, setOpen] = useState(false);
+  const sorted = formatTechnicalOptions(options);
+
+  if (options.length === 0) {
+    return (
+      <p className={`${META_TEXT} text-emerald-400/50`}>
+        Token vincolo: <span className="text-emerald-200/70">nessuno</span>
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 ${META_TEXT} text-emerald-400/50 hover:text-emerald-400/70 w-full text-left`}
+        aria-expanded={open}
+      >
+        <ChevronDown
+          className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? '' : '-rotate-90'}`}
+        />
+        Token vincolo ({options.length})
+      </button>
+      {open && (
+        <p className={`${META_TEXT} text-emerald-200/80 mt-1.5 pl-[18px] max-h-28 overflow-y-auto break-words`}>
+          {sorted}
         </p>
       )}
     </div>

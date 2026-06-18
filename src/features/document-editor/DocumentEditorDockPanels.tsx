@@ -4,7 +4,6 @@
 import { Loader2 } from 'lucide-react';
 import type { IDockviewPanelProps } from 'dockview';
 import { DictionariesWorkspace } from '../dictionaries/DictionariesWorkspace';
-import { AgentWorkspace } from '../agent/AgentWorkspace';
 import { OntologyWorkspace } from '../ontology/OntologyWorkspace';
 import { DockPanelRetained } from './dock/DockPanelRetained';
 import { useDocumentPanelMount } from './dock/useDocumentPanelMount';
@@ -57,19 +56,8 @@ export function OntologyDockPanel(props: IDockviewPanelProps) {
   );
 }
 
-export function AgentDockPanel(props: IDockviewPanelProps) {
-  const mounted = useDocumentPanelMount(EDITOR_TAB_IDS.agent, props.api);
-
-  return (
-    <DockPanelRetained mounted={mounted}>
-      <AgentWorkspace />
-    </DockPanelRetained>
-  );
-}
-
 export const DOCUMENT_EDITOR_DOCK_COMPONENTS = {
   document: DocumentDockPanel,
   dictionaries: DictionariesDockPanel,
   ontology: OntologyDockPanel,
-  agent: AgentDockPanel,
 } as const;

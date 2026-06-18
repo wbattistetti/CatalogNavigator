@@ -21,7 +21,6 @@ const PANEL_DEFS: Array<{
   { id: EDITOR_TAB_IDS.document, component: 'document', title: 'Documento originale' },
   { id: EDITOR_TAB_IDS.dictionaries, component: 'dictionaries', title: 'Dizionari', dictionaryOnly: true },
   { id: EDITOR_TAB_IDS.ontology, component: 'ontology', title: 'Ontologia', dictionaryOnly: true },
-  { id: EDITOR_TAB_IDS.agent, component: 'agent', title: 'Agente Virtuale' },
 ];
 
 function isEditorTabId(id: string): id is EditorTabId {

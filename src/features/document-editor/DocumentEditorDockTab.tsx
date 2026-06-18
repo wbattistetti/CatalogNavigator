@@ -1,7 +1,7 @@
 /**
  * Draggable tab chrome for main document editor dock panels.
  */
-import { BookOpen, FileText, Library, Sparkles } from 'lucide-react';
+import { BookOpen, FileText, Library } from 'lucide-react';
 import type { IDockviewPanelHeaderProps } from 'dockview';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 
@@ -12,7 +12,6 @@ const TAB_META: Record<
   [EDITOR_TAB_IDS.document]: { label: 'Documento originale', icon: FileText },
   [EDITOR_TAB_IDS.dictionaries]: { label: 'Dizionari', icon: Library },
   [EDITOR_TAB_IDS.ontology]: { label: 'Ontologia', icon: BookOpen },
-  [EDITOR_TAB_IDS.agent]: { label: 'Agente Virtuale', icon: Sparkles },
 };
 
 function isEditorTabId(id: string): id is EditorTabId {

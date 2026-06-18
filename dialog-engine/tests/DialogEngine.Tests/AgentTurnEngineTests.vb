@@ -79,6 +79,31 @@ Public Class AgentTurnEngineTests
     End Sub
 
     <Fact>
+    Public Sub AskAge_WithPlanMessage_WhenConfigured()
+        Dim bundle = TestBundleFactory.BuildCardioBundle()
+        bundle.Ontology.DisambiguationPlan = New DisambiguationPlan With {
+            .Messages = New List(Of DisambiguationMessage) From {
+                New DisambiguationMessage With {
+                    .Signature = "vincolo||fascia di età||ask",
+                    .CategoryName = "fascia di età",
+                    .Question = "Quanti anni compi il paziente?",
+                    .Style = "ask_age"
+                }
+            }
+        }
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                New Concept With {.Category = "specialità", .Value = "cardiologica"},
+                New Concept With {.Category = "tipo visita", .Value = "prima"}
+            }
+        })
+        Assert.Equal("ask_age", result.Instruction.Action)
+        Assert.Equal("Quanti anni compi il paziente?", result.SpokenHint)
+        Assert.Equal("disambiguation_plan", result.SpokenHintSource)
+        Assert.Equal("vincolo||fascia di età||ask", result.DisambiguationSignature)
+    End Sub
+
+    <Fact>
     Public Sub AskAge_IncludesExpectedInputContract()
         Dim bundle = TestBundleFactory.BuildCardioBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {

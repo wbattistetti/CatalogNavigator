@@ -193,11 +193,11 @@ function escapeRegexLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Longest-first alternation for age words (ventuno before venti). */
+/** Longest-first alternation with word boundaries on each age word. */
 export function buildAgeWordAlternation(lexicon: Record<string, number>): string {
   return Object.keys(lexicon)
     .sort((a, b) => b.length - a.length)
-    .map(escapeRegexLiteral)
+    .map((word) => String.raw`\b${escapeRegexLiteral(word)}\b`)
     .join('|');
 }
 
@@ -228,7 +228,7 @@ export function compileAgeVincoloResolutionPipeline(): VincoloResolutionPipeline
       },
       {
         type: 'regex_capture',
-        pattern: String.raw`${VERB_PREFIX}(\d{1,3})(?:\s*(${UNIT_ALT}))?`,
+        pattern: String.raw`${VERB_PREFIX}(\d{1,3})(?:\s*(${UNIT_ALT}))?\b`,
         valueGroup: 1,
         unitGroup: 2,
         unitMap: UNIT_MAP,

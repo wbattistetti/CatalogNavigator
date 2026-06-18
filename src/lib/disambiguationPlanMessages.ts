@@ -12,18 +12,37 @@ import {
   DISAMBIGUATION_MULTI_CHOICE_MARKER,
   DISAMBIGUATION_MULTI_CHOICE_THRESHOLD,
 } from './disambiguationPlanTypes';
+import type { TokenCategory } from './dictionaryTree';
 import { defaultNoMatchReplies } from './messageAssembly';
 import { compileTurnAnswerGrammar } from './turnAnswerGrammar';
+import { AGE_YEARS_QUESTION } from './constraintValidation';
 
 export interface DisambiguationEditorRow extends DisambiguationMessageRecord {
   nodeKeys: string[];
   sampleAcquired: Record<string, string>;
 }
 
+/** Compact copy key for vincolo ask steps (one row per vincolo category). */
+export function buildVincoloAskSignature(categoryName: string): string {
+  return `vincolo||${categoryName.trim()}||ask`;
+}
+
+export function isVincoloAskSignature(signature: string): boolean {
+  return signature.startsWith('vincolo||') && signature.endsWith('||ask');
+}
+
+function normalizeSavedSignature(
+  signature: string,
+  categoryName: string,
+): string {
+  if (signature === 'ask_age') return buildVincoloAskSignature(categoryName);
+  return signature;
+}
+
 function styleLabel(style: DisambiguationQuestionStyle): string {
   switch (style) {
     case 'optional_include': return 'opzionale';
-    case 'ask_age': return 'età';
+    case 'ask_age': return 'vincolo';
     default: return 'scelta';
   }
 }
@@ -40,6 +59,11 @@ export function formatHumanOptions(
   const visible = visibleOptions(options);
   if (style === 'optional_include') {
     return visible.length === 1 ? `includere «${visible[0]}»` : visible.join(' · ');
+  }
+  if (style === 'ask_age') {
+    return visible.length > 0
+      ? `token catalogo: ${visible.join(' · ')}`
+      : 'vincolo (nessun token)';
   }
   if (visible.length > DISAMBIGUATION_MULTI_CHOICE_THRESHOLD) {
     return `scelta libera (${visible.length} opzioni)`;
@@ -75,14 +99,62 @@ export function formatAcquiredContext(acquired: Record<string, string>): string 
   return entries.map(([k, v]) => `${k}=${v}`).join(', ');
 }
 
-/** Groups disambiguate nodes by signature for editor rows. */
+function buildEditorRowFromGroup(
+  signature: string,
+  group: {
+    node: DisambiguationPlanNode;
+    nodeKeys: string[];
+    sampleAcquired: Record<string, string>;
+  },
+  savedBySig: Map<string, DisambiguationMessageRecord>,
+): DisambiguationEditorRow {
+  const savedRow = savedBySig.get(signature)
+    ?? savedBySig.get('ask_age');
+  const { node, nodeKeys, sampleAcquired } = group;
+  const style = node.style ?? 'choice';
+  const options = node.options ?? [];
+  const question = savedRow?.question ?? null;
+  const noMatch = question
+    ? {
+      no_match_1: savedRow?.no_match_1 ?? defaultNoMatchReplies(question).no_match_1,
+      no_match_2: savedRow?.no_match_2 ?? defaultNoMatchReplies(question).no_match_2,
+      no_match_3: savedRow?.no_match_3 ?? defaultNoMatchReplies(question).no_match_3,
+    }
+    : {
+      no_match_1: savedRow?.no_match_1 ?? null,
+      no_match_2: savedRow?.no_match_2 ?? null,
+      no_match_3: savedRow?.no_match_3 ?? null,
+    };
+
+  return {
+    signature,
+    categoryName: node.categoryName!,
+    options,
+    style,
+    question,
+    ...noMatch,
+    answer_grammar: style === 'ask_age'
+      ? null
+      : (savedRow?.answer_grammar ?? compileDisambiguationAnswerGrammar(options)),
+    source: savedRow?.source,
+    status: savedRow?.status ?? null,
+    contextCount: nodeKeys.length,
+    nodeKeys,
+    sampleAcquired,
+  };
+}
+
+/** Groups plan nodes by signature; merges vincolo categories from dictionary. */
 export function buildDisambiguationEditorRows(
   plan: DisambiguationPlanResult,
   saved?: DisambiguationPlanStorage | null,
+  vincoloCategories: TokenCategory[] = [],
 ): DisambiguationEditorRow[] {
-  const savedBySig = new Map(
-    (saved?.messages ?? []).map((m) => [m.signature, m]),
-  );
+  const savedBySig = new Map<string, DisambiguationMessageRecord>();
+  for (const message of saved?.messages ?? []) {
+    const sig = normalizeSavedSignature(message.signature, message.categoryName);
+    savedBySig.set(sig, { ...message, signature: sig });
+  }
 
   const groups = new Map<string, {
     node: DisambiguationPlanNode;
@@ -91,53 +163,76 @@ export function buildDisambiguationEditorRows(
   }>();
 
   for (const node of plan.nodes) {
-    if (node.action !== 'disambiguate' || !node.categoryName || !node.options) continue;
-    const sig = node.signature;
-    const existing = groups.get(sig);
-    if (existing) {
-      existing.nodeKeys.push(node.key);
-    } else {
-      groups.set(sig, {
-        node,
-        nodeKeys: [node.key],
-        sampleAcquired: node.acquired,
-      });
+    if (node.action === 'disambiguate') {
+      if (!node.categoryName || !node.options) continue;
+      const sig = node.signature;
+      const existing = groups.get(sig);
+      if (existing) {
+        existing.nodeKeys.push(node.key);
+      } else {
+        groups.set(sig, {
+          node,
+          nodeKeys: [node.key],
+          sampleAcquired: node.acquired,
+        });
+      }
+      continue;
     }
+
+    if (node.action === 'ask_age' && node.categoryName) {
+      const sig = isVincoloAskSignature(node.signature)
+        ? node.signature
+        : buildVincoloAskSignature(node.categoryName);
+      const normalizedNode: DisambiguationPlanNode = {
+        ...node,
+        signature: sig,
+        style: 'ask_age',
+        options: node.options ?? [],
+      };
+      const existing = groups.get(sig);
+      if (existing) {
+        existing.nodeKeys.push(node.key);
+      } else {
+        groups.set(sig, {
+          node: normalizedNode,
+          nodeKeys: [node.key],
+          sampleAcquired: node.acquired,
+        });
+      }
+    }
+  }
+
+  for (const category of vincoloCategories) {
+    if (category.type !== 'vincolo') continue;
+    const sig = buildVincoloAskSignature(category.name);
+    if (groups.has(sig)) continue;
+    groups.set(sig, {
+      node: {
+        key: sig,
+        signature: sig,
+        acquired: {},
+        ageYears: null,
+        action: 'ask_age',
+        categoryName: category.name,
+        options: [...(category.tokenTexts ?? [])],
+        style: 'ask_age',
+        candidateCount: 0,
+        candidatePathsSample: [],
+      },
+      nodeKeys: [],
+      sampleAcquired: {},
+    });
   }
 
   return [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b, 'it'))
-    .map(([signature, group]) => {
-      const savedRow = savedBySig.get(signature);
-      const { node, nodeKeys, sampleAcquired } = group;
-      const question = savedRow?.question ?? null;
-      const noMatch = question
-        ? {
-          no_match_1: savedRow?.no_match_1 ?? defaultNoMatchReplies(question).no_match_1,
-          no_match_2: savedRow?.no_match_2 ?? defaultNoMatchReplies(question).no_match_2,
-          no_match_3: savedRow?.no_match_3 ?? defaultNoMatchReplies(question).no_match_3,
-        }
-        : {
-          no_match_1: savedRow?.no_match_1 ?? null,
-          no_match_2: savedRow?.no_match_2 ?? null,
-          no_match_3: savedRow?.no_match_3 ?? null,
-        };
+    .map(([signature, group]) => buildEditorRowFromGroup(signature, group, savedBySig));
+}
 
-      return {
-        signature,
-        categoryName: node.categoryName!,
-        options: node.options!,
-        style: node.style ?? 'choice',
-        question,
-        ...noMatch,
-        answer_grammar: savedRow?.answer_grammar ?? compileDisambiguationAnswerGrammar(node.options!),
-        source: savedRow?.source,
-        status: savedRow?.status ?? null,
-        contextCount: nodeKeys.length,
-        nodeKeys,
-        sampleAcquired,
-      };
-    });
+/** Default question copy for vincolo ask rows when none is saved. */
+export function defaultVincoloAskQuestion(categoryName: string, valueKind?: string | null): string {
+  if (valueKind === 'age_years') return AGE_YEARS_QUESTION;
+  return `Quale valore per «${categoryName}»?`;
 }
 
 export function editorRowsToStorage(
@@ -155,7 +250,9 @@ export function editorRowsToStorage(
       no_match_1: row.no_match_1,
       no_match_2: row.no_match_2,
       no_match_3: row.no_match_3,
-      answer_grammar: row.answer_grammar ?? compileDisambiguationAnswerGrammar(row.options),
+      answer_grammar: row.style === 'ask_age'
+        ? null
+        : (row.answer_grammar ?? compileDisambiguationAnswerGrammar(row.options)),
       source: row.source,
       status: row.status ?? null,
       contextCount: row.contextCount,
@@ -260,18 +357,22 @@ export function buildPlanResultFromStorage(
   storage: DisambiguationPlanStorage,
 ): DisambiguationPlanResult | null {
   if (!storage.messages.length) return null;
-  const nodes: DisambiguationPlanNode[] = storage.messages.map((m) => ({
-    key: m.signature,
-    signature: m.signature,
-    acquired: {},
-    ageYears: null,
-    action: 'disambiguate',
-    categoryName: m.categoryName,
-    options: m.options,
-    style: m.style,
-    candidateCount: m.contextCount ?? 1,
-    candidatePathsSample: [],
-  }));
+  const nodes: DisambiguationPlanNode[] = storage.messages.map((m) => {
+    const sig = normalizeSavedSignature(m.signature, m.categoryName);
+    const isVincolo = m.style === 'ask_age' || isVincoloAskSignature(sig);
+    return {
+      key: sig,
+      signature: sig,
+      acquired: {},
+      ageYears: null,
+      action: isVincolo ? 'ask_age' : 'disambiguate',
+      categoryName: m.categoryName,
+      options: m.options,
+      style: m.style,
+      candidateCount: m.contextCount ?? 1,
+      candidatePathsSample: [],
+    };
+  });
   return {
     nodes,
     stats: {

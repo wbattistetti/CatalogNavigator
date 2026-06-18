@@ -15,6 +15,8 @@ import {
 } from './disambiguationPlanTypes';
 import { normalizeCategoryOrders, type TokenCategory } from './dictionaryTree';
 import { buildCorpusItemsFromPaths, normalizeSlotCategoryKey } from './slotExtract';
+import { buildVincoloAskSignature } from './disambiguationPlanMessages';
+import { isAgeVincoloCategoryName } from './vincoloResolutionGrammar';
 
 const MISSING_VALUE = 'none';
 
@@ -54,10 +56,12 @@ export function buildPlanStateKey(state: PlanState): string {
 export function buildExplorationStateKey(
   acquired: Record<string, string>,
   candidatePaths: string[],
+  ageYears: number | null = null,
 ): string {
   const acq = sortedAcquiredEntries(acquired).map(([k, v]) => `${k}=${v}`).join('|');
+  const agePart = ageYears != null ? `||age=${ageYears}` : '';
   const paths = [...candidatePaths].sort((a, b) => a.localeCompare(b, 'it')).join('|');
-  return `${acq}||cands:${paths}`;
+  return `${acq}${agePart}||cands:${paths}`;
 }
 
 /** Runtime lookup key for a disambiguation prompt at a given state. */
@@ -232,6 +236,12 @@ function hasUnresolvedAgeVincoloAmongCandidates(
   return false;
 }
 
+function firstAgeVincoloCategory(categories: TokenCategory[]): TokenCategory | null {
+  const vincoli = categories.filter((c) => c.type === 'vincolo');
+  const age = vincoli.find((c) => c.valueKind === 'age_years' || isAgeVincoloCategoryName(c.name));
+  return age ?? vincoli[0] ?? null;
+}
+
 function shouldAskAge(
   state: PlanState,
   candidates: BundleCorpusItem[],
@@ -270,7 +280,10 @@ function decideNextStep(
     return { action: 'dead' };
   }
   if (shouldAskAge(state, candidates, categories)) {
-    return { action: 'ask_age', style: 'ask_age' };
+    const ageCat = firstAgeVincoloCategory(categories);
+    const categoryName = ageCat?.name ?? 'fascia di età';
+    const options = [...(ageCat?.tokenTexts ?? [])].sort((a, b) => a.localeCompare(b, 'it'));
+    return { action: 'ask_age', style: 'ask_age', categoryName, options };
   }
   if (candidates.length === 1) {
     return { action: 'confirm' };
@@ -357,7 +370,7 @@ function buildStats(
   const disambiguateNodes = nodes.filter((n) => n.action === 'disambiguate');
   const askAgeNodes = nodes.filter((n) => n.action === 'ask_age');
   const disambiguationSignatures = new Set(disambiguateNodes.map((n) => n.signature));
-  const askAgeSignatures = new Set(askAgeNodes.map((n) => n.key));
+  const askAgeSignatures = new Set(askAgeNodes.map((n) => n.signature));
 
   return {
     catalogItemCount,
@@ -369,7 +382,7 @@ function buildStats(
     stuckStates: terminalCounts.stuckStates,
     uniqueDisambiguationBySignature: disambiguationSignatures.size,
     uniqueDisambiguationByFullKey: disambiguateNodes.length,
-    uniqueAgePatterns: askAgeSignatures.size > 0 ? 1 : 0,
+    uniqueAgePatterns: askAgeSignatures.size,
   };
 }
 
@@ -406,7 +419,7 @@ export function compileDisambiguationPlan(
     const state = queue.shift()!;
     const candidates = filterCandidates(corpusItems, state, categories);
     const paths = candidates.map((c) => c.path);
-    const explorationKey = buildExplorationStateKey(state.acquired, paths);
+    const explorationKey = buildExplorationStateKey(state.acquired, paths, state.ageYears);
 
     if (visitedStates.has(explorationKey)) continue;
     visitedStates.add(explorationKey);
@@ -428,15 +441,20 @@ export function compileDisambiguationPlan(
     }
 
     if (step.action === 'ask_age') {
-      const key = `${stateKey}||ask_age`;
+      const categoryName = step.categoryName ?? firstAgeVincoloCategory(categories)?.name ?? 'fascia di età';
+      const options = step.options ?? [];
+      const signature = buildVincoloAskSignature(categoryName);
+      const key = `${stateKey}||ask_age||${categoryName}`;
       if (!seenDecisionKeys.has(key)) {
         seenDecisionKeys.add(key);
         decisionNodes.push({
           key,
-          signature: 'ask_age',
+          signature,
           acquired: { ...state.acquired },
           ageYears: state.ageYears,
           action: 'ask_age',
+          categoryName,
+          options,
           style: 'ask_age',
           candidateCount: candidates.length,
           candidatePathsSample: samplePaths(paths),

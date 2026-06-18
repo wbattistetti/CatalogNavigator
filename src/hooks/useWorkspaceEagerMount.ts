@@ -8,7 +8,6 @@ import { EDITOR_TAB_IDS } from '../features/document-editor/editorTabIds';
 const DICTIONARY_WORKSPACES: EditorTabId[] = [
   EDITOR_TAB_IDS.dictionaries,
   EDITOR_TAB_IDS.ontology,
-  EDITOR_TAB_IDS.agent,
 ];
 
 export function useWorkspaceEagerMount(

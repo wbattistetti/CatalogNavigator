@@ -30,6 +30,45 @@ Public Module DisambiguationCopy
         Public Property Signature As String
     End Class
 
+    Public Function BuildVincoloAskSignature(categoryName As String) As String
+        Return $"vincolo||{If(categoryName, String.Empty).Trim()}||ask"
+    End Function
+
+    Public Function ResolveVincoloAskHint(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState,
+        categoryName As String
+    ) As DisambiguationHintResolution
+        Dim signature = BuildVincoloAskSignature(categoryName)
+        Dim record = FindVincoloAskRecord(bundle, categoryName)
+
+        If conversation IsNot Nothing AndAlso conversation.NoMatchCount > 0 Then
+            Dim noMatchText = ResolveVincoloNoMatch(bundle, categoryName, conversation.NoMatchCount - 1)
+            If Not String.IsNullOrWhiteSpace(noMatchText) Then
+                Return New DisambiguationHintResolution With {
+                    .Text = noMatchText.Trim(),
+                    .Source = If(record IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(record.Question),
+                                  "disambiguation_plan_no_match", "template"),
+                    .Signature = signature
+                }
+            End If
+        End If
+
+        If record IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(record.Question) Then
+            Return New DisambiguationHintResolution With {
+                .Text = record.Question.Trim(),
+                .Source = "disambiguation_plan",
+                .Signature = signature
+            }
+        End If
+
+        Return New DisambiguationHintResolution With {
+            .Text = ConstraintValidation.AgeYearsQuestion,
+            .Source = "template",
+            .Signature = signature
+        }
+    End Function
+
     Public Function ResolveDisambiguationHint(
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
@@ -85,6 +124,52 @@ Public Module DisambiguationCopy
         noMatchCount As Integer
     ) As String
         Dim record = FindMessage(bundle, categoryName, options)
+        If record Is Nothing Then Return String.Empty
+
+        Dim reply As String = Nothing
+        Select Case Math.Max(0, Math.Min(noMatchCount, 2))
+            Case 0
+                reply = record.NoMatch1
+            Case 1
+                reply = record.NoMatch2
+            Case Else
+                reply = record.NoMatch3
+        End Select
+
+        If Not String.IsNullOrWhiteSpace(reply) Then Return reply.Trim()
+
+        Dim question = If(Not String.IsNullOrWhiteSpace(record.Question), record.Question.Trim(), String.Empty)
+        If String.IsNullOrWhiteSpace(question) Then Return String.Empty
+        Dim defaults = DialogPhrases.DefaultNoMatchReplies(question)
+        Select Case Math.Max(0, Math.Min(noMatchCount, 2))
+            Case 0 : Return defaults.NoMatch1
+            Case 1 : Return defaults.NoMatch2
+            Case Else : Return defaults.NoMatch3
+        End Select
+    End Function
+
+    Private Function FindVincoloAskRecord(
+        bundle As Models.AgentBundle,
+        categoryName As String
+    ) As Models.DisambiguationMessage
+        Dim plan = bundle?.Ontology?.DisambiguationPlan
+        If plan?.Messages Is Nothing OrElse plan.Messages.Count = 0 Then Return Nothing
+
+        Dim signature = BuildVincoloAskSignature(categoryName)
+        Dim record = plan.Messages.FirstOrDefault(
+            Function(m) m IsNot Nothing AndAlso String.Equals(m.Signature?.Trim(), signature, StringComparison.Ordinal))
+        If record IsNot Nothing Then Return record
+
+        Return plan.Messages.FirstOrDefault(
+            Function(m) m IsNot Nothing AndAlso String.Equals(m.Signature?.Trim(), "ask_age", StringComparison.Ordinal))
+    End Function
+
+    Private Function ResolveVincoloNoMatch(
+        bundle As Models.AgentBundle,
+        categoryName As String,
+        noMatchCount As Integer
+    ) As String
+        Dim record = FindVincoloAskRecord(bundle, categoryName)
         If record Is Nothing Then Return String.Empty
 
         Dim reply As String = Nothing

@@ -58,17 +58,22 @@ Public Module TurnResultBuilder
     End Function
 
     Public Function AskAge(
+        bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
         parsedThisTurn As IList(Of Models.Concept),
         categoryName As String,
         survivingPaths As IList(Of String)
     ) As Models.AgentTurnResult
-        Return Build(
+        Dim resolved = DisambiguationCopy.ResolveVincoloAskHint(bundle, conversation, categoryName)
+        Dim result = Build(
             conversation,
             parsedThisTurn,
             New Models.AgentTurnInstruction With {.Action = "ask_age", .CategoryName = categoryName},
-            ConstraintValidation.AgeYearsQuestion,
+            resolved.Text,
             survivingPaths)
+        result.SpokenHintSource = resolved.Source
+        result.DisambiguationSignature = resolved.Signature
+        Return result
     End Function
 
     Public Function Disambiguate(

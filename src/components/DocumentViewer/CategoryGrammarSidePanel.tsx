@@ -6,6 +6,7 @@ import { Braces } from 'lucide-react';
 import type { GrammarEntry } from '../../hooks/useAnalysis';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import type { TokenEntry } from '../../lib/tokenDictionary';
+import { VincoloPipelinePanel } from '../../features/agent/VincoloPipelinePanel';
 import { InlineGrammarEditor, type GrammarEditorHandle } from './InlineGrammarEditor';
 
 export interface CategoryGrammarSidePanelProps {
@@ -44,10 +45,7 @@ function CategoryGrammarSidePanel({
             Seleziona una categoria nel pannello a sinistra per modificarne i sinonimi di riconoscimento.
           </p>
         ) : isVincolo ? (
-          <p className="font-mono text-[10px] text-emerald-400/45 leading-relaxed px-1">
-            Grammatica di risoluzione vincolo (età): generata con &quot;Genera grammatiche&quot; nella barra Dizionari.
-            Estrae il valore numerico dall&apos;utterance (es. vent&apos;anni → 20), non i token catalogo.
-          </p>
+          <VincoloPipelinePanel category={category} />
         ) : tokenCount === 0 ? (
           <p className="font-mono text-[10px] text-emerald-400/35 leading-relaxed px-1">
             Aggiungi almeno un token a &quot;{category.name}&quot; prima di definire i sinonimi.

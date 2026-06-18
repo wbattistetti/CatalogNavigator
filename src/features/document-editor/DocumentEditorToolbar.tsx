@@ -10,20 +10,19 @@ import { EDITOR_TAB_IDS } from './editorTabIds';
 import { findCategoriesMissingGrammar } from '../../lib/categoryGrammar';
 import { exportOntologyToExcel } from '../../lib/exportOntologyExcel';
 
-export function DocumentEditorToolbar() {
+function ProjectActionsToolbar() {
   const {
     doc,
-    content,
-    dictionaryMode,
-    documentText,
     analysisApi,
     dictState,
     setAffinaOpen,
+    affinaOpen,
+    messagesPanelOpen,
+    setMessagesPanelOpen,
     convaiOpen,
     setConvaiOpen,
     convaiNoBeOpen,
     setConvaiNoBeOpen,
-    dicts,
     agentDictionaryContext,
     agentNeedsUpdate,
     canRefreshOntology,
@@ -34,15 +33,14 @@ export function DocumentEditorToolbar() {
     buildLiveLoadedRefs,
     leafDescriptionMap,
   } = useDocumentEditorController();
-  const { activeTab, setActiveTab } = useDocumentEditorTab();
 
   const {
     generating, generatingPhase, analysis,
-    generateMessagesFromDictionary, generateMessagesFromText,
-    generateDictionaryCategoryGrammars,
     saveAnalysis, discardAnalysisChanges, cancelGeneration,
-    saving, analysisDirty, hasMessages, agentReady, hasTaxonomy,
+    saving, analysisDirty, hasTaxonomy,
   } = analysisApi;
+
+  const hasData = (analysis?.rows.length ?? 0) > 0;
 
   const ontologyRefreshButton = (label: string, highlight = false) => {
     const progressLabel = refreshingOntology && ontologyRefreshProgress
@@ -84,11 +82,153 @@ export function DocumentEditorToolbar() {
     ) : null;
   };
 
-  if (activeTab === EDITOR_TAB_IDS.ontology && dictionaryMode) {
+  const runExportOntology = () => {
+    if (!analysis || !agentDictionaryContext) return;
+    const descriptions = dictState?.getDescriptions()
+      ?? agentDictionaryContext.descriptions;
+    try {
+      exportOntologyToExcel({
+        documentName: doc.name,
+        dictionary: agentDictionaryContext.dictionary,
+        descriptions,
+        analysis,
+        loadedRefs: buildLiveLoadedRefs(),
+        leafDescriptionMap: leafDescriptionMap ?? undefined,
+        dictionaryDirty: dictState?.dirty,
+        analysisDirty,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Export ontologia fallito.';
+      window.alert(message);
+    }
+  };
 
+  return (
+    <>
+      {ontologyRefreshButton(hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia', agentNeedsUpdate)}
+      <button
+        type="button"
+        onClick={() => setMessagesPanelOpen((open) => !open)}
+        title="Apri il pannello messaggi dialogo (calcola piano, genera copy IA, valida)"
+        className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded transition-colors ${
+          messagesPanelOpen
+            ? 'text-emerald-900 bg-amber-400 hover:bg-amber-300'
+            : 'text-amber-100 border border-amber-400/45 hover:bg-amber-400/15'
+        }`}
+      >
+        {generating && generatingPhase === 'disambiguation'
+          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          : <MessageSquare className="w-3.5 h-3.5" />}
+        Messaggi
+      </button>
+      {generating && generatingPhase === 'disambiguation' && (
+        <button
+          type="button"
+          onClick={cancelGeneration}
+          className="flex items-center justify-center w-7 h-7 rounded border border-red-400/40 bg-red-400/10 text-red-400/80 hover:bg-red-400/20 hover:text-red-300 transition-colors"
+          title="Annulla generazione"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {hasData && (
+        <>
+          <button
+            type="button"
+            onClick={() => void saveAnalysis()}
+            disabled={!analysisDirty || saving || generating}
+            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            {saving ? 'Salvataggio…' : 'Salva analisi'}
+          </button>
+          {analysisDirty && (
+            <button
+              type="button"
+              onClick={() => void discardAnalysisChanges()}
+              disabled={saving || generating}
+              className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Annulla
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setAffinaOpen((v) => !v)}
+            disabled={generating}
+            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-30 ${
+              affinaOpen
+                ? 'text-amber-300 border-amber-400/50 bg-amber-400/10'
+                : 'text-amber-400/60 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-400/90'
+            }`}
+          >
+            <Wand2 className="w-3 h-3" />
+            Affina
+          </button>
+          <button
+            type="button"
+            onClick={runExportOntology}
+            disabled={!hasTaxonomy || !agentDictionaryContext}
+            title="Scarica catalogo ontologia in Excel (descrizione + categorie usate)"
+            className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 text-emerald-300/70 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-200"
+          >
+            <FileSpreadsheet className="w-3 h-3" />
+            Esporta ontologia
+          </button>
+          <button
+            type="button"
+            onClick={() => setConvaiOpen(true)}
+            disabled={!hasTaxonomy || !agentDictionaryContext}
+            title="Export per ElevenLabs Convai"
+            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 ${
+              convaiOpen
+                ? 'text-violet-200 border-violet-400/50 bg-violet-400/10'
+                : 'text-violet-300/70 border-violet-400/25 hover:border-violet-400/50 hover:text-violet-200'
+            }`}
+          >
+            <Mic className="w-3 h-3" />
+            Convai
+          </button>
+          <button
+            type="button"
+            onClick={() => setConvaiNoBeOpen(true)}
+            disabled={!hasTaxonomy || !agentDictionaryContext}
+            title="Deploy Convai senza backend: prompt algoritmo + KB strutturata"
+            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 ${
+              convaiNoBeOpen
+                ? 'text-amber-200 border-amber-400/50 bg-amber-400/10'
+                : 'text-amber-300/70 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-200'
+            }`}
+          >
+            Convalida no be
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+export function DocumentEditorToolbar() {
+  const {
+    content,
+    dictionaryMode,
+    dictState,
+    dicts,
+    analysisApi,
+  } = useDocumentEditorController();
+  const { activeTab, setActiveTab } = useDocumentEditorTab();
+
+  const {
+    generating, generatingPhase,
+    generateDictionaryCategoryGrammars,
+    cancelGeneration,
+  } = analysisApi;
+
+  if (activeTab === EDITOR_TAB_IDS.ontology && dictionaryMode) {
     return (
       <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
-        {ontologyRefreshButton(hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia', agentNeedsUpdate)}
+        <ProjectActionsToolbar />
         <button
           type="button"
           onClick={() => void dictState?.save()}
@@ -141,7 +281,7 @@ export function DocumentEditorToolbar() {
 
     return (
       <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
-        {ontologyRefreshButton('Ricrea ontologia', agentNeedsUpdate)}
+        <ProjectActionsToolbar />
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -203,157 +343,6 @@ export function DocumentEditorToolbar() {
             <RotateCcw className="w-3 h-3" />
             Annulla
           </button>
-        )}
-      </div>
-    );
-  }
-
-  if (activeTab === EDITOR_TAB_IDS.agent) {
-    const hasData = (analysis?.rows.length ?? 0) > 0;
-    const resolveCorpusContext = () => {
-      const descriptions = dictState?.getDescriptions()
-        ?? agentDictionaryContext?.descriptions
-        ?? [];
-      const activeTokenCount = agentDictionaryContext?.activeTokenCount
-        ?? dictState?.activeTokenCount
-        ?? 0;
-      return { descriptions, activeTokenCount };
-    };
-    const canGenerateMessages = dictionaryMode
-      ? (resolveCorpusContext().activeTokenCount > 0 && hasTaxonomy && !generating)
-      : !!documentText && !generating;
-    const runGenerateMessages = () => {
-      const contextText = documentText ?? '';
-      if (dictionaryMode) {
-        const { descriptions, activeTokenCount } = resolveCorpusContext();
-        const loadedRefs = buildLiveLoadedRefs();
-        if (activeTokenCount === 0 || loadedRefs.length === 0) return;
-        void generateMessagesFromDictionary(descriptions, loadedRefs, doc.name, contextText).catch(() => {});
-      } else if (documentText) {
-        void generateMessagesFromText(documentText, doc.name).catch(() => {});
-      }
-    };
-    const runExportOntology = () => {
-      if (!analysis || !agentDictionaryContext) return;
-      const descriptions = dictState?.getDescriptions()
-        ?? agentDictionaryContext.descriptions;
-      try {
-        exportOntologyToExcel({
-          documentName: doc.name,
-          dictionary: agentDictionaryContext.dictionary,
-          descriptions,
-          analysis,
-          loadedRefs: buildLiveLoadedRefs(),
-          leafDescriptionMap: leafDescriptionMap ?? undefined,
-          dictionaryDirty: dictState?.dirty,
-          analysisDirty,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Export ontologia fallito.';
-        window.alert(message);
-      }
-    };
-
-    return (
-      <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
-        {ontologyRefreshButton(hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia', agentNeedsUpdate)}
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={runGenerateMessages}
-            disabled={!canGenerateMessages}
-            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-emerald-400 rounded hover:bg-emerald-300 transition-colors disabled:opacity-40"
-          >
-            {generating && (generatingPhase === 'taxonomy' || generatingPhase === 'messages')
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <MessageSquare className="w-3.5 h-3.5" />}
-            {generating
-              ? generatingPhase === 'taxonomy'
-                ? 'Costruisco albero…'
-                : generatingPhase === 'messages'
-                  ? 'Genero messaggi…'
-                  : 'Genera messaggi'
-              : 'Genera messaggi'}
-          </button>
-          {generating && (
-            <button
-              type="button"
-              onClick={cancelGeneration}
-              className="flex items-center justify-center w-7 h-7 rounded border border-red-400/40 bg-red-400/10 text-red-400/80 hover:bg-red-400/20 hover:text-red-300 transition-colors"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        {hasData && (
-          <>
-            <button
-              type="button"
-              onClick={() => void saveAnalysis()}
-              disabled={!analysisDirty || saving || generating}
-              className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              {saving ? 'Salvataggio…' : 'Salva analisi'}
-            </button>
-            {analysisDirty && (
-              <button
-                type="button"
-                onClick={() => void discardAnalysisChanges()}
-                disabled={saving || generating}
-                className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Annulla
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setAffinaOpen((v) => !v)}
-              disabled={generating}
-              className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-amber-400/60 border border-amber-400/25 rounded hover:border-amber-400/50 hover:text-amber-400/90 transition-colors disabled:opacity-30"
-            >
-              <Wand2 className="w-3 h-3" />
-              Affina
-            </button>
-            <button
-              type="button"
-              onClick={runExportOntology}
-              disabled={!hasTaxonomy || !agentDictionaryContext}
-              title="Scarica catalogo ontologia in Excel (descrizione + categorie usate)"
-              className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 text-emerald-300/70 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-200"
-            >
-              <FileSpreadsheet className="w-3 h-3" />
-              Esporta ontologia
-            </button>
-            <button
-              type="button"
-              onClick={() => setConvaiOpen(true)}
-              disabled={!hasTaxonomy || !agentDictionaryContext}
-              title="Export per ElevenLabs Convai"
-              className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 ${
-                convaiOpen
-                  ? 'text-violet-200 border-violet-400/50 bg-violet-400/10'
-                  : 'text-violet-300/70 border-violet-400/25 hover:border-violet-400/50 hover:text-violet-200'
-              }`}
-            >
-              <Mic className="w-3 h-3" />
-              Convai
-            </button>
-            <button
-              type="button"
-              onClick={() => setConvaiNoBeOpen(true)}
-              disabled={!hasTaxonomy || !agentDictionaryContext}
-              title="Deploy Convai senza backend: prompt algoritmo + KB strutturata"
-              className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 ${
-                convaiNoBeOpen
-                  ? 'text-amber-200 border-amber-400/50 bg-amber-400/10'
-                  : 'text-amber-300/70 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-200'
-              }`}
-            >
-              Convalida no be
-            </button>
-          </>
         )}
       </div>
     );
