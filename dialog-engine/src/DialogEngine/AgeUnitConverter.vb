@@ -10,16 +10,24 @@ Public Module AgeUnitConverter
 
     Public Function ToYears(value As Integer, unit As String) As Integer?
         If value < 0 Then Return Nothing
-        Dim u = If(unit, String.Empty).Trim().ToLowerInvariant()
+        Dim totalMonths = ToTotalMonths(value, unit)
+        If Not totalMonths.HasValue Then Return Nothing
+        Return totalMonths.Value \ 12
+    End Function
+
+    ''' <summary>Patient age as total months for inclusive min/max year constraints.</summary>
+    Public Function ToTotalMonths(value As Integer, unit As String) As Integer?
+        If value < 0 Then Return Nothing
+        Dim u = ParseUnitToken(unit)
         Select Case u
-            Case "years", "year", "anni", "anno", ""
+            Case "years"
+                Return value * 12
+            Case "months"
                 Return value
-            Case "months", "month", "mesi", "mese"
-                Return value \ 12
-            Case "weeks", "week", "settimane", "settimana"
-                Return value \ 52
-            Case "days", "day", "giorni", "giorno"
-                Return value \ 365
+            Case "weeks"
+                Return (value * 12 + 26) \ 52
+            Case "days"
+                Return (value * 12 + 182) \ 365
             Case Else
                 Return Nothing
         End Select
@@ -27,6 +35,7 @@ Public Module AgeUnitConverter
 
     Public Function ParseUnitToken(token As String) As String
         Dim t = If(token, String.Empty).Trim().ToLowerInvariant()
+        If String.IsNullOrWhiteSpace(t) Then Return "years"
         Select Case t
             Case "anno", "anni", "years", "year" : Return "years"
             Case "mese", "mesi", "months", "month" : Return "months"

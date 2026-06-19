@@ -164,7 +164,39 @@ export function looksLikeMisParsedSpreadsheetText(text: string): boolean {
 }
 
 export function serializeTabular(tabular: ParsedTabular): string {
-  return [tabular.headers.join('\t'), ...tabular.rows.map((r) => r.join('\t'))].join('\n');
+  return serializeTabularWithSeparator(tabular, '\t');
+}
+
+function escapeTabularCell(cell: string, separator: string): string {
+  if (cell.includes(separator) || cell.includes('"') || cell.includes('\n')) {
+    return `"${cell.replace(/"/g, '""')}"`;
+  }
+  return cell;
+}
+
+/** Serializes tabular data with the same separator used at import (TSV, `;` or `,` CSV). */
+export function serializeTabularWithSeparator(
+  tabular: ParsedTabular,
+  separator: '\t' | ';' | ',' = '\t',
+): string {
+  const lines = [
+    tabular.headers.map((cell) => escapeTabularCell(cell, separator)).join(separator),
+    ...tabular.rows.map((row) =>
+      tabular.headers
+        .map((_, i) => escapeTabularCell(row[i] ?? '', separator))
+        .join(separator),
+    ),
+  ];
+  return lines.join('\n');
+}
+
+/** Builds an Excel workbook buffer from parsed tabular rows. */
+export function tabularToXlsxBuffer(tabular: ParsedTabular): ArrayBuffer {
+  const data = [tabular.headers, ...tabular.rows];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
 }
 
 /** Parse Excel workbook bytes into headers + rows (all sheet columns). */

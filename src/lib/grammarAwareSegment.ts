@@ -3,13 +3,13 @@
  * Used for ontology paths, corpus cache, and Convai export (same engine as runtime slot extract).
  */
 import {
-  getCategoryIdForToken,
   normalizeCategoryOrders,
   orderSegmentsByCategories,
   type SegmentMatch,
   type TokenCategory,
 } from './dictionaryTree';
-import { canonicalizePathSegments } from './pathCanonicalize';
+import { normalizeCompactPath } from './analysisTree';
+import { matchAllCategoryGrammarValues } from './categoryGrammar';
 import {
   getActiveMatchPhrases,
   isCanonicalToken,
@@ -20,7 +20,6 @@ import {
   type SegmentationResult,
   type TokenEntry,
 } from './tokenDictionary';
-import { matchTextToSlots, normalizeSlotCategoryKey } from './slotExtract';
 
 /** Category grammar regex signature — invalidates segmentation cache when grammars change. */
 export function segmentationGrammarSignature(categories: TokenCategory[]): string {
@@ -47,14 +46,58 @@ function activeCanonicalTexts(tokens: TokenEntry[]): Set<string> {
   return new Set(tokens.filter(isCanonicalToken).map((t) => t.text));
 }
 
-function filterPathToCanonicalTokens(path: string, canonicalTexts: Set<string>): string {
-  if (!path) return '';
-  return path.split('.').filter((seg) => canonicalTexts.has(seg)).join('.');
+function segmentMatchKey(match: SegmentMatch): string {
+  return `${match.text}\u001f${match.wordStartIndex}`;
+}
+
+function findWordStartIndex(words: string[], tokenText: string): number {
+  const parts = tokenizeToWords(tokenText);
+  if (parts.length === 0) return 0;
+  for (let i = 0; i <= words.length - parts.length; i++) {
+    if (parts.every((w, j) => words[i + j] === w)) return i;
+  }
+  return 0;
+}
+
+/** Grammar-only matches for canonical tokens not already found by phrase matching. */
+function grammarSupplementMatches(
+  text: string,
+  tokens: TokenEntry[],
+  categories: TokenCategory[],
+  canonicalTexts: Set<string>,
+  phraseKept: SegmentMatch[],
+): SegmentMatch[] {
+  const normalized = normalizeDescriptionText(text);
+  if (!normalized) return [];
+
+  const lower = normalized.toLowerCase();
+  const words = tokenizeToWords(normalized);
+  const phraseTexts = new Set(phraseKept.map((m) => m.text));
+  const seen = new Set(phraseKept.map(segmentMatchKey));
+  const supplements: SegmentMatch[] = [];
+
+  for (const category of normalizeCategoryOrders(categories)) {
+    if (category.type === 'vincolo') continue;
+
+    for (const canonical of matchAllCategoryGrammarValues(lower, category, tokens)) {
+      if (!canonicalTexts.has(canonical) || phraseTexts.has(canonical)) continue;
+      const match: SegmentMatch = {
+        text: canonical,
+        wordStartIndex: findWordStartIndex(words, canonical),
+      };
+      const key = segmentMatchKey(match);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      supplements.push(match);
+    }
+  }
+
+  return supplements;
 }
 
 /**
- * Segments one description: grammars per category (attributo), then phrase matches for the rest.
- * Path = category-ordered token segments (one row = one item path).
+ * Segments one description: phrase matches plus grammar supplements for missed synonyms.
+ * Path keeps every matched token, including multiple values from the same category.
  */
 export function segmentDescriptionGrammarAware(
   text: string,
@@ -70,33 +113,18 @@ export function segmentDescriptionGrammarAware(
   const ordered = normalizeCategoryOrders(categories);
   const canonicalTexts = activeCanonicalTexts(tokens);
   const { matches: phraseMatchList, unmatched } = phraseMatches(text, tokens, prebuiltMatchPhrases);
-  const grammarSlots = matchTextToSlots(normalized.toLowerCase(), tokens, ordered);
 
-  const grammarByCategoryId = new Map<string, string>();
-  for (const category of ordered) {
-    if (category.type === 'vincolo') continue;
-    const slotValue = grammarSlots[normalizeSlotCategoryKey(category.name)];
-    if (slotValue && canonicalTexts.has(slotValue)) {
-      grammarByCategoryId.set(category.id, slotValue);
-    }
-  }
-
-  const phraseKept: SegmentMatch[] = [];
-  for (const match of phraseMatchList) {
-    if (!canonicalTexts.has(match.text)) continue;
-    const catId = getCategoryIdForToken(match.text, ordered);
-    if (catId && grammarByCategoryId.has(catId)) continue;
-    phraseKept.push(match);
-  }
-
-  const grammarMatches: SegmentMatch[] = [];
-  for (const [, tokenText] of grammarByCategoryId) {
-    if (phraseKept.some((m) => m.text === tokenText)) continue;
-    grammarMatches.push({ text: tokenText, wordStartIndex: 0 });
-  }
+  const phraseKept = phraseMatchList.filter((match) => canonicalTexts.has(match.text));
+  const grammarMatches = grammarSupplementMatches(
+    text,
+    tokens,
+    ordered,
+    canonicalTexts,
+    phraseKept,
+  );
 
   const segments = orderSegmentsByCategories([...phraseKept, ...grammarMatches], ordered);
-  const path = canonicalizePathSegments(segments.join('.'), ordered);
+  const path = normalizeCompactPath(segments.join('.'));
 
   return {
     segments: path ? path.split('.') : segments,

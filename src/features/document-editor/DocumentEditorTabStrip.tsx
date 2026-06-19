@@ -18,9 +18,13 @@ const TABS: Array<{
 ];
 
 export function DocumentEditorTabStrip() {
-  const { dictionaryMode } = useDocumentEditorController();
+  const { dictionaryMode, showOntologyTab } = useDocumentEditorController();
   const { activeTab, setActiveTab, splitLayout } = useDocumentEditorTab();
-  const visible = TABS.filter((t) => !t.dictionaryOnly || dictionaryMode);
+  const visible = TABS.filter((t) => {
+    if (t.id === EDITOR_TAB_IDS.ontology) return showOntologyTab;
+    if (t.dictionaryOnly) return dictionaryMode;
+    return true;
+  });
 
   return (
     <div className="flex items-end gap-0 min-h-[32px] px-1 flex-shrink-0 min-w-0 overflow-x-auto scrollbar-thin">

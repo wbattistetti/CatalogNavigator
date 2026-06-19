@@ -55,6 +55,15 @@ Public Module ConceptOps
         Return concepts.Any(Function(c) c.Category = categoryName)
     End Function
 
+    Public Function HasAcquiredAgeQuantity(concepts As IList(Of Models.Concept)) As Boolean
+        If concepts Is Nothing Then Return False
+        For Each concept In concepts
+            If concept Is Nothing OrElse concept.Kind <> Models.ConceptKind.Vincolo Then Continue For
+            If ResolveTurnAge.HasResolvedAgeQuantity(concept) Then Return True
+        Next
+        Return False
+    End Function
+
     Public Function FindAcquiredAgeYears(concepts As IList(Of Models.Concept)) As Integer?
         If concepts Is Nothing Then Return Nothing
         For Each concept In concepts

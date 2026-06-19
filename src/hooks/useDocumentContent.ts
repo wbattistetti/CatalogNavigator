@@ -1,9 +1,10 @@
 /**
  * Loads document text and tabular data once per file — shared by reader and dictionary.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supportsDictionaryFormat } from '../lib/fileFormat';
 import {
+  detectSeparator,
   loadTabularFromBuffer,
   parseTextForDictionary,
   serializeTabular,
@@ -19,18 +20,24 @@ export interface DocumentContent {
   text: string | null;
   /** Parsed table for dictionary workflow. */
   tabular: ParsedTabular | null;
+  /** CSV/TSV separator detected at load (for round-trip saves). */
+  csvSeparator: '\t' | ';' | ',' | null;
   /** Raw text when the file is not tabular (for TextViewer). */
   textContent: string | null;
   loading: boolean;
   error: string | null;
+  /** Replaces in-memory tabular data after row edits without re-fetching storage. */
+  updateTabular: (tabular: ParsedTabular) => void;
 }
 
 const IDLE: DocumentContent = {
   text: null,
   tabular: null,
+  csvSeparator: null,
   textContent: null,
   loading: false,
   error: null,
+  updateTabular: () => {},
 };
 
 async function extractPdfText(ab: ArrayBuffer): Promise<string> {
@@ -64,20 +71,34 @@ async function extractDocxText(ab: ArrayBuffer): Promise<string> {
   return result.value;
 }
 
-function loadTabularContent(ab: ArrayBuffer, doc: KbDocument): DocumentContent {
+function loadTabularContent(
+  ab: ArrayBuffer,
+  doc: KbDocument,
+  csvSeparator: '\t' | ';' | ',' | null = null,
+): DocumentContent {
   const tabular = loadTabularFromBuffer(ab, doc.name, doc.format);
   return {
     text: serializeTabular(tabular),
     tabular,
+    csvSeparator,
     textContent: null,
     loading: false,
     error: null,
+    updateTabular: () => {},
   };
 }
 
 /** Fetches and parses document content; survives tab switches. */
 export function useDocumentContent(doc: KbDocument, fileUrl: string): DocumentContent {
   const [content, setContent] = useState<DocumentContent>(IDLE);
+
+  const updateTabular = useCallback((tabular: ParsedTabular) => {
+    setContent((prev) => ({
+      ...prev,
+      tabular,
+      text: serializeTabular(tabular),
+    }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,13 +134,16 @@ export function useDocumentContent(doc: KbDocument, fileUrl: string): DocumentCo
         if (cancelled) return;
 
         if (doc.format === 'xlsx' || doc.format === 'csv') {
-          setContent(loadTabularContent(ab, doc));
+          const csvSeparator = doc.format === 'csv'
+            ? detectSeparator(new TextDecoder('utf-8').decode(ab).trim().split('\n')[0] ?? '')
+            : null;
+          setContent({ ...loadTabularContent(ab, doc, csvSeparator), updateTabular });
           return;
         }
 
         if (supportsDictionaryFormat(doc.format)) {
           try {
-            setContent(loadTabularContent(ab, doc));
+            setContent({ ...loadTabularContent(ab, doc), updateTabular });
             return;
           } catch {
             const text = new TextDecoder('utf-8').decode(ab);
@@ -127,9 +151,11 @@ export function useDocumentContent(doc: KbDocument, fileUrl: string): DocumentCo
             setContent({
               text,
               tabular: parsed,
+              csvSeparator: parsed ? detectSeparator(text.trim().split('\n')[0] ?? '') : null,
               textContent: parsed ? null : text,
               loading: false,
               error: parsed ? null : null,
+              updateTabular,
             });
             return;
           }
@@ -139,22 +165,25 @@ export function useDocumentContent(doc: KbDocument, fileUrl: string): DocumentCo
         setContent({
           text,
           tabular: null,
+          csvSeparator: null,
           textContent: text,
           loading: false,
           error: null,
+          updateTabular,
         });
       } catch (e) {
         if (!cancelled) {
           setContent({
             ...IDLE,
             error: e instanceof Error ? e.message : 'Failed to load',
+            updateTabular,
           });
         }
       }
     })();
 
     return () => { cancelled = true; };
-  }, [doc.id, fileUrl, doc.format, doc.name]);
+  }, [doc.id, fileUrl, doc.format, doc.name, updateTabular]);
 
-  return content;
+  return { ...content, updateTabular };
 }

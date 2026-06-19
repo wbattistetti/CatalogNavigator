@@ -1,28 +1,62 @@
 /**
- * Single contextual toolbar for the active editor tab.
+ * Contextual toolbar rendered in the global App header while a project document is open.
  */
 import {
-  BookOpen, Braces, FileSpreadsheet, Loader2, MessageSquare, Mic,
-  RefreshCw, RotateCcw, Save, Wand2, X,
+  Braces, FileSpreadsheet, FlaskConical, Loader2, MessageSquare, Mic,
+  RefreshCw, RotateCcw, Save, X,
 } from 'lucide-react';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 import { findCategoriesMissingGrammar } from '../../lib/categoryGrammar';
 import { exportOntologyToExcel } from '../../lib/exportOntologyExcel';
 
+const outlineBtn = 'flex items-center gap-1 px-2 py-1 font-mono text-xs border rounded transition-colors disabled:opacity-40';
+const outlineActive = 'text-emerald-200 border-emerald-400/45 bg-emerald-400/10';
+const outlineIdle = 'text-emerald-300/75 border-[#1a3a2a] hover:border-emerald-400/35 hover:text-emerald-200';
+
+/** Left header link: saves dictionary + ontology when dirty. */
+export function ProjectLeftActions() {
+  const {
+    dictionaryMode,
+    canSaveProject,
+    savingProject,
+    saveProject,
+    dictState,
+    analysisApi,
+  } = useDocumentEditorController();
+
+  if (!dictionaryMode) return null;
+
+  const { analysisDirty, hasTaxonomy } = analysisApi;
+
+  return (
+    <button
+      type="button"
+      onClick={() => void saveProject()}
+      disabled={!canSaveProject || savingProject}
+      title={[
+        dictState?.canSave ? 'dizionario' : null,
+        analysisDirty && hasTaxonomy ? 'ontologia e grammatiche agente' : null,
+      ].filter(Boolean).join(' + ') || 'Nessuna modifica da salvare'}
+      className="font-mono text-xs text-red-400/85 hover:text-red-300 disabled:opacity-40 transition-colors flex-shrink-0"
+    >
+      {savingProject ? 'Salvataggio…' : 'Salva progetto'}
+    </button>
+  );
+}
+
 function ProjectActionsToolbar() {
   const {
     doc,
+    dictionaryMode,
     analysisApi,
     dictState,
-    setAffinaOpen,
-    affinaOpen,
     messagesPanelOpen,
     setMessagesPanelOpen,
     convaiOpen,
     setConvaiOpen,
-    convaiNoBeOpen,
-    setConvaiNoBeOpen,
+    testOpen,
+    setTestOpen,
     agentDictionaryContext,
     agentNeedsUpdate,
     canRefreshOntology,
@@ -36,11 +70,11 @@ function ProjectActionsToolbar() {
 
   const {
     generating, generatingPhase, analysis,
-    saveAnalysis, discardAnalysisChanges, cancelGeneration,
-    saving, analysisDirty, hasTaxonomy,
+    cancelGeneration,
+    analysisDirty, hasTaxonomy, agentReady,
   } = analysisApi;
 
-  const hasData = (analysis?.rows.length ?? 0) > 0;
+  const canTest = dictionaryMode && hasTaxonomy;
 
   const ontologyRefreshButton = (label: string, highlight = false) => {
     const progressLabel = refreshingOntology && ontologyRefreshProgress
@@ -50,32 +84,31 @@ function ProjectActionsToolbar() {
       : 'Ricreazione ontologia…';
 
     return (canRefreshOntology || refreshingOntology) ? (
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={refreshOntology}
           disabled={refreshingOntology}
-          className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded transition-colors disabled:opacity-70 ${
+          className={`${outlineBtn} ${
             highlight
-              ? 'text-emerald-900 bg-amber-400 hover:bg-amber-300'
-              : 'text-sky-100 border border-sky-400/50 hover:bg-sky-400/15'
+              ? 'text-amber-200 border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/15'
+              : outlineIdle
           }`}
           title="Ricalcola i path dell'albero dal dizionario corrente (ordine categorie incluso)"
         >
           {refreshingOntology
-            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : <RefreshCw className="w-3.5 h-3.5" />}
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <RefreshCw className="w-3 h-3" />}
           {refreshingOntology ? progressLabel : label}
         </button>
         {refreshingOntology && (
           <button
             type="button"
             onClick={cancelOntologyRefresh}
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-red-300/90 border border-red-400/40 rounded hover:bg-red-400/10 transition-colors"
+            className={`${outlineBtn} text-red-300/90 border-red-400/40 hover:bg-red-400/10`}
             title="Interrompi la ricreazione ontologia"
           >
             <X className="w-3 h-3" />
-            Annulla
           </button>
         )}
       </div>
@@ -110,100 +143,55 @@ function ProjectActionsToolbar() {
         type="button"
         onClick={() => setMessagesPanelOpen((open) => !open)}
         title="Apri il pannello messaggi dialogo (calcola piano, genera copy IA, valida)"
-        className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded transition-colors ${
-          messagesPanelOpen
-            ? 'text-emerald-900 bg-amber-400 hover:bg-amber-300'
-            : 'text-amber-100 border border-amber-400/45 hover:bg-amber-400/15'
-        }`}
+        className={`${outlineBtn} ${messagesPanelOpen ? outlineActive : outlineIdle}`}
       >
         {generating && generatingPhase === 'disambiguation'
-          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          : <MessageSquare className="w-3.5 h-3.5" />}
+          ? <Loader2 className="w-3 h-3 animate-spin" />
+          : <MessageSquare className="w-3 h-3" />}
         Messaggi
       </button>
       {generating && generatingPhase === 'disambiguation' && (
         <button
           type="button"
           onClick={cancelGeneration}
-          className="flex items-center justify-center w-7 h-7 rounded border border-red-400/40 bg-red-400/10 text-red-400/80 hover:bg-red-400/20 hover:text-red-300 transition-colors"
+          className={`${outlineBtn} text-red-300/90 border-red-400/40 hover:bg-red-400/10`}
           title="Annulla generazione"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="w-3 h-3" />
         </button>
       )}
-      {hasData && (
-        <>
-          <button
-            type="button"
-            onClick={() => void saveAnalysis()}
-            disabled={!analysisDirty || saving || generating}
-            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
-          >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            {saving ? 'Salvataggio…' : 'Salva analisi'}
-          </button>
-          {analysisDirty && (
-            <button
-              type="button"
-              onClick={() => void discardAnalysisChanges()}
-              disabled={saving || generating}
-              className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors disabled:opacity-30"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Annulla
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setAffinaOpen((v) => !v)}
-            disabled={generating}
-            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-30 ${
-              affinaOpen
-                ? 'text-amber-300 border-amber-400/50 bg-amber-400/10'
-                : 'text-amber-400/60 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-400/90'
-            }`}
-          >
-            <Wand2 className="w-3 h-3" />
-            Affina
-          </button>
-          <button
-            type="button"
-            onClick={runExportOntology}
-            disabled={!hasTaxonomy || !agentDictionaryContext}
-            title="Scarica catalogo ontologia in Excel (descrizione + categorie usate)"
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 text-emerald-300/70 border-emerald-400/25 hover:border-emerald-400/50 hover:text-emerald-200"
-          >
-            <FileSpreadsheet className="w-3 h-3" />
-            Esporta ontologia
-          </button>
-          <button
-            type="button"
-            onClick={() => setConvaiOpen(true)}
-            disabled={!hasTaxonomy || !agentDictionaryContext}
-            title="Export per ElevenLabs Convai"
-            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 ${
-              convaiOpen
-                ? 'text-violet-200 border-violet-400/50 bg-violet-400/10'
-                : 'text-violet-300/70 border-violet-400/25 hover:border-violet-400/50 hover:text-violet-200'
-            }`}
-          >
-            <Mic className="w-3 h-3" />
-            Convai
-          </button>
-          <button
-            type="button"
-            onClick={() => setConvaiNoBeOpen(true)}
-            disabled={!hasTaxonomy || !agentDictionaryContext}
-            title="Deploy Convai senza backend: prompt algoritmo + KB strutturata"
-            className={`flex items-center gap-1 px-2 py-1.5 font-mono text-sm border rounded transition-colors disabled:opacity-40 ${
-              convaiNoBeOpen
-                ? 'text-amber-200 border-amber-400/50 bg-amber-400/10'
-                : 'text-amber-300/70 border-amber-400/25 hover:border-amber-400/50 hover:text-amber-200'
-            }`}
-          >
-            Convalida no be
-          </button>
-        </>
+      <button
+        type="button"
+        onClick={runExportOntology}
+        disabled={!hasTaxonomy || !agentDictionaryContext}
+        title="Scarica catalogo ontologia in Excel (descrizione + categorie usate)"
+        className={`${outlineBtn} ${outlineIdle}`}
+      >
+        <FileSpreadsheet className="w-3 h-3" />
+        Esporta ontologia
+      </button>
+      <button
+        type="button"
+        onClick={() => setConvaiOpen(true)}
+        disabled={!hasTaxonomy || !agentDictionaryContext}
+        title="Export per ElevenLabs Convai"
+        className={`${outlineBtn} ${convaiOpen ? outlineActive : outlineIdle}`}
+      >
+        <Mic className="w-3 h-3" />
+        Convai
+      </button>
+      {canTest && (
+        <button
+          type="button"
+          onClick={() => setTestOpen((open) => !open)}
+          title={agentReady
+            ? 'Apri test motore VB'
+            : 'Apri test (genera le grammatiche per il riconoscimento risposte)'}
+          className={`${outlineBtn} ${testOpen ? outlineActive : outlineIdle}`}
+        >
+          <FlaskConical className="w-3 h-3" />
+          test
+        </button>
       )}
     </>
   );
@@ -211,13 +199,16 @@ function ProjectActionsToolbar() {
 
 export function DocumentEditorToolbar() {
   const {
-    content,
     dictionaryMode,
+    showOntologyTab,
     dictState,
     dicts,
     analysisApi,
+    canSaveProject,
+    savingProject,
+    saveProject,
   } = useDocumentEditorController();
-  const { activeTab, setActiveTab } = useDocumentEditorTab();
+  const { activeTab } = useDocumentEditorTab();
 
   const {
     generating, generatingPhase,
@@ -225,24 +216,38 @@ export function DocumentEditorToolbar() {
     cancelGeneration,
   } = analysisApi;
 
-  if (activeTab === EDITOR_TAB_IDS.ontology && dictionaryMode) {
+  const saveDictionaryBtn = (
+    onClick: () => void,
+    disabled: boolean,
+    saving = false,
+  ) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`${outlineBtn} ${outlineIdle}`}
+    >
+      {saving
+        ? <Loader2 className="w-3 h-3 animate-spin" />
+        : <Save className="w-3 h-3" />}
+      Salva dizionario
+    </button>
+  );
+
+  if (activeTab === EDITOR_TAB_IDS.ontology && showOntologyTab) {
     return (
-      <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
+      <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
         <ProjectActionsToolbar />
-        <button
-          type="button"
-          onClick={() => void dictState?.save()}
-          disabled={!dictState?.canSave}
-          className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
-        >
-          <Save className="w-3.5 h-3.5" />
-          Salva dizionario
-        </button>
+        {saveDictionaryBtn(
+          () => void saveProject(),
+          !canSaveProject || savingProject,
+          savingProject,
+        )}
         {dictState?.dirty && (
           <button
             type="button"
             onClick={() => dictState.discard()}
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors"
+            className={`${outlineBtn} ${outlineIdle}`}
           >
             <RotateCcw className="w-3 h-3" />
             Annulla
@@ -280,65 +285,58 @@ export function DocumentEditorToolbar() {
     };
 
     return (
-      <div className="flex flex-wrap items-center gap-2 flex-shrink-0 justify-end">
+      <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
         <ProjectActionsToolbar />
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => runDictionaryGrammars(false)}
-            disabled={!activeId || !hasGrammarTargets || grammarBusy || missingGrammarCount === 0}
-            title={`Compila le grammatiche di riconoscimento per le ${missingGrammarCount} categorie senza grammatica`}
-            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
-          >
-            {grammarBusy
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Braces className="w-3.5 h-3.5" />}
-            {missingGrammarCount > 0
-              ? `Genera grammatiche mancanti (${missingGrammarCount})`
-              : 'Genera grammatiche mancanti'}
-          </button>
-          <button
-            type="button"
-            onClick={() => runDictionaryGrammars(true)}
-            disabled={!activeId || !hasGrammarTargets || grammarBusy}
-            title={hasAnyCategoryGrammar
-              ? 'Rigenera tutte le grammatiche di categoria (sovrascrive quelle esistenti)'
-              : 'Genera le grammatiche di riconoscimento per tutte le categorie'}
-            className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold rounded border border-sky-400/50 text-sky-100 hover:bg-sky-400/15 transition-colors disabled:opacity-40"
-          >
-            {grammarBusy
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <RotateCcw className="w-3.5 h-3.5" />}
-            {regenerateAllLabel}
-          </button>
-          {grammarBusy && (
-            <button
-              type="button"
-              onClick={cancelGeneration}
-              className="flex items-center justify-center w-7 h-7 rounded border border-red-400/40 bg-red-400/10 text-red-400/80 hover:bg-red-400/20 hover:text-red-300 transition-colors"
-              title="Annulla generazione"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
         <button
           type="button"
-          onClick={() => {
+          onClick={() => runDictionaryGrammars(false)}
+          disabled={!activeId || !hasGrammarTargets || grammarBusy || missingGrammarCount === 0}
+          title={`Compila le grammatiche di riconoscimento per le ${missingGrammarCount} categorie senza grammatica`}
+          className={`${outlineBtn} ${outlineIdle}`}
+        >
+          {grammarBusy
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <Braces className="w-3 h-3" />}
+          {missingGrammarCount > 0
+            ? `Grammatiche (${missingGrammarCount})`
+            : 'Grammatiche'}
+        </button>
+        <button
+          type="button"
+          onClick={() => runDictionaryGrammars(true)}
+          disabled={!activeId || !hasGrammarTargets || grammarBusy}
+          title={hasAnyCategoryGrammar
+            ? 'Rigenera tutte le grammatiche di categoria (sovrascrive quelle esistenti)'
+            : 'Genera le grammatiche di riconoscimento per tutte le categorie'}
+          className={`${outlineBtn} ${outlineIdle}`}
+        >
+          {grammarBusy
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <RotateCcw className="w-3 h-3" />}
+          {regenerateAllLabel}
+        </button>
+        {grammarBusy && (
+          <button
+            type="button"
+            onClick={cancelGeneration}
+            className={`${outlineBtn} text-red-300/90 border-red-400/40 hover:bg-red-400/10`}
+            title="Annulla generazione"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+        {saveDictionaryBtn(
+          () => {
             if (!activeId) return;
             void dicts.saveDictionary(activeId);
-          }}
-          disabled={!canSave}
-          className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-sky-400 rounded hover:bg-sky-300 transition-colors disabled:opacity-40"
-        >
-          <Save className="w-3.5 h-3.5" />
-          Salva dizionario
-        </button>
+          },
+          !canSave,
+        )}
         {session?.dirty && activeId && (
           <button
             type="button"
             onClick={() => dicts.discardDictionary(activeId)}
-            className="flex items-center gap-1 px-2 py-1.5 font-mono text-sm text-emerald-400/60 border border-[#1a3a2a] rounded hover:border-emerald-400/30 hover:text-emerald-400/90 transition-colors"
+            className={`${outlineBtn} ${outlineIdle}`}
           >
             <RotateCcw className="w-3 h-3" />
             Annulla
@@ -349,17 +347,7 @@ export function DocumentEditorToolbar() {
   }
 
   if (dictionaryMode && activeTab === EDITOR_TAB_IDS.document) {
-    return (
-      <button
-        type="button"
-        onClick={() => setActiveTab(EDITOR_TAB_IDS.ontology)}
-        disabled={content.loading || !content.tabular}
-        className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-sm font-semibold text-emerald-900 bg-amber-400 rounded hover:bg-amber-300 transition-colors disabled:opacity-40"
-      >
-        <BookOpen className="w-3 h-3" />
-        Ontologia
-      </button>
-    );
+    return <ProjectActionsToolbar />;
   }
 
   return null;

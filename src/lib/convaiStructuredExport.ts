@@ -196,7 +196,7 @@ export function formatStructuredVincoloTokenCatalog(categories: TokenCategory[])
     for (const token of tokens) {
       const range = parseAgeConstraintToken(token);
       const hint = range
-        ? ` → filtro età inclusivo: min=${range.min ?? 'null'}, max=${range.max ?? 'null'}`
+        ? ` → filtro età inclusivo: min=${range.min ?? 'null'}, max=${range.max ?? 'null'}, min_mesi=${range.minMonths ?? 'null'}, max_mesi=${range.maxMonths ?? 'null'}`
         : ' → inferisci dal testo quale dato grezzo chiedere (es. età in anni)';
       lines.push(`  - "${token}"${hint}`);
     }

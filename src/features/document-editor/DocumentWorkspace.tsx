@@ -5,10 +5,17 @@ import { DocumentReader } from '../../components/DocumentViewer/DocumentReader';
 import { useDocumentEditor } from './DocumentEditorContext';
 
 export function DocumentWorkspace() {
-  const { doc, fileUrl, content, onDocUpdated } = useDocumentEditor();
+  const { doc, fileUrl, content, onDocUpdated, updateTabular } = useDocumentEditor();
   return (
     <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden">
-      <DocumentReader doc={doc} fileUrl={fileUrl} content={content} onDocUpdated={onDocUpdated} />
+      <DocumentReader
+        doc={doc}
+        fileUrl={fileUrl}
+        content={content}
+        onDocUpdated={onDocUpdated}
+        onTabularChange={updateTabular}
+        csvSeparator={content.csvSeparator}
+      />
     </div>
   );
 }

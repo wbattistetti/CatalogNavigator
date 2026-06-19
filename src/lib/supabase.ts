@@ -47,10 +47,22 @@ export interface KbDocument {
   created_at: string;
 }
 
+export type ProjectStatus = 'draft' | 'active';
+
 export interface KbProject {
   id: string;
   name: string;
   description: string | null;
+  client?: string | null;
+  industry?: string | null;
+  industry_custom?: string | null;
+  version_major?: number;
+  version_minor?: number;
+  version_qualifier?: string;
+  language?: string;
+  owner_company?: string | null;
+  owner_client?: string | null;
+  status?: ProjectStatus;
   created_at: string;
   updated_at: string;
 }

@@ -5,7 +5,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -29,7 +28,6 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
   const [splitLayout, setSplitLayoutState] = useState<EditorSplitLayout>({ type: 'single' });
   const [dictionaryTreeFocus, setDictionaryTreeFocus] = useState<DictionaryTreeFocusRequest | null>(null);
   const [dictionaryAliasPick, setDictionaryAliasPick] = useState<DictionaryAliasPickRequest | null>(null);
-  const didAutoOntology = useRef(false);
 
   const projectDictionaryId = useMemo(
     () => controller.dicts.projectDictionaryId ?? controller.dicts.editingDictionaryId,
@@ -42,10 +40,12 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
     ]);
     if (controller.dictionaryMode) {
       tabs.add(EDITOR_TAB_IDS.dictionaries);
+    }
+    if (controller.showOntologyTab) {
       tabs.add(EDITOR_TAB_IDS.ontology);
     }
     return tabs;
-  }, [controller.dictionaryMode]);
+  }, [controller.dictionaryMode, controller.showOntologyTab]);
 
   const setActiveTab = useCallback((tab: EditorTabId) => {
     setActiveTabState(tab);
@@ -61,7 +61,6 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
   }, [visibleTabs]);
 
   useEffect(() => {
-    didAutoOntology.current = false;
     setActiveTabState(EDITOR_TAB_IDS.document);
     setSplitLayoutState({ type: 'single' });
     setDictionaryTreeFocus(null);
@@ -73,11 +72,10 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
   }, [visibleTabs]);
 
   useEffect(() => {
-    if (controller.content.tabular && controller.dictionaryMode && !didAutoOntology.current) {
-      didAutoOntology.current = true;
-      setActiveTabState(EDITOR_TAB_IDS.ontology);
+    if (activeTab === EDITOR_TAB_IDS.ontology && !controller.showOntologyTab) {
+      setActiveTabState(EDITOR_TAB_IDS.document);
     }
-  }, [controller.content.tabular, controller.dictionaryMode]);
+  }, [activeTab, controller.showOntologyTab]);
 
   const openDictionaryTree = useCallback((opts?: { dictionaryId?: string; focusToken?: string }) => {
     const id = opts?.dictionaryId ?? projectDictionaryId;

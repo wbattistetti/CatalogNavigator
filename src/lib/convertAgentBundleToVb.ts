@@ -40,7 +40,13 @@ export interface VbCatalogConcept {
 export interface VbCatalogItem {
   path: string;
   concepts: VbCatalogConcept[];
-  ageConstraints: Array<{ categoryName: string; min: number | null; max: number | null }>;
+  ageConstraints: Array<{
+    categoryName: string;
+    min: number | null;
+    max: number | null;
+    minMonths: number | null;
+    maxMonths: number | null;
+  }>;
 }
 
 export interface VbDisambiguationMessage {
@@ -187,6 +193,8 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
         categoryName: c.categoryName,
         min: c.min,
         max: c.max,
+        minMonths: c.minMonths,
+        maxMonths: c.maxMonths,
       })),
   }));
 

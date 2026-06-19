@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectSeparator, parseTabularText } from './parseTabular';
+import { detectSeparator, parseTabularText, serializeTabularWithSeparator } from './parseTabular';
 
 describe('detectSeparator', () => {
   it('prefers tab for TSV', () => {
@@ -39,5 +39,13 @@ describe('parseTabularText', () => {
 
   it('returns null for single-column files', () => {
     expect(parseTabularText('only_one_column\nvalue')).toBeNull();
+  });
+});
+
+describe('serializeTabularWithSeparator', () => {
+  it('round-trips semicolon CSV', () => {
+    const text = 'a;b\nc;d';
+    const parsed = parseTabularText(text)!;
+    expect(serializeTabularWithSeparator(parsed, ';')).toBe(text);
   });
 });

@@ -13,6 +13,8 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
     dicts,
     descriptionColumn,
     ontologyColumns,
+    descriptionColumns,
+    corpusFromSelectorFallback,
     onDocUpdated,
     setDictState,
     handleDictionaryAfterSave,
@@ -50,6 +52,8 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
       tabular={content.tabular}
       dicts={dicts}
       ontologyColumns={ontologyColumns}
+      descriptionColumns={descriptionColumns}
+      corpusFromSelectorFallback={corpusFromSelectorFallback}
       descriptionColumn={descriptionColumn}
       onDocUpdated={onDocUpdated}
       onStateChange={setDictState}

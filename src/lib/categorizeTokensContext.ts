@@ -2,10 +2,7 @@
  * Builds corpus context for AI token → category assignment.
  */
 import type { ColumnRole } from '../../lib/supabase';
-import {
-  buildCorpusDescriptionsFromColumns,
-  resolveOntologyColumns,
-} from './columnRoles';
+import { buildCorpusDescriptionsFromColumns, resolveCorpusColumns } from './columnRoles';
 import { normalizeCategoryOrders, rootTokenTexts, type TokenCategory } from './dictionaryTree';
 import type { TokenEntry } from './tokenDictionary';
 import { findHighlightSpans } from './tokenDictionary';
@@ -65,7 +62,7 @@ export function extractDescriptions(
   rows: string[][],
   columnRoles: Record<string, ColumnRole>,
 ): string[] {
-  const columns = resolveOntologyColumns(headers, columnRoles);
+  const columns = resolveCorpusColumns(headers, columnRoles);
   return buildCorpusDescriptionsFromColumns(headers, rows, columns).filter(Boolean);
 }
 

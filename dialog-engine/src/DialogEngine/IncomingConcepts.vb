@@ -11,7 +11,7 @@ Public Module IncomingConcepts
         If concept.Category <> pending.CategoryName Then Return False
 
         If String.Equals(pending.ValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase) Then
-            Return ResolveTurnAge.ParseAgeYearsFromSlotValue(concept.Value).HasValue
+            Return ResolveTurnAge.HasResolvedAgeQuantity(concept)
         End If
 
         Return Not String.IsNullOrWhiteSpace(concept.Value)

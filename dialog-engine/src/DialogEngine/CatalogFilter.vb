@@ -40,7 +40,7 @@ Public Module CatalogFilter
         If String.IsNullOrWhiteSpace(concept.Category) Then Return False
 
         If concept.Kind = Models.ConceptKind.Vincolo Then
-            Return ItemSatisfiesVincoloConcept(item, concept.Value)
+            Return ItemSatisfiesVincoloConcept(item, concept)
         End If
 
         If String.Equals(concept.Value, CategoryTypes.MissingCategoryValue, StringComparison.OrdinalIgnoreCase) OrElse
@@ -55,10 +55,12 @@ Public Module CatalogFilter
         )
     End Function
 
-    Private Function ItemSatisfiesVincoloConcept(item As Models.CatalogItem, value As String) As Boolean
-        Dim age = ResolveTurnAge.ParseAgeYearsFromSlotValue(value)
-        If Not age.HasValue Then Return True
-        Return ConstraintValidation.PathSatisfiesAgeConstraints(age.Value, item.AgeConstraints)
+    Private Function ItemSatisfiesVincoloConcept(item As Models.CatalogItem, concept As Models.Concept) As Boolean
+        Dim totalMonths = ResolveTurnAge.ParseAgeTotalMonthsFromConcept(concept)
+        If Not totalMonths.HasValue Then Return True
+        Return ConstraintValidation.PathSatisfiesAgeConstraintsFromTotalMonths(
+            totalMonths.Value,
+            item.AgeConstraints)
     End Function
 
     Private Function ItemMissingCategoryValue(item As Models.CatalogItem, categoryName As String) As Boolean

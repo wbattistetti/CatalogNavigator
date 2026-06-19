@@ -463,7 +463,7 @@ export function segmentDescription(
   return segmentDescriptionGrammarAware(text, tokens, categories, prebuiltMatchPhrases);
 }
 
-/** Matched dictionary tokens in order (one entry per tree level). */
+/** Matched dictionary tokens in category order (multiple per category allowed). */
 export function getTokenBullets(
   text: string,
   tokens: TokenEntry[],

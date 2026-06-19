@@ -2,14 +2,13 @@
  * Document editor shell: fast tab strip + stacked workspaces; drag tab to split.
  */
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
-import { DocumentEditorHeader } from './DocumentEditorHeader';
-import { DocumentEditorToolbar } from './DocumentEditorToolbar';
+import { ProjectToolbarPortal, PROJECT_LEFT_ACTIONS_SLOT_ID } from './ProjectToolbarPortal';
+import { DocumentEditorToolbar, ProjectLeftActions } from './DocumentEditorToolbar';
 import { DocumentEditorTabStrip } from './DocumentEditorTabStrip';
 import { DocumentEditorWorkspace } from './DocumentEditorWorkspace';
 import { DocumentEditorTestRail } from './DocumentEditorTestRail';
 import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
 import { DocumentEditorAgentOverlays } from './DocumentEditorAgentOverlays';
-import { AffinaTaxonomyPanel } from './AffinaTaxonomyPanel';
 import { ResizableTestRail } from './ResizableTestRail';
 import { OntologyRefreshProgressBar } from './OntologyRefreshProgressBar';
 import { EDITOR_TAB_IDS } from './editorTabIds';
@@ -38,39 +37,24 @@ export function DocumentEditorShell() {
     testOpen,
     messagesPanelOpen,
     setMessagesPanelOpen,
-    affinaOpen,
-    setAffinaOpen,
-    analysisApi,
   } = useDocumentEditorController();
-
-  const { generating, generatingPhase, refineTaxonomy, hasTaxonomy } = analysisApi;
 
   const showTestRail = testOpen
     && dictionaryMode
     && (activeTab === EDITOR_TAB_IDS.ontology || messagesPanelOpen);
 
-  const handleAffinaSubmit = (notes: string) => {
-    void refineTaxonomy(notes);
-    setAffinaOpen(false);
-  };
-
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
-      <DocumentEditorHeader />
-
-      <div className="flex-shrink-0 flex flex-wrap items-end justify-between gap-x-2 gap-y-1 px-2 border-b border-[#1a3a2a] bg-[#080e0a] min-w-0 max-w-full overflow-x-auto scrollbar-thin">
-        <DocumentEditorTabStrip />
+      <ProjectToolbarPortal slotId={PROJECT_LEFT_ACTIONS_SLOT_ID}>
+        <ProjectLeftActions />
+      </ProjectToolbarPortal>
+      <ProjectToolbarPortal>
         <DocumentEditorToolbar />
-      </div>
+      </ProjectToolbarPortal>
 
-      {affinaOpen && hasTaxonomy && (
-        <AffinaTaxonomyPanel
-          onClose={() => setAffinaOpen(false)}
-          onSubmit={handleAffinaSubmit}
-          generating={generating && generatingPhase === 'taxonomy'}
-          hasTaxonomy={hasTaxonomy}
-        />
-      )}
+      <div className="flex-shrink-0 px-2 border-b border-[#1a3a2a] bg-[#080e0a] min-w-0 max-w-full overflow-x-auto scrollbar-thin">
+        <DocumentEditorTabStrip />
+      </div>
 
       <DisambiguationGenerationProgress />
       <OntologyRefreshProgressBar />

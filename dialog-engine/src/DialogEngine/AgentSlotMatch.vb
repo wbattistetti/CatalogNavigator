@@ -36,7 +36,7 @@ Public Module AgentSlotMatch
         candidates As IList(Of Models.CatalogItem),
         conversation As Models.AgentSessionState
     ) As Boolean
-        If ConceptOps.FindAcquiredAgeYears(AcquiredList(conversation)).HasValue Then Return False
+        If ConceptOps.HasAcquiredAgeQuantity(AcquiredList(conversation)) Then Return False
         If candidates Is Nothing OrElse candidates.Count <= 1 Then Return False
 
         If AnyItemHasAgeConstraint(candidates) Then

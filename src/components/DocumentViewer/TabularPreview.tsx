@@ -1,14 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Eye, EyeOff, Loader2, Trash2 } from 'lucide-react';
 import type { ColumnRole, KbDocument } from '../../lib/supabase';
 import { persistDocumentColumnRoles } from '../../lib/columnRoles';
+import { persistTabularDocument } from '../../lib/persistTabularDocument';
 import type { ParsedTabular } from '../../lib/parseTabular';
 
 interface TabularPreviewProps {
+  doc: KbDocument;
   tabular: ParsedTabular;
-  docId: string;
+  csvSeparator?: '\t' | ';' | ',' | null;
   initialRoles?: Record<string, ColumnRole>;
   onDocUpdated?: (doc: KbDocument) => void;
+  onTabularChange?: (tabular: ParsedTabular) => void;
 }
 
 const ROLE_CONFIG: Record<ColumnRole, {
@@ -56,9 +59,103 @@ const ROLE_CONFIG: Record<ColumnRole, {
     btnActive: 'bg-gray-600/25 text-gray-300 border-gray-500/40',
     btnInactive: 'text-gray-400/35 hover:text-gray-300/60 border-[#1a3a2a] hover:bg-gray-700/20',
   },
+  ontology: {
+    label: 'Descrizione',
+    thBg: 'bg-amber-900/20',
+    thText: 'text-amber-200/80',
+    tdBg: 'bg-amber-900/[0.07]',
+    dot: 'bg-amber-400',
+    btnActive: 'bg-amber-500/25 text-amber-300 border-amber-500/40',
+    btnInactive: 'text-amber-400/40 hover:text-amber-300/80 border-[#1a3a2a] hover:bg-amber-900/20',
+  },
 };
 
 const ROLES: ColumnRole[] = ['description', 'selector', 'data', 'ignore'];
+
+const TOOLBAR_HIDE_DELAY_MS = 320;
+
+interface ColumnHeaderProps {
+  header: string;
+  isFirstVisible: boolean;
+  role: ColumnRole | undefined;
+  cfg: (typeof ROLE_CONFIG)[ColumnRole] | null;
+  width: number;
+  isFlexColumn: boolean;
+  rowCountLabel: string;
+  isToolbarOpen: boolean;
+  onOpenToolbar: () => void;
+  onScheduleCloseToolbar: () => void;
+  onRoleChange: (role: ColumnRole) => void;
+}
+
+function ColumnHeader({
+  header,
+  isFirstVisible,
+  role,
+  cfg,
+  width,
+  isFlexColumn,
+  rowCountLabel,
+  isToolbarOpen,
+  onOpenToolbar,
+  onScheduleCloseToolbar,
+  onRoleChange,
+}: ColumnHeaderProps) {
+  return (
+    <th
+      className={`relative px-3 pt-2 pb-1.5 font-mono text-xs font-semibold uppercase tracking-wider whitespace-nowrap border-r border-[#1a3a2a] last:border-r-0 select-none transition-colors align-top ${
+        cfg ? `${cfg.thBg} ${cfg.thText}` : 'bg-[#0a1510] text-emerald-400/70'
+      }`}
+      style={isFlexColumn ? { minWidth: width } : { width, maxWidth: width }}
+    >
+      <div
+        className="relative"
+        onMouseEnter={onOpenToolbar}
+        onMouseLeave={onScheduleCloseToolbar}
+      >
+        <div className="flex items-center gap-1.5 mb-1 min-w-0">
+          {cfg && (
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+          )}
+          <span className={isFlexColumn ? '' : 'truncate'}>{header}</span>
+          {isFirstVisible && (
+            <span className="flex-shrink-0 font-mono text-[9px] font-normal normal-case tracking-normal text-emerald-400/40 tabular-nums">
+              {rowCountLabel}
+            </span>
+          )}
+        </div>
+
+        {isToolbarOpen && (
+          <div className="absolute left-0 top-full z-30 pt-2">
+            <div className="flex items-center gap-0.5 rounded border border-[#1a3a2a] bg-[#0a1510] p-0.5 shadow-lg">
+              {ROLES.map((r) => {
+                const rcfg = ROLE_CONFIG[r];
+                const isActive = role === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      onRoleChange(r);
+                    }}
+                    className={`px-1.5 py-0.5 font-mono text-[10px] rounded border transition-all ${
+                      isActive ? rcfg.btnActive : rcfg.btnInactive
+                    }`}
+                  >
+                    {rcfg.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </th>
+  );
+}
+
+const FIXED_COLUMN_MAX_PX = 420;
 
 /** Shrink-wrap column width to cell content (mono ~7px per char + horizontal padding). */
 function autoColumnWidthPx(
@@ -66,27 +163,68 @@ function autoColumnWidthPx(
   rows: string[][],
   colIdx: number,
   extraHeaderChars = 0,
+  maxPx = FIXED_COLUMN_MAX_PX,
 ): number {
   const CHAR_PX = 7;
   const PADDING_PX = 36;
   const MIN_PX = 56;
-  const MAX_PX = 420;
   let maxChars = header.length + extraHeaderChars;
   for (const row of rows) {
     maxChars = Math.max(maxChars, (row[colIdx] ?? '').length);
   }
-  return Math.min(MAX_PX, Math.max(MIN_PX, maxChars * CHAR_PX + PADDING_PX));
+  return Math.min(maxPx, Math.max(MIN_PX, maxChars * CHAR_PX + PADDING_PX));
 }
 
-export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated }: TabularPreviewProps) {
-  const { headers, rows } = tabular;
+function isDescriptionLikeColumn(header: string, role: ColumnRole | undefined): boolean {
+  if (role === 'description' || role === 'ontology') return true;
+  return /descri|nome\s*visita/i.test(header);
+}
+
+export function TabularPreview({
+  doc,
+  tabular,
+  csvSeparator = null,
+  initialRoles = {},
+  onDocUpdated,
+  onTabularChange,
+}: TabularPreviewProps) {
+  const [localTabular, setLocalTabular] = useState(tabular);
+  const { headers, rows } = localTabular;
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [columnRoles, setColumnRoles] = useState<Record<string, ColumnRole>>(initialRoles);
+  const [openToolbarCol, setOpenToolbarCol] = useState<string | null>(null);
+  const [deletingSourceIndex, setDeletingSourceIndex] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const hideToolbarTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setLocalTabular(tabular);
+  }, [tabular, doc.id]);
+
+  const openToolbar = useCallback((col: string) => {
+    if (hideToolbarTimer.current) {
+      clearTimeout(hideToolbarTimer.current);
+      hideToolbarTimer.current = null;
+    }
+    setOpenToolbarCol(col);
+  }, []);
+
+  const scheduleCloseToolbar = useCallback(() => {
+    if (hideToolbarTimer.current) clearTimeout(hideToolbarTimer.current);
+    hideToolbarTimer.current = setTimeout(() => {
+      setOpenToolbarCol(null);
+      hideToolbarTimer.current = null;
+    }, TOOLBAR_HIDE_DELAY_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (hideToolbarTimer.current) clearTimeout(hideToolbarTimer.current);
+  }, []);
 
   useEffect(() => {
     setColumnRoles(initialRoles);
-  }, [initialRoles, docId]);
+  }, [initialRoles, doc.id]);
 
   const visibleIndices = headers.reduce<number[]>((acc, h, i) => {
     if (!showAll && columnRoles[h] === 'ignore') return acc;
@@ -94,11 +232,14 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
     return acc;
   }, []);
 
-  const filtered = filter
-    ? rows.filter((row) =>
-        visibleIndices.some((ci) => row[ci]?.toLowerCase().includes(filter.toLowerCase()))
-      )
-    : rows;
+  const filteredEntries = useMemo(() => {
+    const entries = rows.map((row, sourceIndex) => ({ row, sourceIndex }));
+    if (!filter) return entries;
+    const needle = filter.toLowerCase();
+    return entries.filter(({ row }) =>
+      visibleIndices.some((ci) => row[ci]?.toLowerCase().includes(needle)),
+    );
+  }, [rows, filter, visibleIndices]);
 
   const sortColIdx = useMemo(() => {
     const byRole = headers.findIndex((h) => columnRoles[h] === 'description');
@@ -108,15 +249,36 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
     return visibleIndices[0] ?? 0;
   }, [headers, columnRoles, visibleIndices]);
 
-  const sortedRows = useMemo(
+  const sortedEntries = useMemo(
     () =>
-      [...filtered].sort((a, b) =>
-        (a[sortColIdx] ?? '').localeCompare(b[sortColIdx] ?? '', 'it', { sensitivity: 'base' }),
+      [...filteredEntries].sort((a, b) =>
+        (a.row[sortColIdx] ?? '').localeCompare(b.row[sortColIdx] ?? '', 'it', { sensitivity: 'base' }),
       ),
-    [filtered, sortColIdx],
+    [filteredEntries, sortColIdx],
   );
 
   const ignoredCount = headers.filter((h) => columnRoles[h] === 'ignore').length;
+
+  const flexColumnVi = useMemo(() => {
+    const byRole = visibleIndices.findIndex((ci) =>
+      isDescriptionLikeColumn(headers[ci]!, columnRoles[headers[ci]!]),
+    );
+    if (byRole >= 0) return byRole;
+
+    let bestVi = visibleIndices.length - 1;
+    let bestChars = 0;
+    visibleIndices.forEach((ci, vi) => {
+      let maxChars = headers[ci]!.length;
+      for (const row of rows) {
+        maxChars = Math.max(maxChars, (row[ci] ?? '').length);
+      }
+      if (maxChars > bestChars) {
+        bestChars = maxChars;
+        bestVi = vi;
+      }
+    });
+    return bestVi;
+  }, [headers, rows, visibleIndices, columnRoles]);
 
   const columnWidths = useMemo(
     () =>
@@ -126,9 +288,10 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
           rows,
           ci,
           vi === 0 ? ` ${rows.length} righe`.length : 0,
+          vi === flexColumnVi ? Number.POSITIVE_INFINITY : FIXED_COLUMN_MAX_PX,
         ),
       ),
-    [headers, rows, visibleIndices],
+    [headers, rows, visibleIndices, flexColumnVi],
   );
 
   const handleRoleChange = async (colName: string, role: ColumnRole) => {
@@ -146,12 +309,40 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
     }
     setColumnRoles(newRoles);
     try {
-      const fresh = await persistDocumentColumnRoles(docId, newRoles);
+      const fresh = await persistDocumentColumnRoles(doc.id, newRoles);
       onDocUpdated?.(fresh);
     } catch {
       setColumnRoles(previousRoles);
     }
   };
+
+  const handleDeleteRow = useCallback(async (sourceIndex: number) => {
+    const row = rows[sourceIndex];
+    if (!row) return;
+
+    const label = (row[sortColIdx] ?? '').trim() || `riga ${sourceIndex + 1}`;
+    if (!window.confirm(`Eliminare "${label}" dal documento originale?`)) return;
+
+    const nextTabular: ParsedTabular = {
+      headers: localTabular.headers,
+      rows: localTabular.rows.filter((_, idx) => idx !== sourceIndex),
+    };
+
+    setDeleteError(null);
+    setDeletingSourceIndex(sourceIndex);
+    try {
+      const freshDoc = await persistTabularDocument(doc, nextTabular, {
+        csvSeparator: csvSeparator ?? undefined,
+      });
+      setLocalTabular(nextTabular);
+      onTabularChange?.(nextTabular);
+      onDocUpdated?.(freshDoc);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Eliminazione fallita');
+    } finally {
+      setDeletingSourceIndex(null);
+    }
+  }, [csvSeparator, doc, localTabular.headers, localTabular.rows, onDocUpdated, onTabularChange, rows, sortColIdx]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
@@ -177,91 +368,99 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
             {showAll ? 'Nascondi escluse' : `+${ignoredCount} escluse`}
           </button>
         )}
+        {deleteError && (
+          <span className="flex-shrink-0 font-mono text-[10px] text-red-400">{deleteError}</span>
+        )}
       </div>
 
       {/* Table — h-0 + flex-1 forces scroll inside viewport instead of expanding the page */}
       <div className="flex-1 min-h-0 h-0 min-w-0 w-full max-w-full overflow-auto overscroll-contain">
-        <table className="text-left border-collapse w-max table-auto">
+        <table className="text-left border-collapse w-full table-fixed">
           <colgroup>
+            <col style={{ width: 40 }} />
             {visibleIndices.map((ci, vi) => (
-              <col key={ci} style={{ width: columnWidths[vi] }} />
+              <col
+                key={ci}
+                style={
+                  vi === flexColumnVi
+                    ? { minWidth: columnWidths[vi] }
+                    : { width: columnWidths[vi] }
+                }
+              />
             ))}
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-[#1a3a2a]">
+              <th className="px-1 py-2 font-mono text-[10px] uppercase tracking-wider text-emerald-400/40 border-r border-[#1a3a2a] bg-[#0a1510] w-10" />
               {visibleIndices.map((ci, vi) => {
                 const h = headers[ci]!;
                 const role = columnRoles[h];
                 const cfg = role ? ROLE_CONFIG[role] : null;
 
                 return (
-                  <th
+                  <ColumnHeader
                     key={ci}
-                    className={`group relative px-3 pt-2 pb-1.5 font-mono text-xs font-semibold uppercase tracking-wider whitespace-nowrap border-r border-[#1a3a2a] last:border-r-0 select-none transition-colors align-top ${
-                      cfg ? `${cfg.thBg} ${cfg.thText}` : 'bg-[#0a1510] text-emerald-400/70'
-                    }`}
-                    style={{ width: columnWidths[vi], maxWidth: columnWidths[vi] }}
-                  >
-                    {/* Header row */}
-                    <div className="flex items-center gap-1.5 mb-1 min-w-0">
-                      {cfg && (
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                      )}
-                      <span className="truncate">{h}</span>
-                      {ci === visibleIndices[0] && (
-                        <span className="flex-shrink-0 font-mono text-[9px] font-normal normal-case tracking-normal text-emerald-400/40 tabular-nums">
-                          {filter ? `${filtered.length}/${rows.length}` : rows.length} righe
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Role toolbar — hidden from layout until hover so columns stay auto-sized */}
-                    <div className="absolute left-0 top-full z-20 mt-0.5 hidden group-hover:flex items-center gap-0.5 rounded border border-[#1a3a2a] bg-[#0a1510] p-0.5 shadow-lg">
-                      {ROLES.map((r) => {
-                        const rcfg = ROLE_CONFIG[r];
-                        const isActive = role === r;
-                        return (
-                          <button
-                            key={r}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              handleRoleChange(h, r);
-                            }}
-                            className={`px-1.5 py-0.5 font-mono text-[10px] rounded border transition-all ${
-                              isActive ? rcfg.btnActive : rcfg.btnInactive
-                            }`}
-                          >
-                            {rcfg.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </th>
+                    header={h}
+                    isFirstVisible={ci === visibleIndices[0]}
+                    role={role}
+                    cfg={cfg}
+                    width={columnWidths[vi]!}
+                    isFlexColumn={vi === flexColumnVi}
+                    rowCountLabel={filter ? `${filteredEntries.length}/${rows.length} righe` : `${rows.length} righe`}
+                    isToolbarOpen={openToolbarCol === h}
+                    onOpenToolbar={() => openToolbar(h)}
+                    onScheduleCloseToolbar={scheduleCloseToolbar}
+                    onRoleChange={(r) => void handleRoleChange(h, r)}
+                  />
                 );
               })}
             </tr>
           </thead>
           <tbody>
-            {sortedRows.map((row, ri) => (
+            {sortedEntries.map(({ row, sourceIndex }, ri) => (
               <tr
-                key={ri}
+                key={sourceIndex}
                 className={`border-b border-[#111] hover:brightness-110 transition-colors ${
                   ri % 2 === 0 ? 'bg-[#0d0d0d]' : 'bg-[#0f0f0f]'
                 }`}
               >
+                <td className="px-1 py-1.5 border-r border-[#111] text-center align-middle w-10">
+                  <button
+                    type="button"
+                    title="Elimina riga dal documento"
+                    disabled={deletingSourceIndex !== null}
+                    onClick={() => void handleDeleteRow(sourceIndex)}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded border border-transparent text-red-400/45 hover:text-red-300 hover:border-red-400/30 hover:bg-red-400/10 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                  >
+                    {deletingSourceIndex === sourceIndex ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </td>
                 {visibleIndices.map((ci, vi) => {
                   const h = headers[ci]!;
                   const role = columnRoles[h];
                   const cfg = role ? ROLE_CONFIG[role] : null;
                   const cell = row[ci] ?? '';
+                  const isFlexColumn = vi === flexColumnVi;
                   return (
                     <td
                       key={ci}
-                      title={cell}
-                      className={`px-3 py-1.5 font-mono text-xs whitespace-nowrap border-r border-[#111] last:border-r-0 transition-colors overflow-hidden text-ellipsis ${
-                        cfg ? cfg.tdBg : ''
-                      } ${role === 'ignore' ? 'text-gray-400/35' : 'text-emerald-300/80'}`}
-                      style={{ width: columnWidths[vi], maxWidth: columnWidths[vi] }}
+                      title={isFlexColumn ? undefined : cell}
+                      className={`px-3 py-1.5 font-mono text-xs border-r border-[#111] last:border-r-0 transition-colors ${
+                        isFlexColumn
+                          ? 'whitespace-normal break-words'
+                          : 'whitespace-nowrap overflow-hidden text-ellipsis'
+                      } ${cfg ? cfg.tdBg : ''} ${
+                        role === 'ignore' ? 'text-gray-400/35' : 'text-emerald-300/80'
+                      }`}
+                      style={
+                        isFlexColumn
+                          ? { minWidth: columnWidths[vi] }
+                          : { width: columnWidths[vi], maxWidth: columnWidths[vi] }
+                      }
                     >
                       {cell}
                     </td>
@@ -271,7 +470,7 @@ export function TabularPreview({ tabular, docId, initialRoles = {}, onDocUpdated
             ))}
           </tbody>
         </table>
-        {filtered.length === 0 && (
+        {filteredEntries.length === 0 && (
           <div className="flex items-center justify-center py-12 text-emerald-400/30 font-mono text-sm">
             no matching rows
           </div>

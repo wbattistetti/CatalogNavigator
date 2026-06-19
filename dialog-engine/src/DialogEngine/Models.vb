@@ -97,6 +97,10 @@ Namespace Models
         Public Property CategoryName As String
         Public Property Min As Integer?
         Public Property Max As Integer?
+        ''' <summary>Inclusive lower bound in total months (preferred when set).</summary>
+        Public Property MinMonths As Integer?
+        ''' <summary>Inclusive upper bound in total months (preferred when set).</summary>
+        Public Property MaxMonths As Integer?
     End Class
 
     ''' <summary>Category + canonical value; Kind (attributo/vincolo) set on catalog items only.</summary>

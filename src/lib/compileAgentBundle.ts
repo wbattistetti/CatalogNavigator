@@ -30,6 +30,8 @@ function compileVincoloConstraint(
       askKey: 'age_years',
       min: ageRange.min,
       max: ageRange.max,
+      minMonths: ageRange.minMonths,
+      maxMonths: ageRange.maxMonths,
       sourceToken: tokenText,
     };
   }

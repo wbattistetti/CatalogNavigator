@@ -25,6 +25,37 @@ export function pathSatisfiesAgeConstraints(
   return ageRules.every((rule) => satisfiesAgeYears(age, rule.min, rule.max));
 }
 
+/** Inclusive age check against compiled min/max bounds (years or total months). */
+export function satisfiesAgeTotalMonths(
+  totalMonths: number,
+  min: number | null,
+  max: number | null,
+  minMonths: number | null,
+  maxMonths: number | null,
+): boolean {
+  if (!Number.isFinite(totalMonths) || totalMonths < 0) return false;
+  if (minMonths != null || maxMonths != null) {
+    if (minMonths != null && totalMonths < minMonths) return false;
+    if (maxMonths != null && totalMonths > maxMonths) return false;
+    return true;
+  }
+  if (min != null && totalMonths < min * 12) return false;
+  if (max != null && totalMonths > max * 12 + 11) return false;
+  return true;
+}
+
+/** True when every age constraint on the path accepts the given total months. */
+export function pathSatisfiesAgeConstraintsFromTotalMonths(
+  totalMonths: number,
+  constraints: CompiledAgeConstraint[],
+): boolean {
+  const ageRules = constraints.filter((c) => c.kind === 'age_years');
+  if (ageRules.length === 0) return true;
+  return ageRules.every((rule) =>
+    satisfiesAgeTotalMonths(totalMonths, rule.min, rule.max, rule.minMonths, rule.maxMonths),
+  );
+}
+
 /** Italian cardinal words commonly spoken as patient age (voice input). */
 const ITALIAN_AGE_WORDS: Readonly<Record<string, number>> = {
   zero: 0,

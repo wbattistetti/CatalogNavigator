@@ -151,6 +151,8 @@ describe('compileDisambiguationPlan — age expansion', () => {
         askKey: 'age_years' as const,
         min: 18,
         max: null,
+        minMonths: 216,
+        maxMonths: null,
         sourceToken: 'adulti',
       }],
     }));

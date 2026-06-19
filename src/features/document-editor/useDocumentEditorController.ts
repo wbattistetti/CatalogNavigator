@@ -23,8 +23,15 @@ import { useAnalysis, type GrammarEditTarget } from '../../hooks/useAnalysis';
 import { useDocumentContent } from '../../hooks/useDocumentContent';
 import {
   buildCorpusDescriptionsFromColumns,
+  buildSelectorLeafPaths,
+  corpusUsesSelectorFallback,
+  hasSelectorColumn,
   primaryOntologyColumn,
-  resolveOntologyColumns,
+  resolveCorpusColumns,
+  resolveDataColumns,
+  resolveDescriptionColumns,
+  resolveSelectorColumns,
+  shouldShowOntologyTab,
 } from '../../lib/columnRoles';
 import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRefresh';
 
@@ -42,7 +49,6 @@ export function useDocumentEditorController({
   onDocUpdated,
 }: UseDocumentEditorControllerOptions) {
   const [dictState, setDictState] = useState<DictionaryPanelState | null>(null);
-  const [affinaOpen, setAffinaOpen] = useState(false);
   const [messagesPanelOpen, setMessagesPanelOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [convaiOpen, setConvaiOpen] = useState(false);
@@ -53,14 +59,51 @@ export function useDocumentEditorController({
 
   const dictionaryMode = supportsDictionaryFormat(doc.format);
   const content = useDocumentContent(doc, fileUrl);
+  const { updateTabular } = content;
   const documentText = content.text;
+  const columnRoles = doc.column_roles ?? {};
 
   const ontologyColumns = useMemo(
     () => (content.tabular
-      ? resolveOntologyColumns(content.tabular.headers, doc.column_roles ?? {})
+      ? resolveCorpusColumns(content.tabular.headers, columnRoles)
       : []),
-    [content.tabular, doc.column_roles],
+    [content.tabular, columnRoles],
   );
+
+  const descriptionColumns = useMemo(
+    () => (content.tabular
+      ? resolveDescriptionColumns(content.tabular.headers, columnRoles)
+      : []),
+    [content.tabular, columnRoles],
+  );
+
+  const corpusFromSelectorFallback = useMemo(
+    () => (content.tabular
+      ? corpusUsesSelectorFallback(content.tabular.headers, columnRoles)
+      : false),
+    [content.tabular, columnRoles],
+  );
+
+  const selectorColumns = useMemo(
+    () => (content.tabular
+      ? resolveSelectorColumns(content.tabular.headers, columnRoles)
+      : []),
+    [content.tabular, columnRoles],
+  );
+
+  const dataColumns = useMemo(
+    () => (content.tabular
+      ? resolveDataColumns(content.tabular.headers, columnRoles)
+      : []),
+    [content.tabular, columnRoles],
+  );
+
+  const selectorLeafPaths = useMemo(() => {
+    if (!content.tabular || !hasSelectorColumn(columnRoles)) {
+      return { leafPaths: [] as string[], leafSourceData: {} as Record<string, Array<Record<string, string>>> };
+    }
+    return buildSelectorLeafPaths(content.tabular, columnRoles);
+  }, [content.tabular, columnRoles]);
 
   const descriptionColumn = useMemo(
     () => primaryOntologyColumn(ontologyColumns),
@@ -78,11 +121,21 @@ export function useDocumentEditorController({
     bindGrammarTokens,
     bindPathOrderingCategories,
     syncGrammarsFromTokens,
+    hasTaxonomy,
   } = analysisApi;
+
+  const showOntologyTab = useMemo(
+    () => dictionaryMode
+      && !!content.tabular
+      && shouldShowOntologyTab(content.tabular.headers, columnRoles, {
+        hasSavedTaxonomy: hasTaxonomy,
+        hasTokenDictionary: !!doc.token_dictionary,
+      }),
+    [dictionaryMode, content.tabular, columnRoles, hasTaxonomy, doc.token_dictionary],
+  );
 
   useEffect(() => {
     setDictState(null);
-    setAffinaOpen(false);
     setMessagesPanelOpen(false);
     setTestOpen(false);
     setConvaiOpen(false);
@@ -133,21 +186,21 @@ export function useDocumentEditorController({
     }
     const saved = doc.token_dictionary;
     const descCol = saved?.descriptionColumn
-      ?? primaryOntologyColumn(resolveOntologyColumns(content.tabular.headers, doc.column_roles ?? {}));
+      ?? primaryOntologyColumn(resolveCorpusColumns(content.tabular.headers, columnRoles));
     if (!saved || !descCol) return null;
     const corpus = buildCorpusDescriptionsFromColumns(
       content.tabular.headers,
       content.tabular.rows,
-      resolveOntologyColumns(content.tabular.headers, doc.column_roles ?? {}),
+      resolveCorpusColumns(content.tabular.headers, columnRoles),
     ).filter(Boolean);
     const tokens = loadSavedTokens(saved, descCol);
     if (tokens.length === 0 || corpus.length === 0) return null;
     const { rows } = segmentAllDescriptions(corpus, tokens, saved?.categories ?? []);
     return buildLeafDescriptionMap(rows);
-  }, [content.tabular, dictState, doc.token_dictionary, doc.column_roles]);
+  }, [content.tabular, dictState, doc.token_dictionary, columnRoles]);
 
   const agentDictionaryContext = useMemo((): AgentDictionaryContext | null => {
-    if (!dictionaryMode || !content.tabular || ontologyColumns.length === 0) return null;
+    if (!dictionaryMode || !content.tabular || !showOntologyTab || ontologyColumns.length === 0) return null;
     if (dicts.loadedRefs.length === 0) return null;
 
     const liveRefs = mergeAllDictionarySessionsIntoLoadedRefs(
@@ -239,13 +292,13 @@ export function useDocumentEditorController({
     }
     const saved = doc.token_dictionary;
     const descCol = saved?.descriptionColumn
-      ?? primaryOntologyColumn(resolveOntologyColumns(
+      ?? primaryOntologyColumn(resolveCorpusColumns(
         content.tabular?.headers ?? [],
-        doc.column_roles ?? {},
+        columnRoles,
       ));
     if (!saved || !descCol) return [];
     return loadSavedTokens(saved, descCol);
-  }, [agentDictionaryContext, doc.token_dictionary, doc.column_roles, content.tabular]);
+  }, [agentDictionaryContext, doc.token_dictionary, columnRoles, content.tabular]);
 
   useEffect(() => {
     bindGrammarTokens(grammarTokens);
@@ -391,10 +444,16 @@ export function useDocumentEditorController({
     fileUrl,
     onDocUpdated,
     content,
+    updateTabular,
     dictionaryMode,
+    showOntologyTab,
     ontologyColumns,
+    descriptionColumns,
+    corpusFromSelectorFallback,
+    selectorColumns,
+    dataColumns,
+    selectorLeafPaths,
     descriptionColumn,
-    ontologyColumns,
     documentText,
     dicts,
     dictionaryCatalog,
@@ -402,8 +461,6 @@ export function useDocumentEditorController({
     analysisApi,
     dictState,
     setDictState: handleDictStateChange,
-    affinaOpen,
-    setAffinaOpen,
     messagesPanelOpen,
     setMessagesPanelOpen,
     testOpen,

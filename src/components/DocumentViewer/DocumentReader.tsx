@@ -6,6 +6,7 @@ import { ImageViewer } from './viewers/ImageViewer';
 import { TabularPreview } from './TabularPreview';
 import { TextViewer } from './TextViewer';
 import type { KbDocument } from '../../lib/supabase';
+import type { ParsedTabular } from '../../lib/parseTabular';
 import type { DocumentContent } from '../../hooks/useDocumentContent';
 
 interface DocumentReaderProps {
@@ -13,9 +14,18 @@ interface DocumentReaderProps {
   fileUrl: string;
   content: DocumentContent;
   onDocUpdated?: (doc: KbDocument) => void;
+  onTabularChange?: (tabular: ParsedTabular) => void;
+  csvSeparator?: '\t' | ';' | ',' | null;
 }
 
-export function DocumentReader({ doc, fileUrl, content, onDocUpdated }: DocumentReaderProps) {
+export function DocumentReader({
+  doc,
+  fileUrl,
+  content,
+  onDocUpdated,
+  onTabularChange,
+  csvSeparator = null,
+}: DocumentReaderProps) {
   const { tabular, textContent, loading, error } = content;
   const viewportClass = 'flex flex-1 min-h-0 min-w-0 overflow-hidden';
   const columnShellClass = `${viewportClass} flex-col`;
@@ -63,10 +73,12 @@ export function DocumentReader({ doc, fileUrl, content, onDocUpdated }: Document
   if (tabular) {
     return (
       <TabularPreview
+        doc={doc}
         tabular={tabular}
-        docId={doc.id}
+        csvSeparator={csvSeparator}
         initialRoles={doc.column_roles ?? {}}
         onDocUpdated={onDocUpdated}
+        onTabularChange={onTabularChange}
       />
     );
   }

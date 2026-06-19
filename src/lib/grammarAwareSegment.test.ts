@@ -43,6 +43,59 @@ describe('segmentDescriptionGrammarAware', () => {
     expect(result.path).toBe('cardiologica.prima');
   });
 
+  it('keeps every matched token even when they share a category', () => {
+    const categories: TokenCategory[] = [
+      {
+        id: 'c1',
+        name: 'esame',
+        order: 0,
+        tokenTexts: ['ecg', 'ecocolordoppler cardiaco'],
+        type: 'attributo',
+      },
+      {
+        id: 'c2',
+        name: 'specialità',
+        order: 1,
+        tokenTexts: ['cardiologica', 'pediatrica'],
+        type: 'attributo',
+      },
+      {
+        id: 'c3',
+        name: 'tipo visita',
+        order: 2,
+        tokenTexts: ['prima', 'specialistica'],
+        type: 'attributo',
+      },
+    ];
+    const tokens: TokenEntry[] = [
+      { text: 'ecg', enabled: true },
+      { text: 'ecocolordoppler cardiaco', enabled: true },
+      { text: 'cardiologica', enabled: true },
+      { text: 'pediatrica', enabled: true },
+      { text: 'prima', enabled: true },
+      { text: 'specialistica', enabled: true },
+    ];
+    const withGrammar = applyCategoryGrammars(categories, tokens, true);
+
+    const result = segmentDescriptionGrammarAware(
+      'visita specialistica cardiologica pediatrica ecg ecocolordoppler cardiaco prima',
+      tokens,
+      withGrammar,
+    );
+
+    expect(result.segments).toEqual([
+      'ecg',
+      'ecocolordoppler cardiaco',
+      'cardiologica',
+      'pediatrica',
+      'specialistica',
+      'prima',
+    ]);
+    expect(result.path).toBe(
+      'ecg.ecocolordoppler cardiaco.cardiologica.pediatrica.specialistica.prima',
+    );
+  });
+
   it('ignores stale category grammar for a deleted token', () => {
     const categories: TokenCategory[] = [
       {

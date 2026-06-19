@@ -28,13 +28,17 @@ function isEditorTabId(id: string): id is EditorTabId {
 }
 
 export function DocumentEditorDock() {
-  const { dictionaryMode } = useDocumentEditorController();
+  const { dictionaryMode, showOntologyTab } = useDocumentEditorController();
   const { activeTab, setActiveTab } = useDocumentEditorTab();
   const apiRef = useRef<DockviewApi | null>(null);
   const rootPanelIdRef = useRef<string | null>(null);
 
   const syncPanels = useCallback((api: DockviewApi) => {
-    const visibleDefs = PANEL_DEFS.filter((d) => !d.dictionaryOnly || dictionaryMode);
+    const visibleDefs = PANEL_DEFS.filter((d) => {
+      if (d.id === EDITOR_TAB_IDS.ontology) return showOntologyTab;
+      if (d.dictionaryOnly) return dictionaryMode;
+      return true;
+    });
 
     for (const panel of [...api.panels]) {
       const stillVisible = visibleDefs.some((d) => d.id === panel.id);
@@ -63,7 +67,7 @@ export function DocumentEditorDock() {
         rootPanelIdRef.current = def.id;
       }
     }
-  }, [dictionaryMode]);
+  }, [dictionaryMode, showOntologyTab]);
 
   const onReady = useCallback((event: DockviewReadyEvent) => {
     apiRef.current = event.api;

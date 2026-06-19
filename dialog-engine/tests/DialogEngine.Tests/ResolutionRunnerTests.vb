@@ -85,6 +85,37 @@ Public Class ResolutionRunnerTests
     End Sub
 
     <Fact>
+    Public Sub AgeUnitConverter_PreservesSixMonthsAsTotalMonths()
+        Dim months = AgeUnitConverter.ToTotalMonths(6, "months")
+        Assert.Equal(6, months)
+        Assert.Equal(0, AgeUnitConverter.ToYears(6, "months"))
+    End Sub
+
+    <Fact>
+    Public Sub NormalizeExtractedConcepts_PreservesSixMonthsUnit()
+        Dim bundle = TestBundleFactory.BuildCardioBundle()
+        TestBundleFactory.AddAgeVincoloResolution(bundle)
+        Dim category = bundle.Ontology.Categories.First(Function(c) c.Name = "fascia di età")
+        Dim raw = ResolutionRunner.Run(category.Resolution, "6 mesi")
+        Assert.NotNull(raw)
+        Assert.Equal(6, raw.Value)
+        Assert.Equal("months", raw.Unit)
+
+        Dim incoming = New List(Of Concept) From {
+            New Concept With {
+                .Category = "fascia di età",
+                .Value = raw.Value.ToString(),
+                .Unit = raw.Unit,
+                .Kind = ConceptKind.Vincolo
+            }
+        }
+        Dim normalized = ConceptExtraction.NormalizeExtractedConcepts(incoming, bundle.Ontology)
+        Assert.Single(normalized)
+        Assert.Equal("6", normalized(0).Value)
+        Assert.Equal("months", normalized(0).Unit)
+    End Sub
+
+    <Fact>
     Public Sub NormalizeAgeUtterance_ExpandsVentAnni()
         Dim normalized = ResolutionRunner.NormalizeAgeUtterance("ha vent'anni")
         Assert.Contains("venti anni", normalized)

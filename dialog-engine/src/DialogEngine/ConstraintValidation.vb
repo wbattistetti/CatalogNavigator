@@ -28,6 +28,34 @@ Public Module ConstraintValidation
         Return constraints.All(Function(rule) SatisfiesAgeYears(age, rule.Min, rule.Max))
     End Function
 
+    Public Function SatisfiesAgeTotalMonths(totalMonths As Integer, min As Integer?, max As Integer?) As Boolean
+        If totalMonths < 0 Then Return False
+        If min.HasValue AndAlso totalMonths < min.Value * 12 Then Return False
+        If max.HasValue AndAlso totalMonths > (max.Value * 12) + 11 Then Return False
+        Return True
+    End Function
+
+    Public Function SatisfiesAgeConstraintTotalMonths(
+        totalMonths As Integer,
+        rule As Models.AgeConstraint
+    ) As Boolean
+        If totalMonths < 0 Then Return False
+        If rule.MinMonths.HasValue OrElse rule.MaxMonths.HasValue Then
+            If rule.MinMonths.HasValue AndAlso totalMonths < rule.MinMonths.Value Then Return False
+            If rule.MaxMonths.HasValue AndAlso totalMonths > rule.MaxMonths.Value Then Return False
+            Return True
+        End If
+        Return SatisfiesAgeTotalMonths(totalMonths, rule.Min, rule.Max)
+    End Function
+
+    Public Function PathSatisfiesAgeConstraintsFromTotalMonths(
+        totalMonths As Integer,
+        constraints As IList(Of Models.AgeConstraint)
+    ) As Boolean
+        If constraints Is Nothing OrElse constraints.Count = 0 Then Return True
+        Return constraints.All(Function(rule) SatisfiesAgeConstraintTotalMonths(totalMonths, rule))
+    End Function
+
     Public Function ExtractAgeYearsFromText(text As String) As Integer?
         If String.IsNullOrWhiteSpace(text) Then Return Nothing
         Dim normalized = text.Trim().ToLowerInvariant()

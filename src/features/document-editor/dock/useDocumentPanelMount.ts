@@ -10,9 +10,12 @@ import { useDockPanelRetained } from './useDockPanelRetained';
 
 export function useDocumentPanelMount(panelId: EditorTabId, panelApi: DockviewPanelApi): boolean {
   const retained = useDockPanelRetained(panelApi);
-  const { dictionaryMode, content } = useDocumentEditorController();
+  const { dictionaryMode, showOntologyTab, content } = useDocumentEditorController();
   const { activeTab } = useDocumentEditorTab();
-  const eagerTabs = useWorkspaceEagerMount(activeTab, dictionaryMode && !!content.tabular);
+  const eagerTabs = useWorkspaceEagerMount(
+    activeTab,
+    (dictionaryMode || showOntologyTab) && !!content.tabular,
+  );
 
   return retained || eagerTabs.has(panelId);
 }

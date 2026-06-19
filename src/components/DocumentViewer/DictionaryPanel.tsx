@@ -19,9 +19,8 @@ import {
 import { getPathOrderingCategories } from '../../lib/pathCanonicalize';
 import {
   buildCorpusDescriptionsFromColumns,
-  persistDocumentColumnRoles,
+  hasSelectorColumn,
   primaryOntologyColumn,
-  setOntologyColumnRoles,
 } from '../../lib/columnRoles';
 import type { UseProjectDictionariesResult } from '../../hooks/useProjectDictionaries';
 import { DictionaryIcon } from './DictionaryIcon';
@@ -30,7 +29,6 @@ import { OntologyCorpusSegmentationProvider } from '../../features/ontology-corp
 import { useDocumentEditorTab } from '../../features/document-editor/DocumentEditorContext';
 import { EDITOR_TAB_IDS } from '../../features/document-editor/editorTabIds';
 import { dictionaryTabDisplayName } from '../../lib/dictionaryTabOrder';
-import { OntologyColumnsSelect } from './OntologyColumnsSelect';
 
 export type DictionaryAfterSaveHandler = (
   dictionary: TokenDictionary,
@@ -43,7 +41,10 @@ export interface DictionaryPanelState {
   saving?: boolean;
   activeTokenCount: number;
   ontologyColumns: string[];
-  /** First ontology column — legacy metadata for token dictionaries. */
+  /** Explicit Descrizione columns (may be empty when corpus uses Selector fallback). */
+  descriptionColumns?: string[];
+  corpusFromSelectorFallback?: boolean;
+  /** First ontology/corpus column — legacy metadata for token dictionaries. */
   descriptionColumn: string | null;
   save: () => Promise<void>;
   discard: () => void;
@@ -76,6 +77,8 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   tabular,
   dicts,
   ontologyColumns,
+  descriptionColumns = [],
+  corpusFromSelectorFallback = false,
   descriptionColumn,
   onDocUpdated,
   onStateChange,
@@ -158,17 +161,6 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     };
   }, [descriptionColumn, liveLoadedRefs]);
 
-  const handleSetOntologyColumns = useCallback(async (columns: string[]) => {
-    setLocalError(null);
-    try {
-      const newRoles = setOntologyColumnRoles(doc.column_roles ?? {}, tabular.headers, columns);
-      const fresh = await persistDocumentColumnRoles(doc.id, newRoles);
-      onDocUpdated(fresh);
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Impossibile salvare le colonne ontologia');
-    }
-  }, [doc.column_roles, doc.id, tabular.headers, onDocUpdated]);
-
   const handleSave = useCallback(async () => {
     if (!descriptionColumn || saving) return;
     setSaving(true);
@@ -178,9 +170,6 @@ export const DictionaryPanel = memo(function DictionaryPanel({
       if (!projectDictId) throw new Error('Nessun dizionario di progetto');
       await dicts.saveDictionary(projectDictId);
 
-      const newRoles = setOntologyColumnRoles(doc.column_roles ?? {}, tabular.headers, ontologyColumns);
-      const fresh = await persistDocumentColumnRoles(doc.id, newRoles);
-      onDocUpdated(fresh);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
 
@@ -192,7 +181,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     } finally {
       setSaving(false);
     }
-  }, [descriptionColumn, ontologyColumns, saving, dicts, doc, tabular.headers, onDocUpdated, getMergedDictionary, descriptions, onAfterSave, projectDictId]);
+  }, [descriptionColumn, saving, dicts, getMergedDictionary, descriptions, onAfterSave, projectDictId]);
 
   const handleDiscard = useCallback(() => {
     if (projectDictId) dicts.discardDictionary(projectDictId);
@@ -356,22 +345,13 @@ export const DictionaryPanel = memo(function DictionaryPanel({
             </span>
           )}
           {ontologyColumns.length > 0 ? (
-            <>
-              <OntologyColumnsSelect
-                headers={tabular.headers}
-                columnRoles={doc.column_roles}
-                value={ontologyColumns}
-                onConfirm={handleSetOntologyColumns}
-                variant="inline"
-              />
-              <span className="font-mono text-[10px] text-emerald-400/40">
-                {descriptionFilterStats.active
-                  ? `${descriptionFilterStats.visible} / ${descriptionFilterStats.total} righe`
-                  : `${rowCount} righe`}
-                {' · '}
-                {dicts.loadedRefs.length} diz. · {activeCount} token attivi
-              </span>
-            </>
+            <span className="font-mono text-[10px] text-emerald-400/40">
+              {descriptionFilterStats.active
+                ? `${descriptionFilterStats.visible} / ${descriptionFilterStats.total} righe`
+                : `${rowCount} righe`}
+              {' · '}
+              {dicts.loadedRefs.length} diz. · {activeCount} token attivi
+            </span>
           ) : null}
         </div>
       </div>
@@ -389,19 +369,34 @@ export const DictionaryPanel = memo(function DictionaryPanel({
         </div>
       )}
 
+      {corpusFromSelectorFallback && (
+        <div className="flex-shrink-0 mx-4 mt-2 px-3 py-2 rounded border border-orange-400/25 bg-orange-400/8 text-orange-200/85 font-mono text-xs">
+          Testo di riga dalle colonne Selector ({ontologyColumns.join(', ')}).
+          Per testo dedicato, imposta una colonna <span className="text-amber-200">Descrizione</span> nel tab Documento originale.
+        </div>
+      )}
+
       {dicts.loading ? (
         <div className="flex-1 flex items-center justify-center gap-2 text-emerald-400/30 font-mono text-sm">
           <Loader2 className="w-4 h-4 animate-spin" />
           Caricamento…
         </div>
       ) : ontologyColumns.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center px-8">
-          <OntologyColumnsSelect
-            headers={tabular.headers}
-            columnRoles={doc.column_roles}
-            value={[]}
-            onConfirm={handleSetOntologyColumns}
-          />
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
+          <p className="font-mono text-sm text-emerald-400/50 max-w-md leading-relaxed">
+            {!hasSelectorColumn(doc.column_roles ?? {}) ? (
+              <>
+                Imposta almeno una colonna come <span className="text-orange-300/90">Selector</span> o{' '}
+                <span className="text-amber-200/90">Descrizione</span> nel tab{' '}
+                <span className="text-[#e8d48b]">Documento originale</span>.
+              </>
+            ) : (
+              <>
+                Nessuna colonna utilizzabile per il corpus. Verifica i ruoli nel tab{' '}
+                <span className="text-[#e8d48b]">Documento originale</span>.
+              </>
+            )}
+          </p>
         </div>
       ) : (
         <div className="flex-1 min-h-0 min-w-0 flex flex-col p-4 overflow-hidden">

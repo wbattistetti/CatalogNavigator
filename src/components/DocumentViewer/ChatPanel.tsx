@@ -86,7 +86,7 @@ function AgentMessageBubble({
 
   if (editing) {
     return (
-      <div className="space-y-2">
+      <div className="w-full space-y-2">
         <textarea
           ref={textareaRef}
           value={draft}
@@ -116,7 +116,7 @@ function AgentMessageBubble({
 
   if (hasDisambiguationMeta) {
     return (
-      <div className="group relative">
+      <div className="group relative w-full">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -414,8 +414,8 @@ export function ChatPanel({
           }
           if (msg.role === 'agent') {
             return (
-              <div key={msg.id} className="flex items-start gap-2">
-                <div className="max-w-[92%] px-3 py-2 rounded-lg bg-[#0d1f10] border border-[#1a3a2a]">
+              <div key={msg.id} className="flex w-full items-start gap-2">
+                <div className="w-full max-w-[92%] px-3 py-2 rounded-lg bg-[#0d1f10] border border-[#1a3a2a]">
                   <AgentMessageBubble
                     msg={msg}
                     onSave={(text) => handlePatchMessage(msg, text)}

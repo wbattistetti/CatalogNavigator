@@ -87,9 +87,12 @@ function SplitWorkspace({
 }
 
 export function DocumentEditorWorkspace() {
-  const { dictionaryMode, content } = useDocumentEditorController();
+  const { dictionaryMode, showOntologyTab, content } = useDocumentEditorController();
   const { activeTab, splitLayout, setSplitLayout } = useDocumentEditorTab();
-  const mountedTabs = useWorkspaceEagerMount(activeTab, dictionaryMode && !!content.tabular);
+  const mountedTabs = useWorkspaceEagerMount(
+    activeTab,
+    (dictionaryMode || showOntologyTab) && !!content.tabular,
+  );
   const [dragOver, setDragOver] = useState<DropSide | null>(null);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -154,21 +157,21 @@ export function DocumentEditorWorkspace() {
           </WorkspacePanel>
 
           {dictionaryMode && (
-            <>
-              <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.dictionaries}>
-                <EditorWorkspacePanel
-                  tabId={EDITOR_TAB_IDS.dictionaries}
-                  mounted={mountedTabs.has(EDITOR_TAB_IDS.dictionaries)}
-                />
-              </WorkspacePanel>
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.dictionaries}>
+              <EditorWorkspacePanel
+                tabId={EDITOR_TAB_IDS.dictionaries}
+                mounted={mountedTabs.has(EDITOR_TAB_IDS.dictionaries)}
+              />
+            </WorkspacePanel>
+          )}
 
-              <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.ontology}>
-                <EditorWorkspacePanel
-                  tabId={EDITOR_TAB_IDS.ontology}
-                  mounted={mountedTabs.has(EDITOR_TAB_IDS.ontology)}
-                />
-              </WorkspacePanel>
-            </>
+          {showOntologyTab && (
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.ontology}>
+              <EditorWorkspacePanel
+                tabId={EDITOR_TAB_IDS.ontology}
+                mounted={mountedTabs.has(EDITOR_TAB_IDS.ontology)}
+              />
+            </WorkspacePanel>
           )}
         </>
       )}

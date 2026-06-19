@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compileCategoryGrammar,
+  matchAllCategoryGrammarValues,
   matchCategoryGrammar,
   applyCategoryGrammars,
   findCategoriesMissingGrammar,
@@ -47,6 +48,16 @@ describe('compileCategoryGrammar', () => {
     const withGrammar = applyCategoryGrammars(categories, tokens, true);
     const match = matchCategoryGrammar('visita cardiologica', withGrammar[0]!);
     expect(match?.canonicalValue).toBe('cardiologica');
+  });
+
+  it('matches every canonical value that appears in the text', () => {
+    const withGrammar = applyCategoryGrammars(categories, tokens, true);
+    const specialita = withGrammar[0]!;
+    expect(matchAllCategoryGrammarValues(
+      'visita cardiologica e dermatologica',
+      specialita,
+      tokens,
+    )).toEqual(['cardiologica', 'dermatologica']);
   });
 });
 

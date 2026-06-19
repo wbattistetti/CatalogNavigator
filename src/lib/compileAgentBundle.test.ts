@@ -104,6 +104,8 @@ describe('compileAgentBundle', () => {
       kind: 'age_years',
       min: 6,
       max: 15,
+      minMonths: 72,
+      maxMonths: 191,
     });
   });
 

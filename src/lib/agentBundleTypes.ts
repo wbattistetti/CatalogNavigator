@@ -19,6 +19,10 @@ export interface CompiledAgeConstraint {
   askKey: 'age_years';
   min: number | null;
   max: number | null;
+  /** Inclusive lower bound in total months (sub-year fasce). */
+  minMonths: number | null;
+  /** Inclusive upper bound in total months (sub-year fasce). */
+  maxMonths: number | null;
   sourceToken: string;
 }
 

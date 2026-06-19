@@ -201,12 +201,83 @@ export function buildCategoryGrammarEditorState(
 export function matchCategoryGrammar(
   text: string,
   category: TokenCategory,
+  tokens: TokenEntry[] = [],
 ): CategoryGrammarMatch | null {
-  if (!category.grammar?.regex?.trim()) return null;
+  const all = matchAllCategoryGrammarValues(text, category, tokens);
+  if (all.length === 0) return null;
+  return {
+    categoryName: category.name,
+    canonicalValue: all[0]!,
+  };
+}
 
-  const fakeRow = {
+/**
+ * Returns every canonical value in the category that matches the text.
+ * Each token is tested independently so multiple values from one category can match.
+ */
+export function matchAllCategoryGrammarValues(
+  text: string,
+  category: TokenCategory,
+  tokens: TokenEntry[] = [],
+): string[] {
+  const trimmed = text.trim().toLowerCase();
+  if (!trimmed) return [];
+
+  const canonicals = [
+    ...new Set([
+      ...(category.tokenTexts ?? []),
+      ...Object.values(category.grammar?.mappings ?? {})
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ]),
+  ];
+
+  const values: string[] = [];
+  for (const canonical of canonicals) {
+    if (values.includes(canonical)) continue;
+    if (canonicalMatchesInCategory(trimmed, category, canonical, tokens)) {
+      values.push(canonical);
+    }
+  }
+  return values;
+}
+
+function canonicalMatchesInCategory(
+  text: string,
+  category: TokenCategory,
+  canonical: string,
+  tokens: TokenEntry[],
+): boolean {
+  const entry = tokens.find((t) => isCanonicalToken(t) && t.text === canonical);
+  if (entry?.grammar?.regex?.trim()) {
+    const tokenMatch = matchGrammarInput(text, {
+      slot_filling: canonical,
+      grammar: entry.grammar,
+      answer_grammar: null,
+      question: null,
+      no_match_1: null,
+      no_match_2: null,
+      no_match_3: null,
+      confirmation_text: null,
+      status: null,
+    });
+    if (tokenMatch.targetPath) return true;
+  }
+
+  if (!category.grammar?.regex?.trim()) return false;
+
+  const synonyms = synonymsForCanonicalValue(canonical, tokens);
+  if (synonyms.length === 0) return false;
+
+  const groupName = 'valore';
+  const regex = `(?<${groupName}>${synonyms.map(escapeRegexLiteral).join('|')})`;
+  const grammar = normalizeGrammarEntry({ regex, mappings: { [groupName]: canonical } });
+  const validation = validateGrammarRegex(grammar.regex, grammar.mappings);
+  if (!validation.valid) return false;
+
+  const categoryMatch = matchGrammarInput(text, {
     slot_filling: category.name,
-    grammar: category.grammar,
+    grammar,
     answer_grammar: null,
     question: null,
     no_match_1: null,
@@ -214,15 +285,8 @@ export function matchCategoryGrammar(
     no_match_3: null,
     confirmation_text: null,
     status: null,
-  };
-
-  const result = matchGrammarInput(text.trim().toLowerCase(), fakeRow);
-  if (!result.targetPath) return null;
-
-  return {
-    categoryName: category.name,
-    canonicalValue: result.targetPath,
-  };
+  });
+  return categoryMatch.targetPath === canonical;
 }
 
 /**

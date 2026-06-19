@@ -214,25 +214,14 @@ export function segmentDescriptionMulti(
     getActiveMatchPhrases(tokens),
   );
 
-  const rawPath = grammarResult.path
-    || canonicalizePathSegmentsFromLoadedRefs(
-      phraseSegments.map((s) => s.text).join('.'),
-      loaded,
-    );
-  const path = filterPathToCanonicalTokens(rawPath, canonicalTexts);
-
-  const phraseByText = new Map(
-    phraseSegments.filter((s) => canonicalTexts.has(s.text)).map((s) => [s.text, s]),
-  );
+  const path = filterPathToCanonicalTokens(grammarResult.path, canonicalTexts);
 
   return {
     segments: path
-      ? path.split('.').map((segText) => {
-        const found = phraseByText.get(segText);
-        if (found) return found;
-        const dictionaryId = resolveTokenDictionaryId(segText, loaded);
-        return { text: segText, dictionaryId };
-      })
+      ? path.split('.').map((segText) => ({
+        text: segText,
+        dictionaryId: resolveTokenDictionaryId(segText, loaded),
+      }))
       : phraseSegments.filter((s) => canonicalTexts.has(s.text)),
     path,
     unmatched: grammarResult.path ? grammarResult.unmatched : [...new Set(unmatched)],

@@ -100,14 +100,13 @@ Public Module ConceptExtraction
             If (kind = Models.ConceptKind.Vincolo) AndAlso
                category IsNot Nothing AndAlso
                CategoryTypes.IsAgeYearsCategory(category) Then
-                If ResolveTurnAge.LooksLikeFasciaConstraintToken(concept.Value) Then Continue For
-                Dim age = ResolveTurnAge.ParseAgeYearsFromConcept(concept)
-                If age.HasValue Then
+                Dim quantity = ResolveTurnAge.NormalizeAgeConceptQuantity(concept)
+                If quantity IsNot Nothing Then
                     result.Add(New Models.Concept With {
-                        .Category = If(category IsNot Nothing, category.Name, concept.Category),
-                        .Value = age.Value.ToString(),
+                        .Category = category.Name,
+                        .Value = quantity.Value.ToString(),
                         .Kind = Models.ConceptKind.Vincolo,
-                        .Unit = "years"
+                        .Unit = quantity.Unit
                     })
                 End If
                 Continue For

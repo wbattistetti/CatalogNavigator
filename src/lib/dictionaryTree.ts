@@ -190,10 +190,13 @@ export function orderSegmentsByCategories(
   categories: TokenCategory[],
 ): string[] {
   if (matches.length === 0) return [];
+  const ordered = normalizeCategoryOrders(categories);
   const sorted = [...matches].sort((a, b) => {
-    const byCategory = compareTokenSegmentOrder(a.text, b.text, categories);
-    if (byCategory !== 0) return byCategory;
-    return a.wordStartIndex - b.wordStartIndex;
+    const orderA = getCategorySortOrder(a.text, ordered);
+    const orderB = getCategorySortOrder(b.text, ordered);
+    if (orderA !== orderB) return orderA - orderB;
+    if (a.wordStartIndex !== b.wordStartIndex) return a.wordStartIndex - b.wordStartIndex;
+    return localeSort(a.text, b.text);
   });
   return sorted.map((m) => m.text);
 }

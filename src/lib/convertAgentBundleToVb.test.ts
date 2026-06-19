@@ -97,7 +97,7 @@ describe('convertAgentBundleToVb', () => {
       ]),
     );
     expect(adult?.ageConstraints).toEqual([
-      { categoryName: 'fascia di età', min: 18, max: null },
+      { categoryName: 'fascia di età', min: 18, max: null, minMonths: 216, maxMonths: null },
     ]);
 
     expect(vb.ontology.categories).toHaveLength(4);
