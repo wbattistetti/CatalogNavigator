@@ -43,12 +43,13 @@ Public Module ResolveTurnAge
 
     Public Function NormalizeAgeConceptQuantity(concept As Models.Concept) As Models.ResolvedQuantity
         If concept Is Nothing Then Return Nothing
-        If LooksLikeFasciaConstraintToken(concept.Value) Then Return Nothing
+        Dim scalar = ValueSetOps.ScalarValue(concept)
+        If LooksLikeFasciaConstraintToken(scalar) Then Return Nothing
 
-        Dim fromUnit = TryParseAgeQuantity(concept.Value, concept.Unit)
+        Dim fromUnit = TryParseAgeQuantity(scalar, concept.Unit)
         If fromUnit IsNot Nothing Then Return fromUnit
 
-        Dim legacyYears = ConstraintValidation.ExtractAgeYearsFromText(concept.Value)
+        Dim legacyYears = ConstraintValidation.ExtractAgeYearsFromText(scalar)
         If legacyYears.HasValue Then
             Return New Models.ResolvedQuantity With {
                 .Value = legacyYears.Value,
@@ -57,6 +58,12 @@ Public Module ResolveTurnAge
         End If
 
         Return Nothing
+    End Function
+
+    Public Function ParseAgeTotalWeeksFromConcept(concept As Models.Concept) As Integer?
+        Dim quantity = NormalizeAgeConceptQuantity(concept)
+        If quantity Is Nothing Then Return Nothing
+        Return AgeUnitConverter.ToTotalWeeks(quantity.Value, quantity.Unit)
     End Function
 
     Public Function ParseAgeTotalMonthsFromConcept(concept As Models.Concept) As Integer?
@@ -79,7 +86,7 @@ Public Module ResolveTurnAge
 
     Public Function ParseAgeYearsFromConcept(concept As Models.Concept) As Integer?
         If concept Is Nothing Then Return Nothing
-        Return ParseAgeYearsFromSlotValue(concept.Value, concept.Unit)
+        Return ParseAgeYearsFromSlotValue(ValueSetOps.ScalarValue(concept), concept.Unit)
     End Function
 
 End Module

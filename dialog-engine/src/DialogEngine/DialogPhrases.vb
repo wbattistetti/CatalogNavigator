@@ -32,7 +32,7 @@ Public Module DialogPhrases
         End If
 
         Dim last = concepts(concepts.Count - 1)
-        Dim value = If(last?.Value, "quella indicata").Trim()
+        Dim value = ValueSetOps.FormatConceptValues(last)
         Return $"Non esiste una prestazione che includa «{value}» con le altre caratteristiche indicate."
     End Function
 

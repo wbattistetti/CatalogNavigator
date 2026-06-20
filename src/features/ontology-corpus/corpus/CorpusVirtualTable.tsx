@@ -37,10 +37,12 @@ export const CorpusVirtualTable = forwardRef(function CorpusVirtualTable({
   onMouseUp,
   onContextMenu,
   onClearSelectionClick,
+  ontologyItemCount,
 }: {
   rows: CorpusRow[];
   filter: CorpusDescriptionFilter;
   filterActive: boolean;
+  ontologyItemCount: number;
   segmentation: OntologyCorpusSegmentationValue;
   matchPhrases: MatchPhrase[];
   liveLoadedRefs: LoadedDictionaryRef[];
@@ -93,7 +95,11 @@ export const CorpusVirtualTable = forwardRef(function CorpusVirtualTable({
       onClick={onClearSelectionClick}
     >
       <div className={CORPUS_TABLE_MIN_WIDTH}>
-        <CorpusTableHeader filter={filter} progress={progress} />
+        <CorpusTableHeader
+          filter={filter}
+          progress={progress}
+          ontologyItemCount={ontologyItemCount}
+        />
         <CorpusSelectionBanner />
         {rows.length === 0 ? (
           <div className="px-4 py-8 text-center font-mono text-xs text-emerald-400/35">

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { DictionaryIcon } from './DictionaryIcon';
 import { iconForCategory, NO_CATEGORY_ICON, VINCOLO_CATEGORY_BADGE } from '../../lib/categoryIconCatalog';
-import type { CategoryType, TokenCategory } from '../../lib/dictionaryTree';
+import { DICT_FORM_TEXTAREA, DICT_INPUT_FIELD } from '../../features/dictionaries/dictionaryFormStyles';
 import {
   NO_CATEGORY_SENTINEL,
   createCategoryWithTokens,
@@ -38,6 +38,7 @@ import {
   formatConceptEditorLine,
   listAliasesForCanonical,
 } from '../../lib/tokenConceptEditor';
+import { formatVincoloBoundsLabel } from '../../lib/ageConstraintParse';
 import { useListSelection } from '../../hooks/useListSelection';
 import { useCorpusVirtualScroll } from '../../hooks/useCorpusVirtualScroll';
 import {
@@ -127,6 +128,7 @@ function TokenRow({
   onRowMouseDown,
   onRowDoubleClick,
   onLabelDoubleClick,
+  vincoloBoundsHint,
 }: {
   entry: TokenEntry;
   /** Shown when not editing; includes aliases as `canonico: syn1, syn2`. */
@@ -152,6 +154,8 @@ function TokenRow({
   onRowMouseDown: (e: React.MouseEvent) => void;
   onRowDoubleClick?: () => void;
   onLabelDoubleClick?: (e: React.MouseEvent) => void;
+  /** Parsed week bounds for vincolo tokens, or "non parsato" when unparsed. */
+  vincoloBoundsHint?: string | null;
 }) {
   const pickable = Boolean(aliasPickActive);
   const label = displayLabel ?? entry.text;
@@ -235,6 +239,18 @@ function TokenRow({
         >
           {label}
         </span>
+        {vincoloBoundsHint && !pickable && !splittingActive && !editing && (
+          <span
+            className={`flex-shrink-0 ${TREE_LABEL} ${
+              vincoloBoundsHint === 'non parsato'
+                ? 'text-amber-300/85'
+                : 'text-sky-300/65'
+            }`}
+            title={vincoloBoundsHint === 'non parsato' ? 'Vincolo non riconosciuto dal parser' : 'Limiti età in settimane (inclusivi)'}
+          >
+            {vincoloBoundsHint}
+          </span>
+        )}
         {!pickable && !splittingActive && (
           <>
             {onStartEdit && (
@@ -1075,6 +1091,17 @@ export function TokenTreeEditor({
     ? 'no category'
     : sortedCategories.find((c) => c.id === activeCategoryKey)?.name ?? '—';
 
+  const showVincoloBounds = sortedCategories.find((c) => c.id === activeCategoryKey)?.type === 'vincolo';
+
+  const vincoloBoundsHintByText = useMemo(() => {
+    if (!showVincoloBounds) return null;
+    const map = new Map<string, string>();
+    for (const text of selectableTokenTexts) {
+      map.set(text, formatVincoloBoundsLabel(text) ?? 'non parsato');
+    }
+    return map;
+  }, [showVincoloBounds, selectableTokenTexts]);
+
   const onCategoriesSashPointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     const container = categoriesSplitRef.current;
@@ -1174,7 +1201,7 @@ export function TokenTreeEditor({
                 onChange={(e) => setNewCategoryName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
                 placeholder="Nuova categoria…"
-                className="flex-1 min-w-0 bg-[#080e0a] border border-[#1a3a2a] rounded px-2 py-1 font-mono text-[10px] text-emerald-200 placeholder:text-emerald-300/70 focus:outline-none focus:border-sky-400/40"
+                className={`flex-1 min-w-0 ${DICT_INPUT_FIELD} placeholder:text-emerald-300/70 focus:border-sky-400/40`}
               />
               <button
                 type="button"
@@ -1311,7 +1338,7 @@ export function TokenTreeEditor({
                 onChange={(e) => setNewTokenName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddToken()}
                 placeholder="canonico o canonico: syn1, syn2"
-                className="flex-1 min-w-0 bg-[#080e0a] border border-[#1a3a2a] rounded px-2 py-1 font-mono text-[10px] text-emerald-200 placeholder:text-emerald-300/70 focus:outline-none focus:border-sky-400/40"
+                className={`flex-1 min-w-0 ${DICT_INPUT_FIELD} placeholder:text-emerald-300/70 focus:border-sky-400/40`}
               />
               <label
                 className={`flex items-center gap-1.5 flex-shrink-0 cursor-pointer select-none ${
@@ -1436,6 +1463,7 @@ export function TokenTreeEditor({
                           onRowClick={(e) => handleTokenRowClick(e, text)}
                           onRowMouseDown={(e) => handleTokenRowMouseDown(e, text)}
                           onLabelDoubleClick={(e) => handleSplitLabelDoubleClick(e, text)}
+                          vincoloBoundsHint={vincoloBoundsHintByText?.get(text) ?? null}
                         />
                       </div>
                     );

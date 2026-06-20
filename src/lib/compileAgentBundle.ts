@@ -1,6 +1,6 @@
 /**
  * Compiles a runtime AgentBundle from editor state (preview or publish).
- * Runtime corpus/item paths come from saved ontology — descriptions are not re-segmented.
+ * Catalog item paths come from live corpus segmentation (in-memory), not saved item_paths.
  */
 import type { Analysis } from './analysisTypes';
 import type {
@@ -11,9 +11,14 @@ import type {
   CompiledConstraint,
 } from './agentBundleTypes';
 import { parseAgeConstraintToken } from './ageConstraintParse';
-import { normalizeCategoryOrders, type TokenCategory } from './dictionaryTree';
-import { catalogItemPaths } from './itemPaths';
+import {
+  buildCorpusLeafDescriptionMap,
+  resolveCorpusItemPaths,
+} from './corpusItemPaths';
 import { getPathOrderingCategories } from './pathCanonicalize';
+import { normalizeCategoryOrders } from './dictionaryTree';
+import type { CatalogSanityReport } from './catalogSanity';
+import { analyzeCatalogSanity, catalogSanityWarnings } from './catalogSanity';
 import { buildCorpusItemsFromPaths } from './slotExtract';
 
 function compileVincoloConstraint(
@@ -32,6 +37,8 @@ function compileVincoloConstraint(
       max: ageRange.max,
       minMonths: ageRange.minMonths,
       maxMonths: ageRange.maxMonths,
+      minWeeks: ageRange.minWeeks,
+      maxWeeks: ageRange.maxWeeks,
       sourceToken: tokenText,
     };
   }
@@ -64,9 +71,6 @@ function buildMetaWarnings(input: AgentBundleCompileInput): string[] {
   if (input.analysisDirty) {
     warnings.push('L\'analisi contiene modifiche non salvate.');
   }
-  if (input.pathsOutOfSync) {
-    warnings.push('I path del corpus non coincidono con item_paths salvati.');
-  }
   return warnings;
 }
 
@@ -74,17 +78,23 @@ function requireOntology(input: AgentBundleCompileInput): Analysis {
   if (!input.analysis?.rows?.length) {
     throw new Error('Ontologia mancante: genera l\'albero prima di compilare l\'agente.');
   }
-  if (!input.analysis.item_paths?.length) {
-    throw new Error('Nessun item_paths nell\'ontologia: impossibile compilare l\'agente.');
-  }
   return input.analysis;
+}
+
+function requireCorpusDescriptions(input: AgentBundleCompileInput): string[] {
+  const descriptions = input.descriptions
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (descriptions.length === 0) {
+    throw new Error('Nessuna descrizione nel corpus: impossibile compilare l\'agente.');
+  }
+  return descriptions;
 }
 
 function resolveLeafSourceText(
   path: string,
-  leafDescriptionMap: AgentBundleCompileInput['leafDescriptionMap'],
+  leafDescriptionMap: ReadonlyMap<string, string> | Record<string, string>,
 ): string {
-  if (!leafDescriptionMap) return path;
   if (leafDescriptionMap instanceof Map) {
     return leafDescriptionMap.get(path) ?? path;
   }
@@ -92,31 +102,52 @@ function resolveLeafSourceText(
 }
 
 /**
- * Builds the compiled agent bundle from saved ontology item_paths.
- * Corpus segments are derived from each path token (no description re-segmentation).
+ * Builds the compiled agent bundle from live corpus segmentation (descriptions + dictionary).
  */
 export function compileAgentBundle(input: AgentBundleCompileInput): AgentBundle {
   const ontology = requireOntology(input);
+  const descriptions = requireCorpusDescriptions(input);
+  const segmentationInput = {
+    descriptions,
+    dictionary: input.dictionary,
+    loadedRefs: input.loadedRefs,
+    segmentExclusions: input.segmentExclusions,
+    itemExclusions: input.itemExclusions,
+  };
   const pathCategories = input.loadedRefs?.length
     ? getPathOrderingCategories(input.loadedRefs)
     : normalizeCategoryOrders(input.dictionary.categories ?? []);
   const compileWarnings = buildMetaWarnings(input);
 
-  const slots = ontology.rows.map((row) => row.slot_filling);
-  const itemPaths = catalogItemPaths(slots, ontology.item_paths, pathCategories);
-
+  const itemPaths = resolveCorpusItemPaths(segmentationInput);
   if (itemPaths.length === 0) {
     throw new Error(
-      'Nessuna prestazione valida nell\'ontologia: verifica item_paths e albero slot_filling.',
+      'Nessuna prestazione valida nel corpus: verifica descrizioni e segmentazione.',
     );
   }
+
+  const leafDescriptionMap = input.leafDescriptionMap
+    ?? buildCorpusLeafDescriptionMap(segmentationInput);
 
   const baseCorpus = buildCorpusItemsFromPaths(itemPaths, pathCategories);
   const corpusItems: BundleCorpusItem[] = baseCorpus.map((item) => ({
     ...item,
-    sourceText: resolveLeafSourceText(item.path, input.leafDescriptionMap),
+    sourceText: resolveLeafSourceText(item.path, leafDescriptionMap),
     constraints: compileConstraintsForPath(item.segments, item.path, compileWarnings),
   }));
+
+  const catalogSanity = analyzeCatalogSanity(corpusItems);
+  compileWarnings.push(...catalogSanityWarnings(catalogSanity));
+
+  if (input.mode === 'published') {
+    const hasBlockingDuplicates = catalogSanity.duplicates.length > 0;
+    if (hasBlockingDuplicates) {
+      throw new Error(
+        `Pubblicazione bloccata: ${catalogSanity.duplicates.length} gruppo/i di item con segmentazione duplicata. ` +
+        'Escludi le righe nel report integrità catalogo o correggi il dizionario.',
+      );
+    }
+  }
 
   return {
     meta: {
@@ -126,6 +157,7 @@ export function compileAgentBundle(input: AgentBundleCompileInput): AgentBundle 
       version: '1.2',
       compiledAt: new Date().toISOString(),
       warnings: compileWarnings,
+      catalogSanity,
     },
     dictionary: {
       descriptionColumn: input.dictionary.descriptionColumn,

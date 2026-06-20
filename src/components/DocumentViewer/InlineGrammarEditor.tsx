@@ -14,6 +14,7 @@ import {
   parseSynonymText,
   type GrammarEditorPanel,
 } from '../../lib/grammarSynonyms';
+import { DICT_FORM_TEXTAREA } from '../../features/dictionaries/dictionaryFormStyles';
 
 const ANSWER_PANEL_GUIDE =
   'Parole che, rispondendo alla domanda sopra, specificano questo nodo.';
@@ -54,7 +55,7 @@ function SynonymTextarea({
       onKeyDown={(e) => e.stopPropagation()}
       placeholder={placeholder ?? 'Un sinonimo per riga…'}
       rows={Math.min(8, Math.max(2, lineCount + 1))}
-      className="w-full bg-[#0a1510] border border-sky-400/30 rounded px-2 py-1.5 font-sans text-xs text-emerald-200 placeholder-emerald-400/25 resize-y focus:outline-none focus:border-sky-400/60 leading-relaxed whitespace-pre-wrap"
+      className={`${DICT_FORM_TEXTAREA} border-sky-400/30 text-emerald-200 placeholder-emerald-400/25 resize-y focus:border-sky-400/60 whitespace-pre-wrap`}
     />
   );
 }

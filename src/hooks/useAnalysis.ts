@@ -57,10 +57,20 @@ import {
   applyCategoryGrammarsWithTokens,
   clearRowGrammars,
 } from '../lib/grammarTemplate';
-import { applyCategoryGrammars, findCategoriesMissingGrammar } from '../lib/categoryGrammar';
 import {
-  segmentAllDescriptionsFromLoadedRefs,
+  applyCategoryGrammars,
+  clearCategoryGrammars,
+  findCategoriesMissingGrammar,
+} from '../lib/categoryGrammar';
+import {
+  resolveCorpusItemPaths,
+  resolveCorpusItemPathsFromRows,
+  buildCorpusSegmentationInputFromLoadedRefs,
+  type CorpusSegmentExclusions,
+} from '../lib/corpusItemPaths';
+import {
   segmentAllDescriptionsFromLoadedRefsAsync,
+  mergeLoadedTokens,
   type LoadedDictionaryRef,
 } from '../lib/multiDictionarySegment';
 import {
@@ -712,10 +722,17 @@ export function useAnalysis(documentId: string) {
   const syncTaxonomyFromLoadedRefs = useCallback((
     descriptions: string[],
     loadedRefs: LoadedDictionaryRef[],
+    options?: { segmentExclusions?: CorpusSegmentExclusions },
   ): TaxonomySyncResult | null => {
     setError(null);
     try {
-      const { leafPaths } = segmentAllDescriptionsFromLoadedRefs(descriptions, loadedRefs);
+      const leafPaths = resolveCorpusItemPaths(
+        buildCorpusSegmentationInputFromLoadedRefs(
+          descriptions,
+          loadedRefs,
+          options?.segmentExclusions,
+        ),
+      );
       return applyLeafPathSync(leafPaths, { loadedRefs });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -731,12 +748,18 @@ export function useAnalysis(documentId: string) {
       onProgress?: (current: number, total: number) => void;
       onPhase?: (phase: OntologySyncPhase) => void;
       shouldCancel?: () => boolean;
+      segmentExclusions?: CorpusSegmentExclusions;
     },
   ): Promise<{ result: TaxonomySyncResult | null; cancelled: boolean }> => {
     setError(null);
     try {
       options?.onPhase?.('segmentation');
-      const { leafPaths, cancelled } = await segmentAllDescriptionsFromLoadedRefsAsync(
+      const segInput = buildCorpusSegmentationInputFromLoadedRefs(
+        descriptions,
+        loadedRefs,
+        options?.segmentExclusions,
+      );
+      const { rows, cancelled } = await segmentAllDescriptionsFromLoadedRefsAsync(
         descriptions,
         loadedRefs,
         {
@@ -746,6 +769,7 @@ export function useAnalysis(documentId: string) {
         },
       );
       if (cancelled) return { result: null, cancelled: true };
+      const leafPaths = resolveCorpusItemPathsFromRows(rows, segInput);
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
@@ -828,7 +852,9 @@ export function useAnalysis(documentId: string) {
     setError(null);
     try {
       throwIfAborted(signal);
-      const { leafPaths } = segmentAllDescriptionsFromLoadedRefs(descriptions, loadedRefs);
+      const leafPaths = resolveCorpusItemPaths(
+        buildCorpusSegmentationInputFromLoadedRefs(descriptions, loadedRefs),
+      );
       if (leafPaths.length === 0) {
         throw new Error('Nessuna descrizione segmentata con il dizionario corrente');
       }
@@ -1004,7 +1030,10 @@ export function useAnalysis(documentId: string) {
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const nextCategories = applyCategoryGrammars(categories, tokens, overwriteExisting);
+      const baseCategories = overwriteExisting
+        ? clearCategoryGrammars(categories)
+        : categories;
+      const nextCategories = applyCategoryGrammars(baseCategories, tokens, overwriteExisting);
       grammarTokensRef.current = tokens;
       setGrammarTokensBound(tokens);
       if (analysis?.rows.length) {

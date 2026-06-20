@@ -35,6 +35,28 @@ Public Module ConstraintValidation
         Return True
     End Function
 
+    Public Function SatisfiesAgeConstraintTotalWeeks(
+        totalWeeks As Integer,
+        rule As Models.AgeConstraint
+    ) As Boolean
+        If totalWeeks < 0 Then Return False
+        If rule.MinWeeks.HasValue OrElse rule.MaxWeeks.HasValue Then
+            If rule.MinWeeks.HasValue AndAlso totalWeeks < rule.MinWeeks.Value Then Return False
+            If rule.MaxWeeks.HasValue AndAlso totalWeeks > rule.MaxWeeks.Value Then Return False
+            Return True
+        End If
+        Dim totalMonths = (totalWeeks * 12 + 26) \ 52
+        Return SatisfiesAgeConstraintTotalMonths(totalMonths, rule)
+    End Function
+
+    Public Function PathSatisfiesAgeConstraintsFromTotalWeeks(
+        totalWeeks As Integer,
+        constraints As IList(Of Models.AgeConstraint)
+    ) As Boolean
+        If constraints Is Nothing OrElse constraints.Count = 0 Then Return True
+        Return constraints.All(Function(rule) SatisfiesAgeConstraintTotalWeeks(totalWeeks, rule))
+    End Function
+
     Public Function SatisfiesAgeConstraintTotalMonths(
         totalMonths As Integer,
         rule As Models.AgeConstraint

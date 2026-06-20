@@ -2,7 +2,7 @@
  * HTTP client for the VB.NET DialogEngine (sole runtime for agent turns).
  */
 import type { AgentBundle, AgentSessionState } from '../../src/lib/agentBundleTypes';
-import { convertAgentBundleToVb, convertSessionStateFromVb, convertSessionStateToVb } from '../../src/lib/convertAgentBundleToVb';
+import { parseValueSetKey } from './valueSet';
 import type { AgentDialogStepHttpResponse } from '../../src/lib/agentDialogStepResponse';
 
 const VB_ENGINE_URL = process.env.DIALOG_ENGINE_URL ?? 'http://127.0.0.1:5190';
@@ -25,7 +25,7 @@ export interface VbAgentTurnParams {
 export async function postVbAgentTurn(params: VbAgentTurnParams): Promise<AgentDialogStepHttpResponse & { nextState?: AgentSessionState }> {
   const incomingConcepts = (params.incomingSlots ?? []).map((slot) => ({
     category: slot.categoryName,
-    value: slot.value,
+    values: parseValueSetKey(slot.value),
   }));
 
   const res = await fetch(`${VB_ENGINE_URL}/api/runtime/agent-turn`, {

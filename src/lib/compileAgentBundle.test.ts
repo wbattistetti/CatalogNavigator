@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { compileAgentBundle } from './compileAgentBundle';
-import { resolveItemPaths } from './itemPaths';
+import { resolveCorpusItemPaths } from './corpusItemPaths';
 import { segmentAllDescriptions } from './tokenDictionary';
 import type { Analysis } from './analysisTypes';
 import type { TokenDictionary } from './tokenDictionary';
@@ -74,7 +74,7 @@ function buildAnalysis(): Analysis {
 }
 
 describe('compileAgentBundle', () => {
-  it('materializes corpus items from saved ontology paths with age constraints', () => {
+  it('materializes corpus items from live segmentation with age constraints', () => {
     const analysis = buildAnalysis();
     const bundle = compileAgentBundle({
       documentName: 'Visite',
@@ -106,6 +106,8 @@ describe('compileAgentBundle', () => {
       max: 15,
       minMonths: 72,
       maxMonths: 191,
+      minWeeks: 312,
+      maxWeeks: 831,
     });
   });
 
@@ -118,26 +120,32 @@ describe('compileAgentBundle', () => {
     })).toThrow(/Ontologia mancante/);
   });
 
-  it('does not re-segment descriptions when building runtime paths', () => {
+  it('builds runtime paths from live corpus segmentation, not saved item_paths', () => {
     const analysis = buildAnalysis();
-    const expectedPaths = resolveItemPaths(
-      analysis.rows.map((r) => r.slot_filling),
-      analysis.item_paths,
-    );
+    const staleDescriptions = ['prima', 'controllo', 'testo senza token utili'];
 
     const bundle = compileAgentBundle({
       documentName: 'Visite',
       documentId: 'd1',
       mode: 'preview',
       dictionary,
-      descriptions: ['prima', 'controllo', 'testo senza token utili'],
+      descriptions: staleDescriptions,
       analysis,
     });
 
-    expect(bundle.itemPaths).toEqual(expectedPaths);
-    expect(bundle.corpusItems).toHaveLength(expectedPaths.length);
-    expect(new Set(bundle.corpusItems.map((i) => i.path)).size).toBe(expectedPaths.length);
-    expect(bundle.corpusItems.every((i) => !['prima', 'controllo'].includes(i.path))).toBe(true);
+    const livePaths = resolveCorpusItemPaths({ descriptions: staleDescriptions, dictionary });
+    expect(bundle.itemPaths).toEqual(livePaths);
+    expect(bundle.itemPaths).not.toEqual(analysis.item_paths);
+    expect(bundle.corpusItems).toHaveLength(livePaths.length);
+  });
+
+  it('throws when corpus descriptions are empty', () => {
+    expect(() => compileAgentBundle({
+      documentName: 'X',
+      dictionary,
+      descriptions: [],
+      analysis: buildAnalysis(),
+    })).toThrow(/Nessuna descrizione nel corpus/);
   });
 
   it('uses leafDescriptionMap for sourceText without changing paths', () => {

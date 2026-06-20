@@ -153,6 +153,8 @@ describe('compileDisambiguationPlan — age expansion', () => {
         max: null,
         minMonths: 216,
         maxMonths: null,
+        minWeeks: 936,
+        maxWeeks: null,
         sourceToken: 'adulti',
       }],
     }));

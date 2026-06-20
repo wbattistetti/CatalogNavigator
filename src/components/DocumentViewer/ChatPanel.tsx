@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ChevronDown,
+  ExternalLink,
   MessageSquareText,
   Pencil,
   RotateCcw,
@@ -11,7 +12,26 @@ import {
   X,
 } from 'lucide-react';
 import type { AgentBundle, AgentSessionState } from '../../lib/agentBundleTypes';
-import { pingVbEngine, postVbTextTurn } from '../../lib/vbTestEngineClient';
+import {
+  buildChatTurnDebug,
+  shouldAutoExpandTurnDebug,
+  type ChatTurnDebug,
+} from '../../lib/chatTurnDebug';
+import {
+  buildUserTurnRecognition,
+  formatUserTurnRecognitionSummary,
+  resolvePendingDisambiguationContext,
+  shouldAutoExpandUserTurnRecognition,
+  type UserTurnRecognition,
+} from '../../lib/chatUserTurnRecognition';
+import { formatTechnicalOptions, isVincoloAskSignature } from '../../lib/disambiguationPlanMessages';
+import { deriveDisambiguationParents, type DisambiguationParentInfo } from '../../lib/disambiguationParents';
+import { DisambiguationContextSummary } from '../../features/agent/DisambiguationContextSummary';
+import {
+  buildAnswerContextFromPending,
+  describePendingSessionMismatch,
+} from '../../lib/pendingDisambiguationAnswerContext';
+import { pingVbEngine, postVbTextTurn, type VbTextTurnResponse } from '../../lib/vbTestEngineClient';
 
 export interface DisambiguationPlanMessagePatch {
   signature: string;
@@ -25,6 +45,7 @@ interface ChatPanelProps {
   agentBundle?: AgentBundle | null;
   onClose: () => void;
   onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
+  onOpenDisambiguationMessage?: (signature: string) => void;
 }
 
 type PlanCopyField = 'question' | 'no_match_1' | 'no_match_2' | 'no_match_3';
@@ -36,10 +57,330 @@ interface ChatMessage {
   isResult?: boolean;
   hintSource?: 'disambiguation_plan' | 'disambiguation_plan_no_match' | 'template';
   disambiguationSignature?: string;
+  disambiguationCategory?: string;
+  disambiguationOptions?: string[];
+  disambiguationParentInfo?: DisambiguationParentInfo;
+  disambiguationCandidatePaths?: string[];
   editablePlanField?: PlanCopyField;
+  turnDebug?: ChatTurnDebug;
+  turnRecognition?: UserTurnRecognition;
 }
 
 const CHAT_TEXT = 'text-xs leading-relaxed';
+
+function isPlanBackedHintAction(action: string | undefined): boolean {
+  return action === 'disambiguate' || action === 'ask_age';
+}
+
+function resolveHintMeta(result: VbTextTurnResponse): {
+  hintSource?: ChatMessage['hintSource'];
+  editablePlanField?: PlanCopyField;
+} {
+  const source = result.spokenHintSource;
+  const hintSource = isPlanBackedHintAction(result.instruction?.action)
+    && (source === 'disambiguation_plan'
+      || source === 'disambiguation_plan_no_match'
+      || source === 'template')
+    ? source
+    : undefined;
+  const editablePlanField: PlanCopyField | undefined =
+    hintSource === 'disambiguation_plan_no_match'
+      ? 'no_match_1'
+      : hintSource === 'disambiguation_plan'
+        ? 'question'
+        : undefined;
+  return { hintSource, editablePlanField };
+}
+
+function resolveDisambiguationOptions(result: VbTextTurnResponse): {
+  categoryName?: string;
+  options?: string[];
+} {
+  const action = result.instruction?.action;
+  if (action !== 'disambiguate' && action !== 'ask_age') return {};
+  const options = (result.instruction?.options ?? [])
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (options.length === 0) return {};
+  const categoryName = result.instruction?.categoryName?.trim();
+  return { categoryName: categoryName || undefined, options };
+}
+
+function DisambiguationMetaPanel({
+  msg,
+  metaLabel,
+  metaToneClass,
+}: {
+  msg: ChatMessage;
+  metaLabel: string;
+  metaToneClass: string;
+}) {
+  return (
+    <>
+      <p className={`font-mono ${CHAT_TEXT} ${metaToneClass}`}>{metaLabel}</p>
+      <DisambiguationContextSummary
+        categoryName={msg.disambiguationCategory ?? ''}
+        parentInfo={msg.disambiguationParentInfo}
+        candidatePaths={msg.disambiguationCandidatePaths}
+        options={msg.disambiguationOptions}
+        signature={msg.disambiguationSignature}
+        defaultPathsOpen={msg.disambiguationParentInfo?.scope === 'multiple'}
+      />
+    </>
+  );
+}
+
+function TurnDebugPanel({ debug }: { debug: ChatTurnDebug }) {
+  const acquired = debug.acquiredConcepts
+    .map((c) => `${c.category}: ${(c.values ?? []).join('+')}`)
+    .filter(Boolean);
+
+  return (
+    <div className="space-y-2">
+      <p className={`font-mono ${CHAT_TEXT} text-amber-300/80`}>{debug.label}</p>
+      <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>
+        Candidati: <span className="text-emerald-200/75">{debug.candidateCount}</span>
+      </p>
+
+      {acquired.length > 0 && (
+        <div>
+          <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>Concetti acquisiti:</p>
+          <ul className={`mt-0.5 space-y-0.5 font-mono ${CHAT_TEXT} text-emerald-200/75 list-disc pl-4`}>
+            {acquired.map((line) => (
+              <li key={line} className="break-words">{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {debug.parsed.length > 0 && (
+        <div>
+          <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>Parsato nel turno:</p>
+          <ul className={`mt-0.5 space-y-0.5 font-mono ${CHAT_TEXT} text-emerald-200/75 list-disc pl-4`}>
+            {debug.parsed.map((p) => (
+              <li key={`${p.category}:${p.value}`} className="break-words">
+                {p.category}: {p.value}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {debug.attributoAnalysis.length > 0 && (
+        <div>
+          <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>Analisi categorie attributo:</p>
+          <ul className={`mt-0.5 space-y-1 font-mono ${CHAT_TEXT} list-none`}>
+            {debug.attributoAnalysis.map((row) => (
+              <li
+                key={row.categoryName}
+                className={`rounded border px-2 py-1 ${
+                  row.wouldAsk
+                    ? 'border-sky-400/35 bg-sky-400/8'
+                    : row.acquired
+                      ? 'border-emerald-400/20 bg-emerald-400/5'
+                      : 'border-[#1a3a2a] bg-[#0a1510]/50'
+                }`}
+              >
+                <span className="text-emerald-200/80">{row.categoryName}</span>
+                <span className="text-emerald-400/45">
+                  {' · '}
+                  {row.acquired
+                    ? 'già acquisita'
+                    : `${row.distinctSetCount} set distinti`}
+                  {row.wouldAsk ? ' · chiederebbe disambiguazione' : ''}
+                </span>
+                {row.distinctSets.length > 0 && (
+                  <ul className="mt-0.5 text-emerald-200/65 list-disc pl-4">
+                    {row.distinctSets.map((setKey) => (
+                      <li key={setKey} className="break-words">{setKey}</li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+          {!debug.attributoAnalysis.some((r) => r.wouldAsk) && debug.candidateCount > 1 && (
+            <p className={`mt-1 font-mono ${CHAT_TEXT} text-amber-300/65`}>
+              Nessuna categoria attributo con ≥2 set distinti non ancora acquisita — stato stuck.
+            </p>
+          )}
+        </div>
+      )}
+
+      {debug.candidatePaths.length > 0 && (
+        <div>
+          <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>
+            Path candidati ({debug.candidatePaths.length}):
+          </p>
+          <ul className={`mt-0.5 max-h-36 overflow-y-auto space-y-0.5 font-mono ${CHAT_TEXT} text-emerald-200/65 list-disc pl-4`}>
+            {debug.candidatePaths.map((path) => (
+              <li key={path} className="break-all">{path}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {debug.debugLog && (
+        <p className={`font-mono ${CHAT_TEXT} text-emerald-400/45 break-all`}>
+          Log: {debug.debugLog}
+        </p>
+      )}
+      {debug.debugParsedBlock && (
+        <pre className={`mt-1 font-mono ${CHAT_TEXT} text-emerald-400/40 whitespace-pre-wrap break-all`}>
+          {debug.debugParsedBlock}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function UserTurnRecognitionPanel({
+  recognition,
+  onEditGrammar,
+}: {
+  recognition: UserTurnRecognition;
+  onEditGrammar?: () => void;
+}) {
+  const summary = formatUserTurnRecognitionSummary(recognition);
+  const grammarHit = recognition.grammarMatch?.selectedOption;
+  const vbCategoryHit = recognition.vbParsed.find(
+    (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
+  );
+
+  return (
+    <div className="space-y-2">
+      <p className={`font-mono ${CHAT_TEXT} text-sky-300/85`}>
+        Riconoscimento: <span className="text-emerald-100/90">{summary}</span>
+      </p>
+
+      {recognition.categoryName && (
+        <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>
+          Categoria attesa: <span className="text-emerald-200/75">{recognition.categoryName}</span>
+        </p>
+      )}
+
+      {recognition.options.length > 0 && (
+        <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50 break-words`}>
+          Opzioni: <span className="text-emerald-200/70">{formatTechnicalOptions(recognition.options)}</span>
+        </p>
+      )}
+
+      <div className={`font-mono ${CHAT_TEXT} space-y-1`}>
+        <p className="text-emerald-400/50">Dettaglio:</p>
+        <ul className="list-disc pl-4 text-emerald-200/75 space-y-0.5">
+          <li>
+            Grammar ({recognition.grammarSource}):{' '}
+            {grammarHit ?? 'nessun match'}
+            {grammarHit && !recognition.grammarMapsToRuntimeToken && (
+              <span className="text-amber-300/85"> · non è un token runtime ammesso</span>
+            )}
+          </li>
+          <li>
+            Pending inviato al motore:{' '}
+            {recognition.pendingWasActive ? 'sì (canonical_token)' : 'no'}
+          </li>
+          <li>
+            Motore VB:{' '}
+            {vbCategoryHit
+              ? `${vbCategoryHit.category}: ${vbCategoryHit.value}`
+              : recognition.vbParsed.length > 0
+                ? recognition.vbParsed.map((p) => `${p.category}: ${p.value}`).join(' · ')
+                : 'nessun match'}
+          </li>
+          {!recognition.aligned && grammarHit && vbCategoryHit && (
+            <li className="text-amber-300/80">Grammar e VB non allineati</li>
+          )}
+        </ul>
+      </div>
+
+      {recognition.planOptions && recognition.planOptions.length > 0
+        && recognition.planOptions.join('\0') !== recognition.options.join('\0') && (
+        <p className={`font-mono ${CHAT_TEXT} text-amber-300/80 break-words`}>
+          Piano messaggi: {formatTechnicalOptions(recognition.planOptions)}
+          {' · '}
+          Runtime VB: {formatTechnicalOptions(recognition.options)}
+        </p>
+      )}
+
+      {recognition.stuckReasons.length > 0 && (
+        <div className={`rounded border border-amber-400/30 bg-amber-400/8 px-2 py-1.5 space-y-1`}>
+          <p className={`font-mono ${CHAT_TEXT} text-amber-200/90 font-semibold`}>
+            Perché può andare in STUCK
+          </p>
+          <ul className={`font-mono ${CHAT_TEXT} text-amber-100/85 list-disc pl-4 space-y-0.5`}>
+            {recognition.stuckReasons.map((reason) => (
+              <li key={reason} className="break-words">{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {recognition.signature && onEditGrammar && (
+        <button
+          type="button"
+          onClick={onEditGrammar}
+          className={`inline-flex items-center gap-1.5 mt-1 px-2 py-1 rounded border border-sky-400/35 bg-sky-400/10 text-sky-200 font-mono ${CHAT_TEXT} hover:bg-sky-400/20 transition-colors`}
+        >
+          <ExternalLink className="w-3 h-3 flex-shrink-0" />
+          Modifica grammatica nel pannello messaggi
+        </button>
+      )}
+    </div>
+  );
+}
+
+function UserMessageBubble({
+  msg,
+  onOpenDisambiguationMessage,
+}: {
+  msg: ChatMessage;
+  onOpenDisambiguationMessage?: (signature: string) => void;
+}) {
+  const recognition = msg.turnRecognition;
+  const [open, setOpen] = useState(() => shouldAutoExpandUserTurnRecognition(recognition));
+  const hasPanel = !!recognition;
+
+  useEffect(() => {
+    if (shouldAutoExpandUserTurnRecognition(recognition)) {
+      setOpen(true);
+    }
+  }, [recognition?.signature, recognition?.grammarMatch?.selectedOption, recognition?.vbParsed.length]);
+
+  if (!hasPanel) {
+    return <p className={`font-sans ${CHAT_TEXT} text-emerald-200`}>{msg.text}</p>;
+  }
+
+  return (
+    <div className="w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-start gap-1.5 text-left text-emerald-200 hover:text-emerald-100 transition-colors"
+        aria-expanded={open}
+      >
+        <ChevronDown
+          className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
+        />
+        {!recognition?.grammarMapsToRuntimeToken || recognition.stuckReasons.length > 0 ? (
+          <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-amber-400/80" aria-hidden />
+        ) : null}
+        <span className={`font-sans ${CHAT_TEXT} flex-1 min-w-0`}>{msg.text}</span>
+      </button>
+      {open && recognition && (
+        <div className="mt-2 pt-2 border-t border-emerald-400/15 pl-[18px]">
+          <UserTurnRecognitionPanel
+            recognition={recognition}
+            onEditGrammar={
+              recognition.signature && onOpenDisambiguationMessage
+                ? () => onOpenDisambiguationMessage(recognition.signature!)
+                : undefined
+            }
+          />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AgentMessageBubble({
   msg,
@@ -48,7 +389,7 @@ function AgentMessageBubble({
   msg: ChatMessage;
   onSave: (text: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => shouldAutoExpandTurnDebug(msg.turnDebug));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(msg.text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -56,13 +397,16 @@ function AgentMessageBubble({
   const canEdit = !!msg.disambiguationSignature
     && (msg.hintSource === 'disambiguation_plan' || msg.hintSource === 'disambiguation_plan_no_match');
   const hasDisambiguationMeta = !!msg.hintSource;
+  const hasTurnDebug = !!msg.turnDebug;
+  const hasExpandablePanel = hasDisambiguationMeta || hasTurnDebug;
   const isPersonalized = msg.hintSource === 'disambiguation_plan'
     || msg.hintSource === 'disambiguation_plan_no_match';
+  const isVincoloAsk = !!msg.disambiguationSignature && isVincoloAskSignature(msg.disambiguationSignature);
   const metaLabel = msg.hintSource === 'disambiguation_plan'
-    ? 'Messaggio di disambiguazione personalizzato'
+    ? (isVincoloAsk ? 'Vincolo personalizzato' : 'Disambiguazione personalizzata')
     : msg.hintSource === 'disambiguation_plan_no_match'
-      ? 'Re-prompt personalizzato'
-      : 'Template VB';
+      ? (isVincoloAsk ? 'Re-prompt vincolo' : 'Re-prompt personalizzato')
+      : (isVincoloAsk ? 'Template VB (domanda età)' : 'Template VB');
   const metaToneClass = msg.hintSource === 'template'
     ? 'text-amber-300/70'
     : 'text-sky-300/70';
@@ -82,6 +426,11 @@ function AgentMessageBubble({
     const trimmed = draft.trim();
     if (trimmed && trimmed !== msg.text) onSave(trimmed);
     setEditing(false);
+  };
+
+  const startEditing = () => {
+    setOpen(true);
+    setEditing(true);
   };
 
   if (editing) {
@@ -110,11 +459,27 @@ function AgentMessageBubble({
             Annulla
           </button>
         </div>
+        {hasExpandablePanel && (
+          <div className="pt-2 border-t border-[#1a3a2a]/80 pl-[18px]">
+            {hasDisambiguationMeta && (
+              <DisambiguationMetaPanel
+                msg={msg}
+                metaLabel={metaLabel}
+                metaToneClass={metaToneClass}
+              />
+            )}
+            {hasTurnDebug && msg.turnDebug && (
+              <div className={hasDisambiguationMeta ? 'mt-2 pt-2 border-t border-[#1a3a2a]/60' : ''}>
+                <TurnDebugPanel debug={msg.turnDebug} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
 
-  if (hasDisambiguationMeta) {
+  if (hasExpandablePanel) {
     return (
       <div className="group relative w-full">
         <button
@@ -126,15 +491,17 @@ function AgentMessageBubble({
           <ChevronDown
             className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
           />
-          {isPersonalized && (
+          {hasTurnDebug ? (
+            <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-amber-400/80" aria-hidden />
+          ) : isPersonalized ? (
             <MessageSquareText className="w-3 h-3 flex-shrink-0 mt-0.5 text-sky-400/80" aria-hidden />
-          )}
+          ) : null}
           <span className={`font-sans ${CHAT_TEXT} flex-1 min-w-0`}>{msg.text}</span>
         </button>
         {canEdit && (
           <button
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={startEditing}
             title="Modifica messaggio nel piano disambiguazione"
             className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 p-1 rounded bg-[#0a1510] border border-emerald-400/30 text-emerald-400/70 hover:text-emerald-300 transition-opacity"
           >
@@ -143,14 +510,17 @@ function AgentMessageBubble({
         )}
         {open && (
           <div className="mt-2 pt-2 border-t border-[#1a3a2a]/80 pl-[18px]">
-            <p className={`font-mono ${CHAT_TEXT} ${metaToneClass}`}>{metaLabel}</p>
-            {msg.disambiguationSignature && (
-              <p
-                className={`mt-1 font-mono ${CHAT_TEXT} text-emerald-400/50 break-all`}
-                title={msg.disambiguationSignature}
-              >
-                {msg.disambiguationSignature}
-              </p>
+            {hasDisambiguationMeta && (
+              <DisambiguationMetaPanel
+                msg={msg}
+                metaLabel={metaLabel}
+                metaToneClass={metaToneClass}
+              />
+            )}
+            {hasTurnDebug && msg.turnDebug && (
+              <div className={hasDisambiguationMeta ? 'mt-2 pt-2 border-t border-[#1a3a2a]/60' : ''}>
+                <TurnDebugPanel debug={msg.turnDebug} />
+              </div>
             )}
           </div>
         )}
@@ -197,6 +567,7 @@ export function ChatPanel({
   agentBundle = null,
   onClose,
   onPatchDisambiguationMessage,
+  onOpenDisambiguationMessage,
 }: ChatPanelProps) {
   const [state, setState] = useState<ChatUiState>(() => (
     agentBundle ? initChatState(agentBundle) : { messages: [], selectedPath: null, candidatePaths: null }
@@ -243,6 +614,10 @@ export function ChatPanel({
     const trimmed = input.trim();
     if (!trimmed || state.selectedPath !== null || !agentBundle || loading) return;
 
+    const pendingContext = resolvePendingDisambiguationContext(state.messages);
+    const answerContext = buildAnswerContextFromPending(pendingContext);
+    const sessionPendingMismatch = describePendingSessionMismatch(vbSession, answerContext);
+
     setState((prev) => ({
       ...prev,
       messages: [...prev.messages, { id: nextMsgId(), role: 'user', text: trimmed }],
@@ -255,6 +630,7 @@ export function ChatPanel({
         userText: trimmed,
         bundle: agentBundle,
         state: vbSession,
+        answerContext,
       });
 
       const nextState = result.nextState ?? null;
@@ -263,22 +639,45 @@ export function ChatPanel({
       const spoken = result.spokenHint?.trim() ?? '';
       const selectedPath = result.selectedPath ?? nextState?.selectedPath ?? null;
       const isConfirm = result.instruction?.action === 'confirm' && !!selectedPath;
-      const hintSource = result.instruction?.action === 'disambiguate'
-        && (result.spokenHintSource === 'disambiguation_plan'
-          || result.spokenHintSource === 'disambiguation_plan_no_match'
-          || result.spokenHintSource === 'template')
-        ? result.spokenHintSource
+      const { hintSource, editablePlanField } = resolveHintMeta(result);
+      const { categoryName: disambiguationCategory, options: disambiguationOptions } =
+        resolveDisambiguationOptions(result);
+      const disambiguationParentInfo = disambiguationCategory
+        && (result.candidatePaths?.length ?? 0) > 0
+        ? deriveDisambiguationParents(
+          disambiguationCategory,
+          result.candidatePaths ?? [],
+          agentBundle.dictionary.categories ?? [],
+        )
         : undefined;
-
-      const editablePlanField: PlanCopyField | undefined =
-        hintSource === 'disambiguation_plan_no_match'
-          ? 'no_match_1'
-          : hintSource === 'disambiguation_plan'
-            ? 'question'
-            : undefined;
+      const disambiguationCandidatePaths = (result.candidatePaths ?? [])
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const turnDebug = buildChatTurnDebug(result, agentBundle);
+      const turnRecognition = buildUserTurnRecognition({
+        userText: trimmed,
+        bundle: agentBundle,
+        vbParsed: result.parsed,
+        pending: pendingContext,
+        priorSession: vbSession,
+        vbResult: result,
+      });
+      if (sessionPendingMismatch && turnRecognition) {
+        turnRecognition.stuckReasons = [
+          sessionPendingMismatch,
+          ...turnRecognition.stuckReasons,
+        ];
+      }
 
       setState((prev) => {
         const nextMessages = [...prev.messages];
+        const lastUserIdx = nextMessages.length - 1;
+        if (lastUserIdx >= 0 && nextMessages[lastUserIdx].role === 'user') {
+          nextMessages[lastUserIdx] = {
+            ...nextMessages[lastUserIdx],
+            turnRecognition,
+          };
+        }
         if (spoken) {
           nextMessages.push({
             id: nextMsgId(),
@@ -287,7 +686,14 @@ export function ChatPanel({
             isResult: isConfirm,
             hintSource,
             disambiguationSignature: result.disambiguationSignature,
+            disambiguationCategory,
+            disambiguationOptions,
+            disambiguationParentInfo,
+            disambiguationCandidatePaths: disambiguationCandidatePaths.length > 0
+              ? disambiguationCandidatePaths
+              : undefined,
             editablePlanField,
+            turnDebug,
           });
         }
         return {
@@ -427,7 +833,10 @@ export function ChatPanel({
           return (
             <div key={msg.id} className="flex justify-end">
               <div className="max-w-[92%] px-3 py-2 rounded-lg bg-emerald-400/15 border border-emerald-400/18">
-                <p className={`font-sans ${CHAT_TEXT} text-emerald-200`}>{msg.text}</p>
+                <UserMessageBubble
+                  msg={msg}
+                  onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+                />
               </div>
             </div>
           );

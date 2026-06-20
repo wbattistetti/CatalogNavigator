@@ -73,13 +73,13 @@ export function CorpusTableRow({
       </div>
       <div className="min-w-0 px-3 py-2 border-l border-[#1a3a2a]">
         <MemoCorpusSegmentationChips
+          sourceText={text}
           liveLoadedRefs={liveLoadedRefs}
           editingDictionaryId={editingDictionaryId}
           editingCategories={categories}
           fallbackCategories={categories}
           segmentation={segmentation}
           pending={segmentationPending}
-          onRemoveCanonical={onRemoveCanonical}
           editableCanonicalSet={editableCanonicalSet}
         />
       </div>

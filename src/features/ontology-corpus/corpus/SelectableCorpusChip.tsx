@@ -29,6 +29,7 @@ export const SelectableCorpusChip = memo(function SelectableCorpusChip({
   iconTitle,
   dictScope = 'project',
   onRemove,
+  removeTitle,
 }: {
   canonical: string;
   categorizable: boolean;
@@ -46,6 +47,7 @@ export const SelectableCorpusChip = memo(function SelectableCorpusChip({
   iconTitle?: string;
   dictScope?: 'project' | 'library';
   onRemove?: () => void;
+  removeTitle?: string;
 }) {
   const selected = useDictionaryChipSelected(canonical);
   const dragging = useDictionaryChipDragging(canonical);
@@ -110,7 +112,7 @@ export const SelectableCorpusChip = memo(function SelectableCorpusChip({
             e.stopPropagation();
             onRemove();
           }}
-          title={isAlias ? 'Rimuovi alias' : 'Rimuovi token'}
+          title={removeTitle ?? (isAlias ? 'Rimuovi alias' : 'Rimuovi token')}
           className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover/chip:opacity-100 text-red-400/70 hover:text-red-300 hover:bg-red-400/15 transition-all"
         >
           <X className="w-2.5 h-2.5" />

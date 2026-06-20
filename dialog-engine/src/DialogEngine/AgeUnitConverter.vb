@@ -33,6 +33,24 @@ Public Module AgeUnitConverter
         End Select
     End Function
 
+    ''' <summary>Patient age as total weeks for inclusive min/max constraint filtering.</summary>
+    Public Function ToTotalWeeks(value As Integer, unit As String) As Integer?
+        If value < 0 Then Return Nothing
+        Dim u = ParseUnitToken(unit)
+        Select Case u
+            Case "years"
+                Return value * 52
+            Case "months"
+                Return (value * 52) \ 12
+            Case "weeks"
+                Return value
+            Case "days"
+                Return value \ 7
+            Case Else
+                Return Nothing
+        End Select
+    End Function
+
     Public Function ParseUnitToken(token As String) As String
         Dim t = If(token, String.Empty).Trim().ToLowerInvariant()
         If String.IsNullOrWhiteSpace(t) Then Return "years"

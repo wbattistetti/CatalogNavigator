@@ -110,6 +110,7 @@ Public Module ResolutionRunner
         If resolutionStep.UnitGroup.HasValue AndAlso resolutionStep.UnitGroup.Value > 0 AndAlso resolutionStep.UnitGroup.Value < match.Groups.Count Then
             unitToken = match.Groups(resolutionStep.UnitGroup.Value).Value
         End If
+        If String.IsNullOrWhiteSpace(unitToken) Then Return Nothing
         Dim unit = ResolveUnitToken(unitToken, resolutionStep.UnitMap, resolutionStep.DefaultUnit)
 
         Return New Models.ResolvedQuantity With {.Value = value, .Unit = unit}
@@ -118,8 +119,11 @@ Public Module ResolutionRunner
     Private Function RunWordMap(resolutionStep As Models.ResolutionStep, text As String) As Models.ResolvedQuantity
         If resolutionStep.Entries Is Nothing OrElse resolutionStep.Entries.Count = 0 Then Return Nothing
 
+        Dim ambiguous As New HashSet(Of String)(New String() {"un", "uno", "una"}, StringComparer.OrdinalIgnoreCase)
+
         For Each entry In resolutionStep.Entries.OrderByDescending(Function(e) If(e?.Word, String.Empty).Length)
             If entry Is Nothing OrElse String.IsNullOrWhiteSpace(entry.Word) Then Continue For
+            If ambiguous.Contains(entry.Word) Then Continue For
             Dim word = entry.Word.Trim().ToLowerInvariant().Replace("'", "")
             Dim pattern = "\b" & Regex.Escape(word) & "\b"
             If Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase) Then

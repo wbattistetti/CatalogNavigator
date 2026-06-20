@@ -14,6 +14,8 @@ export function useTestAgentBundle(): AgentBundle | null {
     agentNeedsUpdate,
     liveLoadedRefs,
     leafDescriptionMap,
+    corpusSegmentExclusions,
+    corpusItemExclusions,
     analysisApi,
   } = useDocumentEditorController();
 
@@ -38,6 +40,8 @@ export function useTestAgentBundle(): AgentBundle | null {
         dictionaryDirty: dictState?.dirty ?? false,
         analysisDirty,
         pathsOutOfSync: agentNeedsUpdate,
+        segmentExclusions: corpusSegmentExclusions,
+        itemExclusions: corpusItemExclusions,
       });
     } catch {
       return null;
@@ -52,5 +56,7 @@ export function useTestAgentBundle(): AgentBundle | null {
     doc.name,
     leafDescriptionMap,
     liveLoadedRefs,
+    corpusSegmentExclusions,
+    corpusItemExclusions,
   ]);
 }

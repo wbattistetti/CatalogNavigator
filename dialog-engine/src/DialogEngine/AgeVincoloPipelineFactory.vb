@@ -16,14 +16,9 @@ Public Module AgeVincoloPipelineFactory
 
     Public Function BuildPipeline() As Models.ResolutionPipeline
         Dim lexicon = BuildItalianAgeWordLexicon()
-        Dim wordAlt = BuildAgeWordAlternation(lexicon)
-        Dim wordEntries = lexicon.Select(
-            Function(kvp) New Models.WordMapEntry With {
-                .Word = kvp.Key,
-                .Value = kvp.Value,
-                .Unit = "years"
-            }
-        ).ToList()
+        Dim wordUnitLexicon = BuildWordUnitLexicon(lexicon)
+        Dim wordAlt = BuildAgeWordAlternation(wordUnitLexicon)
+        Dim wordEntries = BuildWordMapEntries(lexicon)
 
         Return New Models.ResolutionPipeline With {
             .Engine = "pipeline",
@@ -47,12 +42,11 @@ Public Module AgeVincoloPipelineFactory
                 },
                 New Models.ResolutionStep With {
                     .Type = "word_unit_capture",
-                    .Pattern = $"(?:^|\s|(?:ho|ha|sono|è|e|di)\s+)({wordAlt})(?:\s*(anni|anno|mesi|mese|giorni|giorno|settimane|settimana))?\b",
+                    .Pattern = $"(?:^|\s|(?:ho|ha|sono|è|e|di)\s+)({wordAlt})\s+(anni|anno|mesi|mese|giorni|giorno|settimane|settimana)\b",
                     .WordGroup = 1,
                     .UnitGroup = 2,
-                    .WordValueMap = lexicon,
-                    .UnitMap = UnitMap,
-                    .DefaultUnit = "years"
+                    .WordValueMap = wordUnitLexicon,
+                    .UnitMap = UnitMap
                 },
                 New Models.ResolutionStep With {
                     .Type = "word_map",
@@ -71,7 +65,7 @@ Public Module AgeVincoloPipelineFactory
         Dim lexicon As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
 
         AddWords(lexicon, New Dictionary(Of String, Integer) From {
-            {"zero", 0}, {"uno", 1}, {"una", 1}, {"due", 2}, {"tre", 3}, {"quattro", 4},
+            {"zero", 0}, {"due", 2}, {"tre", 3}, {"quattro", 4},
             {"cinque", 5}, {"sei", 6}, {"sette", 7}, {"otto", 8}, {"nove", 9},
             {"dieci", 10}, {"undici", 11}, {"dodici", 12}, {"tredici", 13}, {"quattordici", 14},
             {"quindici", 15}, {"sedici", 16}, {"diciassette", 17}, {"diciotto", 18}, {"diciannove", 19},
@@ -99,6 +93,26 @@ Public Module AgeVincoloPipelineFactory
         Next
 
         Return lexicon
+    End Function
+
+    Private ReadOnly AmbiguousStandaloneAgeWords As HashSet(Of String) = New HashSet(Of String)(
+        New String() {"un", "uno", "una"},
+        StringComparer.OrdinalIgnoreCase)
+
+    Private Function BuildWordUnitLexicon(base As Dictionary(Of String, Integer)) As Dictionary(Of String, Integer)
+        Dim merged As New Dictionary(Of String, Integer)(base, StringComparer.OrdinalIgnoreCase)
+        merged("un") = 1
+        Return merged
+    End Function
+
+    Private Function BuildWordMapEntries(lexicon As Dictionary(Of String, Integer)) As List(Of Models.WordMapEntry)
+        Return lexicon.
+            Where(Function(kvp) Not AmbiguousStandaloneAgeWords.Contains(kvp.Key)).
+            Select(Function(kvp) New Models.WordMapEntry With {
+                .Word = kvp.Key,
+                .Value = kvp.Value,
+                .Unit = "years"
+            }).ToList()
     End Function
 
     Private Function BuildItalianCompoundWord(tensWord As String, onesWord As String) As String

@@ -9,6 +9,7 @@ import { DockPanelRetained } from './dock/DockPanelRetained';
 import { useDocumentPanelMount } from './dock/useDocumentPanelMount';
 import { useDocumentEditorController } from './DocumentEditorContext';
 import { DocumentWorkspace } from './DocumentWorkspace';
+import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 
 function LoadingPlaceholder({ label }: { label: string }) {
@@ -56,8 +57,19 @@ export function OntologyDockPanel(props: IDockviewPanelProps) {
   );
 }
 
+export function DisambiguationDockPanel(props: IDockviewPanelProps) {
+  const mounted = useDocumentPanelMount(EDITOR_TAB_IDS.disambiguation, props.api);
+
+  return (
+    <DockPanelRetained mounted={mounted}>
+      <DocumentEditorMessagesPanel />
+    </DockPanelRetained>
+  );
+}
+
 export const DOCUMENT_EDITOR_DOCK_COMPONENTS = {
   document: DocumentDockPanel,
   dictionaries: DictionariesDockPanel,
   ontology: OntologyDockPanel,
+  disambiguation: DisambiguationDockPanel,
 } as const;

@@ -10,7 +10,8 @@ Public Module ConceptExtraction
         Optional pendingOnly As Boolean = False,
         Optional pendingValueKind As String = Nothing,
         Optional pendingAllowedTokens As IList(Of String) = Nothing,
-        Optional bundle As Models.AgentBundle = Nothing
+        Optional bundle As Models.AgentBundle = Nothing,
+        Optional planSignature As String = Nothing
     ) As List(Of Models.Concept)
         Dim text = If(utterance, String.Empty).Trim()
         If String.IsNullOrWhiteSpace(text) Then Return New List(Of Models.Concept)()
@@ -23,10 +24,11 @@ Public Module ConceptExtraction
             End If
 
             If String.Equals(pendingValueKind, CategoryTypes.ValueKindCanonicalToken, StringComparison.OrdinalIgnoreCase) OrElse
+               Not String.IsNullOrWhiteSpace(planSignature) OrElse
                (pendingAllowedTokens IsNot Nothing AndAlso pendingAllowedTokens.Count > 0 AndAlso
                 Not String.Equals(pendingValueKind, CategoryTypes.ValueKindAgeYears, StringComparison.OrdinalIgnoreCase)) Then
                 Dim disambiguationConcept = DisambiguationAnswer.ExtractConceptFromUtterance(
-                    bundle, pendingCategoryName, pendingAllowedTokens, text)
+                    bundle, pendingCategoryName, pendingAllowedTokens, text, planSignature)
                 If disambiguationConcept Is Nothing Then Return New List(Of Models.Concept)()
                 Return New List(Of Models.Concept) From {disambiguationConcept}
             End If
@@ -51,24 +53,14 @@ Public Module ConceptExtraction
         If category IsNot Nothing AndAlso category.Resolution IsNot Nothing Then
             Dim quantity = ResolutionRunner.RunForCategory(category, utterance)
             If quantity IsNot Nothing Then
-                Return New Models.Concept With {
-                    .Category = category.Name,
-                    .Value = quantity.Value.ToString(),
-                    .Unit = quantity.Unit,
-                    .Kind = Models.ConceptKind.Vincolo
-                }
+                Return ValueSetOps.CreateVincoloConcept(category.Name, quantity.Value.ToString(), quantity.Unit)
             End If
         End If
 
         If category IsNot Nothing AndAlso CategoryTypes.IsAgeYearsCategory(category) Then
             Dim age = ResolveTurnAge.ParseAgeYearsFromSlotValue(utterance)
             If age.HasValue Then
-                Return New Models.Concept With {
-                    .Category = category.Name,
-                    .Value = age.Value.ToString(),
-                    .Unit = "years",
-                    .Kind = Models.ConceptKind.Vincolo
-                }
+                Return ValueSetOps.CreateVincoloConcept(category.Name, age.Value.ToString(), "years")
             End If
         End If
 
@@ -102,22 +94,21 @@ Public Module ConceptExtraction
                CategoryTypes.IsAgeYearsCategory(category) Then
                 Dim quantity = ResolveTurnAge.NormalizeAgeConceptQuantity(concept)
                 If quantity IsNot Nothing Then
-                    result.Add(New Models.Concept With {
-                        .Category = category.Name,
-                        .Value = quantity.Value.ToString(),
-                        .Kind = Models.ConceptKind.Vincolo,
-                        .Unit = quantity.Unit
-                    })
+                    result.Add(ValueSetOps.CreateVincoloConcept(
+                        category.Name, quantity.Value.ToString(), quantity.Unit))
                 End If
                 Continue For
             End If
 
-            result.Add(New Models.Concept With {
-                .Category = If(category IsNot Nothing, category.Name, concept.Category.Trim()),
-                .Value = CategoryNormalization.CanonicalizeConceptValue(concept.Value, kind, category),
-                .Kind = kind,
-                .Unit = concept.Unit
-            })
+            Dim values = ValueSetOps.NormalizeAttributoValues(
+                ValueSetOps.ValuesFromConcept(concept).
+                    Select(Function(v) CategoryNormalization.CanonicalizeConceptValue(v, kind, category)))
+
+            If values.Count = 0 Then Continue For
+
+            result.Add(ValueSetOps.CreateAttributoConcept(
+                If(category IsNot Nothing, category.Name, concept.Category.Trim()),
+                values))
         Next
 
         Return result

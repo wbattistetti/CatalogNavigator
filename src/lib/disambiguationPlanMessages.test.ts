@@ -26,6 +26,9 @@ const row: DisambiguationEditorRow = {
   contextCount: 1,
   nodeKeys: ['k1'],
   sampleAcquired: {},
+  parentInfo: { parents: [], contextPrefixes: [], scope: 'none', parentCategoryName: null },
+  candidatePaths: [],
+  contextVariants: [],
 };
 
 const emptyRow: DisambiguationEditorRow = {
@@ -182,6 +185,67 @@ describe('buildDisambiguationEditorRows vincolo', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.style).toBe('ask_age');
     expect(rows[0]?.answer_grammar).toBeNull();
+  });
+
+  it('merges distinct context variants under the same signature', async () => {
+    const { buildDisambiguationEditorRows } = await import('./disambiguationPlanMessages');
+    const signature = 'varie||arterioso+venoso|venoso||choice';
+    const categories = [
+      { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
+      { id: 'c2', name: 'prestazione', order: 1, tokenTexts: ['ecodoppler', 'ecg'] },
+      { id: 'c3', name: 'varie', order: 2, tokenTexts: ['arterioso+venoso', 'venoso'] },
+    ];
+    const plan = {
+      nodes: [
+        {
+          key: 'k1',
+          signature,
+          acquired: { specialita: 'cardiologica', prestazione: 'ecodoppler' },
+          ageYears: null,
+          action: 'disambiguate' as const,
+          categoryName: 'varie',
+          options: ['arterioso+venoso', 'venoso'],
+          style: 'choice' as const,
+          candidateCount: 2,
+          candidatePathsSample: ['cardiologica.ecodoppler.arterioso+venoso'],
+        },
+        {
+          key: 'k2',
+          signature,
+          acquired: { specialita: 'cardiologica', prestazione: 'ecg' },
+          ageYears: null,
+          action: 'disambiguate' as const,
+          categoryName: 'varie',
+          options: ['arterioso+venoso', 'venoso'],
+          style: 'choice' as const,
+          candidateCount: 2,
+          candidatePathsSample: ['cardiologica.ecg.venoso'],
+        },
+      ],
+      stats: {
+        catalogItemCount: 2,
+        totalStates: 2,
+        disambiguateNodes: 2,
+        askAgeNodes: 0,
+        confirmStates: 0,
+        deadStates: 0,
+        stuckStates: 0,
+        uniqueDisambiguationBySignature: 1,
+        uniqueDisambiguationByFullKey: 2,
+        uniqueAgePatterns: 0,
+      },
+      computedAt: '2026-06-19',
+      warnings: [],
+    };
+
+    const rows = buildDisambiguationEditorRows(plan, null, categories);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.contextCount).toBe(2);
+    expect(rows[0]?.contextVariants).toHaveLength(2);
+    expect(rows[0]?.contextVariants.map((v) => v.pathPrefix)).toEqual([
+      'cardiologica.ecg',
+      'cardiologica.ecodoppler',
+    ]);
   });
 });
 

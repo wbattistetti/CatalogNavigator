@@ -113,10 +113,10 @@ Public Module TurnResultBuilder
             New Models.AgentTurnInstruction With {
                 .Action = "confirm_implicit",
                 .CategoryName = inferred.CategoryName,
-                .ImplicitValue = inferred.Value,
-                .Options = New List(Of String) From {inferred.Value}
+                .ImplicitValue = inferred.ValueSetKey,
+                .Options = New List(Of String) From {inferred.ValueSetKey}
             },
-            DialogPhrases.FormatImplicitConceptConfirmHint(inferred.CategoryName, inferred.Value),
+            DialogPhrases.FormatImplicitConceptConfirmHint(inferred.CategoryName, inferred.ValueSetKey),
             survivingPaths)
     End Function
 
@@ -149,6 +149,7 @@ Public Module TurnResultBuilder
     Private Function CloneConversation(conversation As Models.AgentSessionState) As Models.AgentSessionState
         Return New Models.AgentSessionState With {
             .AcquiredConcepts = ConceptOps.CloneConceptList(conversation.AcquiredConcepts),
+            .ExactAttributoCategories = ConceptOps.CloneExactAttributoCategories(conversation.ExactAttributoCategories),
             .SelectedPath = conversation.SelectedPath,
             .NoMatchCount = conversation.NoMatchCount,
             .LastTranscript = conversation.LastTranscript,

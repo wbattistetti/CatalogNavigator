@@ -11,16 +11,14 @@ import {
 } from './dictionaryTree';
 import {
   isTerminalItemSlot,
-  normalizeItemPaths,
 } from './itemPaths';
 import type { LoadedDictionaryRef } from './multiDictionarySegment';
+import { segmentDescriptionMulti } from './multiDictionarySegment';
 import {
-  segmentAllDescriptionsFromLoadedRefs,
-  segmentDescriptionMulti,
-} from './multiDictionarySegment';
+  resolveCorpusItemPaths,
+  segmentCorpusDescriptions,
+} from './corpusItemPaths';
 import {
-  canonicalizeItemPaths,
-  canonicalizeItemPathsFromLoadedRefs,
   getPathOrderingCategories,
   itemPathsNeedCanonicalization,
   itemPathsNeedCanonicalizationFromLoadedRefs,
@@ -37,7 +35,6 @@ import {
 import { requiresInteractiveNode } from './nluQuestionRules';
 import {
   isCanonicalToken,
-  segmentAllDescriptions,
   segmentDescription,
   type TokenDictionary,
   type TokenEntry,
@@ -275,18 +272,12 @@ function buildLeafData(
   return out;
 }
 
-function segmentCorpusDescriptions(input: ConvaiExportInput): {
-  rows: import('./tokenDictionary').RowSegmentation[];
-  leafPaths: string[];
-} {
-  if (input.loadedRefs?.length) {
-    return segmentAllDescriptionsFromLoadedRefs(input.descriptions, input.loadedRefs);
-  }
-  return segmentAllDescriptions(
-    input.descriptions,
-    input.dictionary.tokens,
-    input.dictionary.categories ?? [],
-  );
+function corpusSegmentInput(input: ConvaiExportInput) {
+  return {
+    descriptions: input.descriptions,
+    dictionary: input.dictionary,
+    loadedRefs: input.loadedRefs,
+  };
 }
 
 function segmentCorpusRow(
@@ -314,12 +305,10 @@ function pathOrderingCategoriesForExport(input: ConvaiExportInput): TokenCategor
 
 /** Serializes ontology: item paths, corpus rows (category-ordered), dialog nodes. */
 export function buildConvaiOntologyExport(input: ConvaiExportInput): ConvaiOntologyExport {
-  const { rows: segRows, leafPaths } = segmentCorpusDescriptions(input);
-
+  const segInput = corpusSegmentInput(input);
+  const { rows: segRows } = segmentCorpusDescriptions(segInput);
   const pathCategories = pathOrderingCategoriesForExport(input);
-  const itemPaths = input.loadedRefs?.length
-    ? normalizeItemPaths(canonicalizeItemPathsFromLoadedRefs(leafPaths, input.loadedRefs))
-    : normalizeItemPaths(canonicalizeItemPaths(leafPaths, pathCategories));
+  const itemPaths = resolveCorpusItemPaths(segInput);
 
   const analysisRows = input.analysis?.rows ?? [];
 

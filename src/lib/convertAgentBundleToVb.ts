@@ -12,7 +12,14 @@ import type {
 } from './agentBundleTypes';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import { compileVincoloResolutionPipeline } from './vincoloResolutionPipeline';
-import { compileDisambiguationAnswerGrammar } from './disambiguationPlanMessages';
+import {
+  getItemAttributoValueSetKey,
+  getItemAttributoValues,
+  normalizeValueList,
+  parseValueSetKey,
+  valueSetContainsAll,
+  valueSetKey,
+} from './valueSet';
 
 function canonicalConceptValue(value: string): string {
   return value.trim().toLowerCase();
@@ -33,7 +40,7 @@ function resolveCatalogValue(
 
 export interface VbCatalogConcept {
   category: string;
-  value: string;
+  values: string[];
   kind: ConceptKind;
 }
 
@@ -46,6 +53,8 @@ export interface VbCatalogItem {
     max: number | null;
     minMonths: number | null;
     maxMonths: number | null;
+    minWeeks: number | null;
+    maxWeeks: number | null;
   }>;
 }
 
@@ -157,7 +166,14 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
       messages: plan.messages
         .filter((m) => m.question?.trim() || (m.options?.length ?? 0) > 0)
         .map((m) => {
-          const answerGrammar = m.answer_grammar ?? compileDisambiguationAnswerGrammar(m.options ?? []);
+          if (m.style !== 'ask_age' && !m.answer_grammar?.regex?.trim()) {
+            throw new Error(
+              `[convertAgentBundleToVb] Messaggio di disambiguazione senza answer_grammar: ` +
+              `signature="${m.signature ?? m.categoryName}". ` +
+              `Ricalcola il piano di disambiguazione per generare le grammar.`,
+            );
+          }
+          const ag = m.answer_grammar;
           return {
             signature: m.signature,
             categoryName: m.categoryName,
@@ -166,8 +182,8 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
             noMatch2: m.no_match_2,
             noMatch3: m.no_match_3,
             style: m.style,
-            answerGrammar: answerGrammar?.regex?.trim()
-              ? { regex: answerGrammar.regex, mappings: answerGrammar.mappings }
+            answerGrammar: ag?.regex?.trim()
+              ? { regex: ag.regex, mappings: ag.mappings }
               : undefined,
           };
         }),
@@ -176,17 +192,7 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
 
   const catalogItems: VbCatalogItem[] = bundle.corpusItems.map((item) => ({
     path: item.path,
-    concepts: item.segments
-      .filter((seg) => seg.categoryName.trim())
-      .map((seg) => {
-        const category = categoryByName.get(seg.categoryName);
-        const kind: ConceptKind = seg.categoryType === 'vincolo' ? 'vincolo' : 'attributo';
-        return {
-          category: seg.categoryName,
-          value: resolveCatalogValue(seg.text, category?.allowedValues ?? [], kind),
-          kind,
-        };
-      }),
+    concepts: buildGroupedCatalogConcepts(item.segments, categoryByName),
     ageConstraints: item.constraints
       .filter((c): c is CompiledAgeConstraint => c.kind === 'age_years')
       .map((c) => ({
@@ -195,6 +201,8 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
         max: c.max,
         minMonths: c.minMonths,
         maxMonths: c.maxMonths,
+        minWeeks: c.minWeeks,
+        maxWeeks: c.maxWeeks,
       })),
   }));
 
@@ -211,6 +219,31 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
     },
     catalog: { items: catalogItems },
   };
+}
+
+function buildGroupedCatalogConcepts(
+  segments: AgentBundle['corpusItems'][number]['segments'],
+  categoryByName: Map<string, VbAgentBundlePayload['ontology']['categories'][number]>,
+): VbCatalogConcept[] {
+  const grouped = new Map<string, { kind: ConceptKind; values: string[] }>();
+
+  for (const seg of segments) {
+    if (!seg.categoryName.trim()) continue;
+    const category = categoryByName.get(seg.categoryName);
+    const kind: ConceptKind = seg.categoryType === 'vincolo' ? 'vincolo' : 'attributo';
+    const resolved = resolveCatalogValue(seg.text, category?.allowedValues ?? [], kind);
+    const existing = grouped.get(seg.categoryName) ?? { kind, values: [] };
+    existing.values.push(resolved);
+    grouped.set(seg.categoryName, existing);
+  }
+
+  return [...grouped.entries()].map(([category, entry]) => ({
+    category,
+    kind: entry.kind,
+    values: entry.kind === 'vincolo'
+      ? [entry.values[0] ?? '']
+      : normalizeValueList(entry.values),
+  }));
 }
 
 function isExpectedSlotValueKind(value: string): value is ExpectedSlotValueKind {
@@ -260,6 +293,7 @@ export function convertSessionStateToVb(
   if (!state) return null;
   return {
     acquiredConcepts: state.acquiredConcepts ?? [],
+    exactAttributoCategories: state.exactAttributoCategories ?? [],
     selectedPath: state.selectedPath,
     noMatchCount: state.noMatchCount,
     lastTranscript: state.lastTranscript,
@@ -270,7 +304,7 @@ export function convertSessionStateToVb(
 function conceptsFromLegacyDict(dict: Record<string, string>): AgentConcept[] {
   return Object.entries(dict).map(([category, value]) => ({
     category,
-    value,
+    values: parseValueSetKey(value),
     kind: category.toLowerCase().includes('fascia') || category.toLowerCase().includes('et')
       ? 'vincolo' as const
       : 'attributo' as const,
@@ -286,13 +320,21 @@ export function convertSessionStateFromVb(raw: unknown): AgentSessionState | nul
   if (Array.isArray(state.acquiredConcepts)) {
     acquiredConcepts = state.acquiredConcepts
       .filter((c): c is Record<string, unknown> => typeof c === 'object' && c != null)
-      .map((c) => ({
-        category: String(c.category ?? c.categoryName ?? '').trim(),
-        value: String(c.value ?? '').trim(),
-        kind: c.kind === 'vincolo' ? 'vincolo' as const : c.kind === 'attributo' ? 'attributo' as const : undefined,
-        unit: typeof c.unit === 'string' ? c.unit : undefined,
-      }))
-      .filter((c) => c.category && c.value);
+      .map((c) => {
+        const category = String(c.category ?? c.categoryName ?? '').trim();
+        const values = Array.isArray(c.values)
+          ? c.values.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+          : typeof c.value === 'string'
+            ? parseValueSetKey(c.value)
+            : [];
+        return {
+          category,
+          values: normalizeValueList(values),
+          kind: c.kind === 'vincolo' ? 'vincolo' as const : c.kind === 'attributo' ? 'attributo' as const : undefined,
+          unit: typeof c.unit === 'string' ? c.unit : undefined,
+        };
+      })
+      .filter((c) => c.category && c.values.length > 0);
   } else {
     const legacy = state.resolvedConcepts ?? state.resolvedSlots;
     if (legacy && typeof legacy === 'object') {
@@ -302,6 +344,9 @@ export function convertSessionStateFromVb(raw: unknown): AgentSessionState | nul
 
   return {
     acquiredConcepts,
+    exactAttributoCategories: Array.isArray(state.exactAttributoCategories)
+      ? state.exactAttributoCategories.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+      : [],
     selectedPath: typeof state.selectedPath === 'string' ? state.selectedPath : null,
     noMatchCount: typeof state.noMatchCount === 'number' ? state.noMatchCount : 0,
     lastTranscript: typeof state.lastTranscript === 'string' ? state.lastTranscript : undefined,

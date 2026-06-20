@@ -11,7 +11,7 @@ import { useDocumentEditorController } from './DocumentEditorContext';
 import { useTestAgentBundle } from './useTestAgentBundle';
 
 export function DocumentEditorTestRail() {
-  const { setTestOpen, analysisApi } = useDocumentEditorController();
+  const { setTestOpen, analysisApi, openDisambiguationMessage } = useDocumentEditorController();
   const agentBundle = useTestAgentBundle();
   const { analysis, updateDisambiguationPlan } = analysisApi;
 
@@ -21,11 +21,16 @@ export function DocumentEditorTestRail() {
     updateDisambiguationPlan(next);
   }, [analysis?.disambiguation_plan, updateDisambiguationPlan]);
 
+  const onOpenDisambiguationFromChat = useCallback((signature: string) => {
+    openDisambiguationMessage(signature, { focusGrammar: true });
+  }, [openDisambiguationMessage]);
+
   return (
     <ChatPanel
       agentBundle={agentBundle}
       onClose={() => setTestOpen(false)}
       onPatchDisambiguationMessage={onPatchDisambiguationMessage}
+      onOpenDisambiguationMessage={onOpenDisambiguationFromChat}
     />
   );
 }

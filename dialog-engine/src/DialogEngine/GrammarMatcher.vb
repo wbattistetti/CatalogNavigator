@@ -30,11 +30,7 @@ Public Module GrammarMatcher
             Dim canonical = MatchGrammar(text, category)
             If String.IsNullOrWhiteSpace(canonical) Then Continue For
 
-            concepts.Add(New Models.Concept With {
-                .Category = category.Name,
-                .Value = canonical,
-                .Kind = Models.ConceptKind.Attributo
-            })
+            concepts.Add(ValueSetOps.CreateAttributoConcept(category.Name, New List(Of String) From {canonical}))
         Next
 
         Return concepts
@@ -44,12 +40,8 @@ Public Module GrammarMatcher
         If category.Resolution IsNot Nothing Then
             Dim quantity = ResolutionRunner.RunForCategory(category, text)
             If quantity IsNot Nothing Then
-                Return New Models.Concept With {
-                    .Category = category.Name,
-                    .Value = quantity.Value.ToString(),
-                    .Unit = quantity.Unit,
-                    .Kind = Models.ConceptKind.Vincolo
-                }
+                Return ValueSetOps.CreateVincoloConcept(
+                    category.Name, quantity.Value.ToString(), quantity.Unit)
             End If
         End If
 

@@ -34,9 +34,13 @@ import {
 
 } from '../../lib/disambiguationPlanMessages';
 
-import { catalogItemPaths } from '../../lib/itemPaths';
+import { resolveCorpusItemPaths } from '../../lib/corpusItemPaths';
+
+import type { CorpusSegmentExclusions } from '../../lib/corpusItemPaths';
 
 import { compileAgentBundle } from '../../lib/compileAgentBundle';
+import { distinctCatalogOptionsForCategory } from '../../lib/catalogDisambiguationOptions';
+import type { CorpusItemExclusions } from '../../lib/corpusItemPaths';
 
 import type { Analysis } from '../../lib/analysisTypes';
 
@@ -49,6 +53,8 @@ import type { DisambiguationPlanStorage } from '../../lib/disambiguationPlanType
 import { yieldToUi } from '../../lib/yieldToUi';
 
 import { DisambiguationMessagePanel } from './DisambiguationMessagePanel';
+import type { DisambiguationNavRequest } from '../document-editor/useDocumentEditorController';
+import { DICT_INPUT_FIELD } from '../dictionaries/dictionaryFormStyles';
 
 function messageListTextColor(status: DisambiguationEditorRow['status']): string {
   if (status === 'approved') return 'text-emerald-300/90';
@@ -63,6 +69,8 @@ interface DisambiguationWorkspaceProps {
   analysis: Analysis | null;
 
   dictionary: TokenDictionary | null;
+
+  descriptions: string[];
 
   loadedRefs: LoadedDictionaryRef[];
 
@@ -82,6 +90,22 @@ interface DisambiguationWorkspaceProps {
 
   leafDescriptionMap?: ReadonlyMap<string, string> | Record<string, string>;
 
+  segmentExclusions?: CorpusSegmentExclusions;
+
+  itemExclusions?: CorpusItemExclusions;
+
+  onExcludeCorpusItem?: (sourceText: string) => void;
+
+  onRestoreCorpusItem?: (sourceText: string) => void;
+
+  onExcludeCorpusSegment?: (sourceText: string, segmentText: string) => void;
+
+  onExcludeCorpusSegmentOccurrence?: (
+    sourceText: string,
+    segmentText: string,
+    occurrenceIndex1Based: number,
+  ) => void;
+
   onUpdatePlan: (plan: DisambiguationPlanStorage) => void;
 
   onGenerateMessages: (
@@ -92,42 +116,65 @@ interface DisambiguationWorkspaceProps {
 
   ) => Promise<void>;
 
-}
+  navRequest?: DisambiguationNavRequest | null;
 
-
-
-function formatComputedAt(iso: string): string {
-
-  return new Date(iso).toLocaleString('it-IT', {
-
-    dateStyle: 'short',
-
-    timeStyle: 'short',
-
-  });
+  onNavRequestHandled?: () => void;
 
 }
 
 
 
-function StatRow({ label, value, highlight }: { label: string; value: number | string; highlight?: boolean }) {
+function PlanHeaderSubtitle({
+  plan,
+  editorRows,
+  mergeStats,
+}: {
+  plan: DisambiguationPlanResult | null;
+  editorRows: DisambiguationEditorRow[];
+  mergeStats: DisambiguationMergeStats | null;
+}) {
+  if (!plan || editorRows.length === 0) {
+    return (
+      <p className="font-mono text-sm text-emerald-300/80 mt-0.5">
+        Calcola il piano, poi genera o modifica i messaggi
+      </p>
+    );
+  }
+
+  const needsRewrite = mergeStats?.needsRewrite
+    ?? editorRows.filter((r) => !r.question?.trim()).length;
+  const droppedObsolete = mergeStats?.droppedObsolete ?? 0;
 
   return (
-
-    <div className={`flex items-baseline justify-between gap-4 py-1.5 border-b border-[#1a3a2a]/60 last:border-0 ${highlight ? 'text-emerald-200' : ''}`}>
-
-      <span className="font-mono text-xs text-emerald-400/70">{label}</span>
-
-      <span className={`font-mono text-xs tabular-nums ${highlight ? 'text-emerald-300 font-bold' : 'text-emerald-200/90'}`}>
-
-        {value}
-
-      </span>
-
-    </div>
-
+    <p className="font-mono text-sm text-emerald-300/80 mt-0.5">
+      <span>{editorRows.length} messaggi</span>
+      {needsRewrite > 0 && (
+        <>
+          <span className="text-emerald-400/60"> · </span>
+          <span className="text-orange-300">{needsRewrite} da riscrivere</span>
+        </>
+      )}
+      {droppedObsolete > 0 && (
+        <>
+          <span className="text-emerald-400/60"> · </span>
+          <span className="text-emerald-300/75">{droppedObsolete} obsoleti rimossi</span>
+        </>
+      )}
+    </p>
   );
+}
 
+function rowMatchesMessageFilter(row: DisambiguationEditorRow, query: string): boolean {
+  const haystack = [
+    row.question ?? '',
+    row.categoryName,
+    row.signature,
+    ...row.options,
+    row.no_match_1 ?? '',
+    row.no_match_2 ?? '',
+    row.no_match_3 ?? '',
+  ].join(' ').toLowerCase();
+  return haystack.includes(query);
 }
 
 
@@ -152,6 +199,8 @@ export function DisambiguationWorkspace({
 
   dictionary,
 
+  descriptions,
+
   loadedRefs,
 
   dictionaryDirty,
@@ -170,9 +219,25 @@ export function DisambiguationWorkspace({
 
   leafDescriptionMap,
 
+  segmentExclusions,
+
+  itemExclusions,
+
+  onExcludeCorpusItem,
+
+  onRestoreCorpusItem,
+
+  onExcludeCorpusSegment,
+
+  onExcludeCorpusSegmentOccurrence,
+
   onUpdatePlan,
 
   onGenerateMessages,
+
+  navRequest = null,
+
+  onNavRequestHandled,
 
 }: DisambiguationWorkspaceProps) {
 
@@ -186,11 +251,26 @@ export function DisambiguationWorkspace({
 
   const [selectedSignature, setSelectedSignature] = useState<string | null>(null);
 
+  const [messageFilter, setMessageFilter] = useState('');
+
+  const [focusGrammar, setFocusGrammar] = useState(false);
+
   const restoredPlanKeyRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    if (!navRequest?.signature) return;
+    setSelectedSignature(navRequest.signature);
+    setFocusGrammar(navRequest.focusGrammar ?? false);
+    onNavRequestHandled?.();
+  }, [navRequest?.signature, navRequest?.focusGrammar, onNavRequestHandled]);
 
 
-  const canCompute = !!(analysis?.rows?.length && analysis.item_paths?.length && dictionary?.categories?.length);
+
+  const canCompute = !!(
+    analysis?.rows?.length
+    && dictionary?.categories?.length
+    && descriptions.some((line) => line.trim().length > 0)
+  );
 
 
 
@@ -210,7 +290,7 @@ export function DisambiguationWorkspace({
 
       dictionary,
 
-      descriptions: [],
+      descriptions,
 
       analysis,
 
@@ -223,6 +303,10 @@ export function DisambiguationWorkspace({
       analysisDirty,
 
       pathsOutOfSync,
+
+      segmentExclusions,
+
+      itemExclusions,
 
     });
 
@@ -242,6 +326,8 @@ export function DisambiguationWorkspace({
 
     dictionary,
 
+    descriptions,
+
     documentName,
 
     documentId,
@@ -255,6 +341,10 @@ export function DisambiguationWorkspace({
     analysisDirty,
 
     pathsOutOfSync,
+
+    segmentExclusions,
+
+    itemExclusions,
 
   ]);
 
@@ -284,6 +374,11 @@ export function DisambiguationWorkspace({
 
   const vincoloCategories = useMemo(
     () => (dictionary?.categories ?? []).filter((c) => c.type === 'vincolo'),
+    [dictionary?.categories],
+  );
+
+  const dictionaryCategories = useMemo(
+    () => dictionary?.categories ?? [],
     [dictionary?.categories],
   );
 
@@ -335,7 +430,7 @@ export function DisambiguationWorkspace({
 
         setPlan(result);
 
-        const rows = buildDisambiguationEditorRows(result, analysis.disambiguation_plan, vincoloCategories);
+        const rows = buildDisambiguationEditorRows(result, analysis.disambiguation_plan, dictionaryCategories);
 
         setMergeStats(summarizeFromRows(rows, analysis.disambiguation_plan));
 
@@ -371,7 +466,7 @@ export function DisambiguationWorkspace({
 
     };
 
-  }, [canCompute, analysis?.disambiguation_plan, savedPlanKey, compilePlan, vincoloCategories]);
+  }, [canCompute, analysis?.disambiguation_plan, savedPlanKey, compilePlan, dictionaryCategories]);
 
 
 
@@ -379,9 +474,9 @@ export function DisambiguationWorkspace({
 
     if (!plan) return [];
 
-    return buildDisambiguationEditorRows(plan, analysis?.disambiguation_plan, vincoloCategories);
+    return buildDisambiguationEditorRows(plan, analysis?.disambiguation_plan, dictionaryCategories);
 
-  }, [plan, analysis?.disambiguation_plan, vincoloCategories]);
+  }, [plan, analysis?.disambiguation_plan, dictionaryCategories]);
 
 
 
@@ -408,11 +503,52 @@ export function DisambiguationWorkspace({
     [vincoloCategories, selectedRow?.categoryName],
   );
 
+  const selectedRuntimeOptions = useMemo(() => {
+    if (!selectedRow || !analysis || !dictionary) return undefined;
+    if (selectedRow.candidatePaths.length === 0) return undefined;
+    try {
+      const bundle = compileAgentBundle({
+        documentName,
+        documentId,
+        dictionary,
+        descriptions,
+        analysis,
+        loadedRefs: loadedRefs.length > 0 ? loadedRefs : undefined,
+        segmentExclusions,
+        itemExclusions,
+      });
+      const keys = distinctCatalogOptionsForCategory(
+        bundle,
+        selectedRow.categoryName,
+        selectedRow.candidatePaths,
+      );
+      return keys.length > 0 ? keys : undefined;
+    } catch {
+      return undefined;
+    }
+  }, [
+    selectedRow,
+    analysis,
+    dictionary,
+    documentName,
+    documentId,
+    descriptions,
+    loadedRefs,
+    segmentExclusions,
+    itemExclusions,
+  ]);
 
 
-  const filledCount = editorRows.filter((r) => r.question?.trim()).length;
-  const validatedCount = editorRows.filter((r) => r.status === 'approved').length;
-  const rejectedCount = editorRows.filter((r) => r.status === 'rejected').length;
+
+  const filteredRows = useMemo(() => {
+    const query = messageFilter.trim().toLowerCase();
+    if (!query) return editorRows;
+    return editorRows.filter((row) => rowMatchesMessageFilter(row, query));
+  }, [editorRows, messageFilter]);
+
+  useEffect(() => {
+    setMessageFilter('');
+  }, [plan?.computedAt]);
 
 
 
@@ -424,7 +560,7 @@ export function DisambiguationWorkspace({
 
   ) => {
 
-    const rows = buildDisambiguationEditorRows(result, previousPlan, vincoloCategories);
+    const rows = buildDisambiguationEditorRows(result, previousPlan, dictionaryCategories);
 
     const { storage, stats } = mergeDisambiguationPlanAfterCompute(
 
@@ -442,7 +578,7 @@ export function DisambiguationWorkspace({
 
     setMergeStats(stats);
 
-    const mergedRows = buildDisambiguationEditorRows(result, storage, vincoloCategories);
+    const mergedRows = buildDisambiguationEditorRows(result, storage, dictionaryCategories);
 
     const filled = mergedRows.filter((r) => r.question?.trim()).length;
 
@@ -458,7 +594,7 @@ export function DisambiguationWorkspace({
 
     );
 
-  }, [analysis?.id, documentId, onUpdatePlan, vincoloCategories]);
+  }, [analysis?.id, documentId, onUpdatePlan, dictionaryCategories]);
 
 
 
@@ -546,21 +682,19 @@ export function DisambiguationWorkspace({
 
 
 
-  const slots = useMemo(
-
-    () => analysis?.rows.map((r) => r.slot_filling) ?? [],
-
-    [analysis?.rows],
-
-  );
-
   const catalogCount = useMemo(() => {
-
-    if (!analysis?.item_paths?.length) return 0;
-
-    return catalogItemPaths(slots, analysis.item_paths, dictionary?.categories).length;
-
-  }, [analysis?.item_paths, slots, dictionary?.categories]);
+    if (!dictionary || descriptions.every((line) => !line.trim())) return 0;
+    try {
+      return resolveCorpusItemPaths({
+        descriptions,
+        dictionary,
+        loadedRefs: loadedRefs.length > 0 ? loadedRefs : undefined,
+        segmentExclusions,
+      }).length;
+    } catch {
+      return 0;
+    }
+  }, [descriptions, dictionary, loadedRefs, segmentExclusions]);
 
 
 
@@ -578,15 +712,11 @@ export function DisambiguationWorkspace({
 
           </h2>
 
-          <p className="font-mono text-xs text-emerald-400/50 mt-0.5">
-
-            {plan
-
-              ? `${filledCount}/${editorRows.length} messaggi compilati${validatedCount > 0 || rejectedCount > 0 ? ` · ${validatedCount} validati · ${rejectedCount} da aggiustare` : ''}`
-
-              : 'Calcola il piano, poi genera o modifica i messaggi'}
-
-          </p>
+          <PlanHeaderSubtitle
+            plan={plan}
+            editorRows={editorRows}
+            mergeStats={mergeStats}
+          />
 
         </div>
 
@@ -600,7 +730,7 @@ export function DisambiguationWorkspace({
 
             disabled={!canCompute || computing || generating}
 
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-emerald-300 font-mono text-xs hover:bg-emerald-400/20 disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-emerald-300 font-mono text-sm hover:bg-emerald-400/20 disabled:opacity-40 transition-colors"
 
           >
 
@@ -626,7 +756,7 @@ export function DisambiguationWorkspace({
 
                 : `Genera solo i ${rowsToGenerate.length} messaggi da scrivere`}
 
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-sky-400/40 bg-sky-400/10 text-sky-300 font-mono text-xs hover:bg-sky-400/20 disabled:opacity-40 transition-colors"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-sky-400/40 bg-sky-400/10 text-sky-300 font-mono text-sm hover:bg-sky-400/20 disabled:opacity-40 transition-colors"
 
             >
 
@@ -647,48 +777,6 @@ export function DisambiguationWorkspace({
         </div>
 
       </div>
-
-
-
-      {(dictionaryDirty || analysisDirty || pathsOutOfSync) && (
-
-        <div className="flex-shrink-0 mx-4 mt-3 flex items-start gap-2 rounded border border-amber-400/30 bg-amber-400/5 px-3 py-2 font-mono text-xs text-amber-300/80">
-
-          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-
-          <span>Modifiche non salvate — salva l&apos;analisi per persistere anche i messaggi disambiguazione.</span>
-
-        </div>
-
-      )}
-
-
-
-      {mergeStats && plan && (
-
-        <div className="flex-shrink-0 mx-4 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-emerald-400/25 bg-emerald-400/5 px-3 py-2 font-mono text-xs text-emerald-200/85">
-
-          <span><strong className="text-emerald-300">{mergeStats.reused}</strong> riusati</span>
-
-          <span className="text-emerald-400/30">·</span>
-
-          <span><strong className="text-amber-300">{mergeStats.needsRewrite}</strong> da riscrivere</span>
-
-          {mergeStats.droppedObsolete > 0 && (
-
-            <>
-
-              <span className="text-emerald-400/30">·</span>
-
-              <span><strong className="text-emerald-400/60">{mergeStats.droppedObsolete}</strong> obsoleti rimossi</span>
-
-            </>
-
-          )}
-
-        </div>
-
-      )}
 
 
 
@@ -724,53 +812,65 @@ export function DisambiguationWorkspace({
 
         <div className="flex flex-1 min-h-0 overflow-hidden">
 
-          <div className="flex flex-col w-[55%] min-w-0 border-r border-[#1a3a2a]">
+          <div className="flex flex-col flex-1 min-h-0 w-[55%] min-w-0 border-r border-[#1a3a2a]">
 
-            <div className="flex-shrink-0 px-3 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
+            <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
 
-              <div className="grid grid-cols-2 gap-x-4 max-w-md">
+              <p className="font-mono text-sm uppercase tracking-wide text-emerald-300/80 flex-shrink-0">
 
-                <StatRow
-
-                  label="Messaggi unici (firma)"
-
-                  value={plan.stats.uniqueDisambiguationBySignature}
-
-                  highlight
-
-                />
-
-                <StatRow label="Situazioni dialogo" value={plan.stats.totalStates} />
-
-              </div>
-
-              <p className="font-mono text-[10px] text-emerald-400/40 mt-1">
-
-                Calcolato: {formatComputedAt(plan.computedAt)}
+                Messaggi
 
               </p>
+
+              <input
+
+                type="search"
+
+                value={messageFilter}
+
+                onChange={(e) => setMessageFilter(e.target.value)}
+
+                onKeyDown={(e) => e.stopPropagation()}
+
+                placeholder="Filtra per parola…"
+
+                aria-label="Filtra messaggi disambiguazione"
+
+                className={`${DICT_INPUT_FIELD} flex-1 min-w-0 py-1.5 text-sm bg-[#080e0a] placeholder:text-emerald-400/55`}
+
+              />
+
+              {messageFilter.trim() && (
+
+                <span className="font-mono text-sm text-emerald-300/75 tabular-nums flex-shrink-0">
+
+                  {filteredRows.length}/{editorRows.length}
+
+                </span>
+
+              )}
 
             </div>
 
 
 
-            <div className="flex-1 min-h-0 overflow-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto">
 
-              <div className="sticky top-0 bg-[#0a1510] z-10 px-3 py-2 border-b border-[#1a3a2a]">
+              {filteredRows.length === 0 ? (
 
-                <p className="font-mono text-[10px] uppercase tracking-wider text-emerald-400/50">
+                <p className="px-3 py-4 font-mono text-sm text-emerald-300/75 italic">
 
-                  Messaggi
+                  {editorRows.length === 0
+                    ? 'Nessun messaggio nel piano.'
+                    : 'Nessun messaggio corrisponde al filtro.'}
 
                 </p>
 
-              </div>
-
-
+              ) : (
 
               <ul className="divide-y divide-[#1a3a2a]/50">
 
-                {editorRows.map((row) => {
+                {filteredRows.map((row) => {
 
                   const selected = row.signature === selectedSignature;
 
@@ -786,7 +886,10 @@ export function DisambiguationWorkspace({
 
                         tabIndex={0}
 
-                        onClick={() => setSelectedSignature(row.signature)}
+                        onClick={() => {
+                          setFocusGrammar(false);
+                          setSelectedSignature(row.signature);
+                        }}
 
                         onKeyDown={(e) => {
 
@@ -794,13 +897,14 @@ export function DisambiguationWorkspace({
 
                             e.preventDefault();
 
+                            setFocusGrammar(false);
                             setSelectedSignature(row.signature);
 
                           }
 
                         }}
 
-                        className={`flex items-start gap-2 w-full text-left px-3 py-2.5 font-mono text-xs transition-colors cursor-pointer ${
+                        className={`flex items-start gap-2 w-full text-left px-3 py-2.5 font-mono text-sm transition-colors cursor-pointer ${
 
                           selected
 
@@ -814,7 +918,7 @@ export function DisambiguationWorkspace({
 
                         <span className={`flex-1 min-w-0 line-clamp-3 transition-colors ${
 
-                          hasQuestion ? messageListTextColor(row.status) : 'text-amber-400/60 italic'
+                          hasQuestion ? messageListTextColor(row.status) : 'text-amber-300/90 italic'
 
                         }`}>
 
@@ -908,13 +1012,15 @@ export function DisambiguationWorkspace({
 
               </ul>
 
+              )}
+
             </div>
 
 
 
             {plan.warnings.length > 0 && (
 
-              <ul className="flex-shrink-0 px-3 py-2 border-t border-[#1a3a2a] space-y-0.5 font-mono text-[10px] text-amber-300/70 max-h-24 overflow-auto">
+              <ul className="flex-shrink-0 px-3 py-2 border-t border-[#1a3a2a] space-y-0.5 font-mono text-sm text-amber-300/90 max-h-24 overflow-auto">
 
                 {plan.warnings.map((w) => (
 
@@ -941,6 +1047,8 @@ export function DisambiguationWorkspace({
             <DisambiguationMessagePanel
               row={selectedRow}
               vincoloCategory={selectedVincoloCategory}
+              focusGrammar={focusGrammar}
+              runtimeOptions={selectedRuntimeOptions}
               onSave={handleSaveRow}
             />
 
@@ -954,7 +1062,7 @@ export function DisambiguationWorkspace({
 
       {!plan && canCompute && !error && !computing && (
 
-        <p className="p-4 font-mono text-sm text-emerald-400/40">
+        <p className="p-4 font-mono text-sm text-emerald-300/80">
 
           {hasSavedDisambiguationContent(analysis?.disambiguation_plan)
 

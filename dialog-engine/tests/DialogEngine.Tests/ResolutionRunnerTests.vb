@@ -104,14 +104,14 @@ Public Class ResolutionRunnerTests
         Dim incoming = New List(Of Concept) From {
             New Concept With {
                 .Category = "fascia di età",
-                .Value = raw.Value.ToString(),
+                .Values = New List(Of String) From {raw.Value.ToString()},
                 .Unit = raw.Unit,
                 .Kind = ConceptKind.Vincolo
             }
         }
         Dim normalized = ConceptExtraction.NormalizeExtractedConcepts(incoming, bundle.Ontology)
         Assert.Single(normalized)
-        Assert.Equal("6", normalized(0).Value)
+        Assert.Equal("6", ValueSetOps.ScalarValue(normalized(0)))
         Assert.Equal("months", normalized(0).Unit)
     End Sub
 
@@ -119,6 +119,24 @@ Public Class ResolutionRunnerTests
     Public Sub NormalizeAgeUtterance_ExpandsVentAnni()
         Dim normalized = ResolutionRunner.NormalizeAgeUtterance("ha vent'anni")
         Assert.Contains("venti anni", normalized)
+    End Sub
+
+    <Fact>
+    Public Sub DoesNotTreatArticleUna_InBookingPhrase_AsAge()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim result = ResolutionRunner.Run(
+            pipeline,
+            "vorrei prenotare una prima visita angiologica con ecodoppler")
+        Assert.Null(result)
+    End Sub
+
+    <Fact>
+    Public Sub ResolvesUnAnno_WithExplicitUnit()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim result = ResolutionRunner.Run(pipeline, "il bambino ha un anno")
+        Assert.NotNull(result)
+        Assert.Equal(1, result.Value)
+        Assert.Equal("years", result.Unit)
     End Sub
 
 End Class

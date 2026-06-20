@@ -91,13 +91,21 @@ describe('convertAgentBundleToVb', () => {
     const adult = vb.catalog.items.find((i) => i.path.includes('adulto'));
     expect(adult?.concepts).toEqual(
       expect.arrayContaining([
-        { category: 'specialità', value: 'cardiologica', kind: 'attributo' },
-        { category: 'target', value: 'adulto', kind: 'attributo' },
-        { category: 'fascia di età', value: '> 17 anni', kind: 'vincolo' },
+        { category: 'specialità', values: ['cardiologica'], kind: 'attributo' },
+        { category: 'target', values: ['adulto'], kind: 'attributo' },
+        { category: 'fascia di età', values: ['> 17 anni'], kind: 'vincolo' },
       ]),
     );
     expect(adult?.ageConstraints).toEqual([
-      { categoryName: 'fascia di età', min: 18, max: null, minMonths: 216, maxMonths: null },
+      {
+        categoryName: 'fascia di età',
+        min: 18,
+        max: null,
+        minMonths: 216,
+        maxMonths: null,
+        minWeeks: 936,
+        maxWeeks: null,
+      },
     ]);
 
     expect(vb.ontology.categories).toHaveLength(4);
@@ -107,7 +115,7 @@ describe('convertAgentBundleToVb', () => {
 
   it('round-trips pendingConstraint for ask_age between VB and TS session state', () => {
     const vbState = {
-      acquiredConcepts: [{ category: 'specialità', value: 'cardiologica', kind: 'attributo' }],
+      acquiredConcepts: [{ category: 'specialità', values: ['cardiologica'], kind: 'attributo' }],
       selectedPath: null,
       noMatchCount: 0,
       pendingConstraint: {
@@ -118,7 +126,7 @@ describe('convertAgentBundleToVb', () => {
     };
 
     const tsState = convertSessionStateFromVb(vbState);
-    expect(tsState?.acquiredConcepts).toEqual([{ category: 'specialità', value: 'cardiologica', kind: 'attributo' }]);
+    expect(tsState?.acquiredConcepts).toEqual([{ category: 'specialità', values: ['cardiologica'], kind: 'attributo' }]);
     expect(tsState?.pendingExpectedInput).toEqual([
       {
         categoryName: 'fascia di età',
@@ -131,9 +139,26 @@ describe('convertAgentBundleToVb', () => {
     expect(backToVb?.pendingConstraint).toEqual(vbState.pendingConstraint);
   });
 
+  it('round-trips exactAttributoCategories between VB and TS session state', () => {
+    const vbState = {
+      acquiredConcepts: [
+        { category: 'varie', values: ['venoso'], kind: 'attributo' },
+      ],
+      exactAttributoCategories: ['varie'],
+      selectedPath: null,
+      noMatchCount: 0,
+    };
+
+    const tsState = convertSessionStateFromVb(vbState);
+    expect(tsState?.exactAttributoCategories).toEqual(['varie']);
+
+    const backToVb = convertSessionStateToVb(tsState);
+    expect(backToVb?.exactAttributoCategories).toEqual(['varie']);
+  });
+
   it('clears pendingConstraint when TS session has no pendingExpectedInput', () => {
     const tsState = {
-      acquiredConcepts: [{ category: 'specialità', value: 'cardiologica' }],
+      acquiredConcepts: [{ category: 'specialità', values: ['cardiologica'] }],
       selectedPath: null,
       noMatchCount: 0,
       pendingExpectedInput: null,
@@ -169,6 +194,10 @@ describe('convertAgentBundleToVb', () => {
         no_match_2: 'Può ripetere?',
         no_match_3: 'Adulto o minore?',
         contextCount: 1,
+        answer_grammar: {
+          regex: '(?P<adulto>adulto|uomo|maggiorenne)|(?P<pediatrica>minore|bambino|pediatrica)',
+          mappings: { adulto: 'adulto', pediatrica: 'pediatrica' },
+        },
       }],
     };
 
@@ -189,5 +218,81 @@ describe('convertAgentBundleToVb', () => {
     expect(vb.ontology.disambiguationPlan?.messages[0]?.noMatch1).toBe('Non ho capito.');
     expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.regex).toBeTruthy();
     expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.mappings).toBeTruthy();
+  });
+
+  it('throws a clear error when a non-ask_age message has no answer_grammar', () => {
+    const analysis = buildAnalysis();
+    analysis.disambiguation_plan = {
+      computedAt: '2026-06-18T12:00:00.000Z',
+      messages: [{
+        signature: 'target||adulto|pediatrica||choice',
+        categoryName: 'target',
+        options: ['adulto', 'pediatrica'],
+        style: 'choice',
+        question: 'La visita è per un adulto o per un minore?',
+        no_match_1: null,
+        no_match_2: null,
+        no_match_3: null,
+        contextCount: 1,
+        // answer_grammar deliberately missing — must fail at export time
+      }],
+    };
+
+    const bundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary,
+      descriptions,
+      analysis,
+    });
+
+    expect(() => convertAgentBundleToVb(bundle)).toThrow(
+      /Messaggio di disambiguazione senza answer_grammar/,
+    );
+    expect(() => convertAgentBundleToVb(bundle)).toThrow(
+      /target\|\|adulto\|pediatrica\|\|choice/,
+    );
+  });
+
+  it('groups multiple segments for the same category into one concept values array', () => {
+    const bundle = compileAgentBundle({
+      documentName: 'Esami',
+      dictionary: {
+        ...dictionary,
+        categories: [
+          ...dictionary.categories,
+          { id: 'c5', name: 'esami', order: 4, tokenTexts: ['ecg', 'eco_doppler'], type: 'attributo' },
+        ],
+        tokens: [
+          ...dictionary.tokens,
+          { text: 'ecg', enabled: true },
+          { text: 'eco_doppler', enabled: true },
+        ],
+      },
+      descriptions: ['visita cardiologica prima con ecg e eco_doppler'],
+      analysis: {
+        ...buildAnalysis(),
+        item_paths: ['cardiologica.prima.ecg.eco_doppler'],
+        rows: [
+          ...buildAnalysis().rows,
+          {
+            slot_filling: 'cardiologica.prima.ecg.eco_doppler',
+            question: null,
+            grammar: null,
+            answer_grammar: null,
+            no_match_1: null,
+            no_match_2: null,
+            no_match_3: null,
+            confirmation_text: 'Visita con ECG e ECO doppler',
+            status: null,
+          },
+        ],
+      },
+    });
+
+    const vb = convertAgentBundleToVb(bundle);
+    const item = vb.catalog.items.find((i) => i.path.includes('eco_doppler'));
+    const esami = item?.concepts.find((c) => c.category === 'esami');
+    expect(esami?.values).toEqual(['ecg', 'eco_doppler']);
   });
 });

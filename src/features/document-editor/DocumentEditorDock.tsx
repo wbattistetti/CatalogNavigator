@@ -21,6 +21,7 @@ const PANEL_DEFS: Array<{
   { id: EDITOR_TAB_IDS.document, component: 'document', title: 'Documento originale' },
   { id: EDITOR_TAB_IDS.dictionaries, component: 'dictionaries', title: 'Dizionari', dictionaryOnly: true },
   { id: EDITOR_TAB_IDS.ontology, component: 'ontology', title: 'Ontologia', dictionaryOnly: true },
+  { id: EDITOR_TAB_IDS.disambiguation, component: 'disambiguation', title: 'Messaggi di disambiguazione', dictionaryOnly: true },
 ];
 
 function isEditorTabId(id: string): id is EditorTabId {
@@ -35,7 +36,7 @@ export function DocumentEditorDock() {
 
   const syncPanels = useCallback((api: DockviewApi) => {
     const visibleDefs = PANEL_DEFS.filter((d) => {
-      if (d.id === EDITOR_TAB_IDS.ontology) return showOntologyTab;
+      if (d.id === EDITOR_TAB_IDS.ontology || d.id === EDITOR_TAB_IDS.disambiguation) return showOntologyTab;
       if (d.dictionaryOnly) return dictionaryMode;
       return true;
     });

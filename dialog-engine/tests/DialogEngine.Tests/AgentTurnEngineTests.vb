@@ -8,8 +8,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildCardioBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         })
         Assert.Equal("ask_age", result.Instruction.Action)
@@ -23,13 +23,13 @@ Public Class AgentTurnEngineTests
         Dim state = AgentTurnEngine.InitAgentSession()
         state = AgentTurnEngine.ProcessAgentTurn(bundle, state, New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, state, New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "fascia di età", .Value = "30"}
+                Vincolo("fascia di età", "30")
             }
         })
         Assert.Equal("confirm", result.Instruction.Action)
@@ -43,7 +43,7 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+                Attr("specialità", "cardiologica")
             }
         })
         Assert.Equal("disambiguate", result.Instruction.Action)
@@ -52,6 +52,38 @@ Public Class AgentTurnEngineTests
         Assert.Contains("adulto", result.SpokenHint)
         Assert.Contains("pediatrica", result.SpokenHint)
         Assert.Equal("template", result.SpokenHintSource)
+    End Sub
+
+    <Fact>
+    Public Sub Disambiguates_OnDistinctValueSets()
+        Dim bundle = TestBundleFactory.BuildMultiExamBundle()
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
+            }
+        })
+        Assert.Equal("disambiguate", result.Instruction.Action)
+        Assert.Equal("esami", result.Instruction.CategoryName)
+        Assert.Equal(New List(Of String) From {"ecg", "ecg+eco_doppler"}, result.Instruction.Options)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsMultiExamPath_WhenDisambiguationPicksCompositeSet()
+        Dim bundle = TestBundleFactory.BuildMultiExamBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, state, New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                ValueSetOps.CreateAttributoConcept("esami", ValueSetOps.ParseValueSetKey("ecg+eco_doppler"))
+            }
+        })
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima.ecg_echo", result.NextState.SelectedPath)
     End Sub
 
     <Fact>
@@ -69,7 +101,7 @@ Public Class AgentTurnEngineTests
         }
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+                Attr("specialità", "cardiologica")
             }
         })
         Assert.Equal("disambiguate", result.Instruction.Action)
@@ -93,8 +125,8 @@ Public Class AgentTurnEngineTests
         }
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         })
         Assert.Equal("ask_age", result.Instruction.Action)
@@ -108,8 +140,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildCardioBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         })
         Assert.Equal("age_years", result.Instruction.ExpectedConstraints(0).ValueKind)
@@ -163,6 +195,19 @@ Public Class AgentTurnEngineTests
     End Sub
 
     <Fact>
+    Public Sub ProcessFromText_DoesNotAcquireAge_FromArticleUnaInBookingPhrase()
+        Dim bundle = TestBundleFactory.BuildCardioBundle()
+        TestBundleFactory.AddSpecialitaGrammar(bundle)
+        TestBundleFactory.AddAgeVincoloResolution(bundle)
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(
+            bundle,
+            AgentTurnEngine.InitAgentSession(),
+            "vorrei prenotare una prima visita angiologica con ecodoppler"
+        )
+        Assert.Null(ConceptOps.FindAcquiredAgeYears(result.NextState.AcquiredConcepts))
+    End Sub
+
+    <Fact>
     Public Sub ProcessFromText_PreservesSixMonthsUnit_WhenPendingAge()
         Dim bundle = TestBundleFactory.BuildCardioBundle()
         TestBundleFactory.AddSpecialitaGrammar(bundle)
@@ -177,7 +222,7 @@ Public Class AgentTurnEngineTests
         Dim ageConcept = result.NextState.AcquiredConcepts.FirstOrDefault(
             Function(c) c.Category = "fascia di età")
         Assert.NotNull(ageConcept)
-        Assert.Equal("6", ageConcept.Value)
+        Assert.Equal("6", ValueSetOps.ScalarValue(ageConcept))
         Assert.Equal("months", ageConcept.Unit)
     End Sub
 
@@ -186,8 +231,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         })
         Assert.Equal("disambiguate", result.Instruction.Action)
@@ -202,8 +247,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "no")
@@ -217,8 +262,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "sì")
@@ -232,8 +277,8 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "ecg")
@@ -246,15 +291,15 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "nessuno")
         Assert.Equal("confirm", result.Instruction.Action)
         Assert.Equal("cardiologica.prima", result.NextState.SelectedPath)
         Assert.True(result.NextState.AcquiredConcepts.Any(
-            Function(ac) ac.Category = "ECG" AndAlso ac.Value = CategoryTypes.MissingCategoryValue))
+            Function(ac) ac.Category = "ECG" AndAlso ValueSetOps.IsMissingValueList(ValueSetOps.ValuesFromConcept(ac))))
     End Sub
 
     <Fact>
@@ -262,14 +307,64 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"},
-                New Concept With {.Category = "tipo visita", .Value = "prima"}
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "si")
         Assert.Single(result.Parsed)
         Assert.Equal("ECG", result.Parsed(0).Category)
-        Assert.Equal("ecg", result.Parsed(0).Value)
+        Assert.Equal("ecg", ValueSetOps.ScalarValue(result.Parsed(0)))
+    End Sub
+
+    <Fact>
+    Public Sub RestoresLostPending_WhenAnswerContextProvided()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
+            }
+        }).NextState
+        state.PendingConstraint = Nothing
+        Dim answerContext = New DisambiguationAnswerContext With {
+            .Signature = "ECG||ecg||optional_include",
+            .CategoryName = "ECG",
+            .Options = New List(Of String) From {"ecg", "none"},
+            .ValueKind = CategoryTypes.ValueKindCanonicalToken
+        }
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "si", answerContext)
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima.ecg", result.NextState.SelectedPath)
+        Assert.Contains("ECG", result.NextState.ExactAttributoCategories)
+    End Sub
+
+    <Fact>
+    Public Sub CoercesGrammarAlias_WhenPlanGrammarMapsNonCatalogToken()
+        Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
+        bundle.Ontology.DisambiguationPlan = New DisambiguationPlan With {
+            .Messages = New List(Of DisambiguationMessage) From {
+                New DisambiguationMessage With {
+                    .Signature = "ECG||ecg||optional_include",
+                    .CategoryName = "ECG",
+                    .Style = "optional_include",
+                    .AnswerGrammar = New CategoryGrammar With {
+                        .Regex = "(?<affirmative>sì|si)",
+                        .Mappings = New Dictionary(Of String, String) From {{"affirmative", "incluso ecg"}}
+                    }
+                }
+            }
+        }
+        Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("specialità", "cardiologica"),
+                Attr("tipo visita", "prima")
+            }
+        }).NextState
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "sì")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("cardiologica.prima.ecg", result.NextState.SelectedPath)
+        Assert.Contains("ECG", result.NextState.ExactAttributoCategories)
     End Sub
 
     <Fact>
@@ -277,7 +372,7 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim state = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+                Attr("specialità", "cardiologica")
             }
         }).NextState
         Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "adulto")
@@ -290,7 +385,7 @@ Public Class AgentTurnEngineTests
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+                Attr("specialità", "cardiologica")
             }
         })
         Assert.Equal("canonical_token", result.Instruction.ExpectedConstraints(0).ValueKind)
@@ -299,11 +394,86 @@ Public Class AgentTurnEngineTests
     End Sub
 
     <Fact>
+    Public Sub ConfirmsFullDistrettiSet_WhenUtteranceMentionsAllTokens()
+        Dim bundle = TestBundleFactory.BuildDistrettiAnatomiciBundle()
+        Dim disambiguateResult = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("esame", "ecodoppler")
+            }
+        })
+        Assert.Equal("disambiguate", disambiguateResult.Instruction.Action)
+        Assert.Equal("distretti anatomici", disambiguateResult.Instruction.CategoryName)
+
+        Dim utterance = "quello più completo con aorta arti inferiori e vasi epiaortici"
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, disambiguateResult.NextState, utterance)
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("ecodoppler.aorta_arti_epi", result.NextState.SelectedPath)
+        Dim distretti = result.NextState.AcquiredConcepts.First(
+            Function(c) c.Category = "distretti anatomici")
+        Assert.Equal("aorta+arti inferiori+vasi epiaortici", ValueSetOps.ValueSetKey(ValueSetOps.ValuesFromConcept(distretti)))
+    End Sub
+
+    <Fact>
+    Public Sub RedisambiguatesDistretti_WhenOnlyPartialSetAcquired()
+        Dim bundle = TestBundleFactory.BuildDistrettiAnatomiciBundle()
+        Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("esame", "ecodoppler"),
+                AttrMulti("distretti anatomici", "arti inferiori")
+            }
+        })
+        Assert.Equal("disambiguate", result.Instruction.Action)
+        Assert.Equal("distretti anatomici", result.Instruction.CategoryName)
+        Assert.Contains("aorta+arti inferiori+vasi epiaortici", result.Instruction.Options)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsVenosoOnly_WhenVenosoAlreadyAcquiredImplicitly()
+        Dim bundle = TestBundleFactory.BuildVarieVenosoBundle()
+        Dim step1 = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = New List(Of Concept) From {
+                Attr("esame", "ecodoppler"),
+                AttrMulti("distretti anatomici", "aorta", "arti inferiori", "vasi epiaortici"),
+                Attr("varie", "venoso")
+            }
+        })
+        Assert.Equal("disambiguate", step1.Instruction.Action)
+        Assert.Equal("varie", step1.Instruction.CategoryName)
+
+        Dim step2 = AgentTurnEngine.ProcessAgentTurnFromText(bundle, step1.NextState, "venoso")
+        Assert.Equal("confirm", step2.Instruction.Action)
+        Assert.Equal("ecodoppler.venoso", step2.NextState.SelectedPath)
+        Assert.Contains("varie", step2.NextState.ExactAttributoCategories)
+    End Sub
+
+    <Fact>
+    Public Sub ConfirmsVenosoOnly_WhenUserAnswersVenosoAtDisambiguation()
+        Dim bundle = TestBundleFactory.BuildVarieVenosoBundle()
+        Dim distrettiFull = New List(Of Concept) From {
+            Attr("esame", "ecodoppler"),
+            AttrMulti("distretti anatomici", "aorta", "arti inferiori", "vasi epiaortici")
+        }
+        Dim disambiguateResult = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
+            .IncomingConcepts = distrettiFull
+        })
+        Assert.Equal("disambiguate", disambiguateResult.Instruction.Action)
+        Assert.Equal("varie", disambiguateResult.Instruction.CategoryName)
+        Assert.Contains("venoso", disambiguateResult.Instruction.Options)
+        Assert.Contains("arterioso+venoso", disambiguateResult.Instruction.Options)
+
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, disambiguateResult.NextState, "venoso")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("ecodoppler.venoso", result.NextState.SelectedPath)
+        Dim varie = result.NextState.AcquiredConcepts.First(Function(c) c.Category = "varie")
+        Assert.Equal("venoso", ValueSetOps.ValueSetKey(ValueSetOps.ValuesFromConcept(varie)))
+    End Sub
+
+    <Fact>
     Public Sub HttpResponse_BuildsWebhookPayload()
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim turn = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {
             .IncomingConcepts = New List(Of Concept) From {
-                New Concept With {.Category = "specialità", .Value = "cardiologica"}
+                Attr("specialità", "cardiologica")
             }
         })
         Dim http = HttpResponseBuilder.BuildAgentDialogStepHttpResponse("conv-1", "doc-1", turn)
@@ -312,5 +482,17 @@ Public Class AgentTurnEngineTests
         Assert.False(String.IsNullOrEmpty(http.SpokenHint))
         Assert.Contains("DISAMBIGUATE", http.Debug.Log)
     End Sub
+
+    Private Shared Function Attr(category As String, value As String) As Concept
+        Return ValueSetOps.CreateAttributoConcept(category, New List(Of String) From {value})
+    End Function
+
+    Private Shared Function AttrMulti(category As String, ParamArray values() As String) As Concept
+        Return ValueSetOps.CreateAttributoConcept(category, values)
+    End Function
+
+    Private Shared Function Vincolo(category As String, value As String) As Concept
+        Return ValueSetOps.CreateVincoloConcept(category, value, "years")
+    End Function
 
 End Class

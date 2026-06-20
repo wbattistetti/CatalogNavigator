@@ -21,6 +21,9 @@ const targetRow: DisambiguationEditorRow = {
   contextCount: 2,
   nodeKeys: ['k1', 'k2'],
   sampleAcquired: {},
+  parentInfo: { parents: [], contextPrefixes: [], scope: 'none', parentCategoryName: null },
+  candidatePaths: [],
+  contextVariants: [],
 };
 
 describe('parseDisambiguationAiContent', () => {

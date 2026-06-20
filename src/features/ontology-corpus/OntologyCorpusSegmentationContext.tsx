@@ -3,6 +3,7 @@
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -15,6 +16,10 @@ import {
   type SegmentationCacheProgress,
 } from '../../hooks/useSegmentationCache';
 import type { CorpusSegmentationEntry } from '../../lib/corpusSegmentationCache';
+import {
+  applySegmentExclusions,
+} from '../../lib/corpusSegmentationOverrides';
+import type { CorpusSegmentExclusions } from '../../lib/corpusItemPaths';
 import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
 import type { TokenCategory } from '../../lib/dictionaryTree';
 import { buildTaggedMatchPhrases } from '../../lib/multiDictionarySegment';
@@ -24,6 +29,7 @@ export interface OntologyCorpusSegmentationValue {
   progress: SegmentationCacheProgress;
   matchPhrases: ReturnType<typeof buildTaggedMatchPhrases>;
   lookup: (text: string) => CorpusSegmentationEntry | undefined;
+  removeSegment: (sourceText: string, segmentText: string) => void;
   setPriorityTexts: (texts: string[]) => void;
 }
 
@@ -33,12 +39,16 @@ export function OntologyCorpusSegmentationProvider({
   corpusTexts,
   liveLoadedRefs,
   categories,
+  segmentExclusions,
+  onRemoveSegment,
   enabled = true,
   children,
 }: {
   corpusTexts: string[];
   liveLoadedRefs: LoadedDictionaryRef[];
   categories: TokenCategory[];
+  segmentExclusions: CorpusSegmentExclusions;
+  onRemoveSegment: (sourceText: string, segmentText: string) => void;
   enabled?: boolean;
   children: ReactNode;
 }) {
@@ -52,15 +62,24 @@ export function OntologyCorpusSegmentationProvider({
     { enabled, getPriorityTexts },
   );
 
+  const lookup = useCallback((text: string): CorpusSegmentationEntry | undefined => {
+    const base = lookupCorpusSegmentation(cache, text.trim());
+    if (!base) return undefined;
+    const excluded = segmentExclusions.get(text.trim());
+    if (!excluded || excluded.size === 0) return base;
+    return applySegmentExclusions(base, excluded);
+  }, [cache, segmentExclusions]);
+
   const value = useMemo((): OntologyCorpusSegmentationValue => ({
     cache,
     progress,
     matchPhrases,
-    lookup: (text) => lookupCorpusSegmentation(cache, text),
+    lookup,
+    removeSegment: onRemoveSegment,
     setPriorityTexts: (texts) => {
       priorityRef.current = texts;
     },
-  }), [cache, progress, matchPhrases]);
+  }), [cache, progress, matchPhrases, lookup, onRemoveSegment]);
 
   return (
     <OntologyCorpusSegmentationContext.Provider value={value}>

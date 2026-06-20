@@ -7,6 +7,8 @@ import { DictionariesWorkspace } from '../dictionaries/DictionariesWorkspace';
 import { OntologyWorkspace } from '../ontology/OntologyWorkspace';
 import { useDocumentEditorController } from './DocumentEditorContext';
 import { DocumentWorkspace } from './DocumentWorkspace';
+import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
+import { CatalogReportWorkspace } from '../ontology/CatalogReportWorkspace';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 
 const MountedDocumentWorkspace = memo(function MountedDocumentWorkspace() {
@@ -19,6 +21,14 @@ const MountedDictionariesWorkspace = memo(function MountedDictionariesWorkspace(
 
 const MountedOntologyWorkspace = memo(function MountedOntologyWorkspace() {
   return <OntologyWorkspace />;
+});
+
+const MountedDisambiguationWorkspace = memo(function MountedDisambiguationWorkspace() {
+  return <DocumentEditorMessagesPanel />;
+});
+
+const MountedCatalogReportWorkspace = memo(function MountedCatalogReportWorkspace() {
+  return <CatalogReportWorkspace />;
 });
 
 function LoadingPlaceholder({ label }: { label: string }) {
@@ -82,6 +92,18 @@ export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
       return (
         <WorkspaceBody>
           <MountedOntologyWorkspace />
+        </WorkspaceBody>
+      );
+    case EDITOR_TAB_IDS.disambiguation:
+      return (
+        <WorkspaceBody>
+          <MountedDisambiguationWorkspace />
+        </WorkspaceBody>
+      );
+    case EDITOR_TAB_IDS.report:
+      return (
+        <WorkspaceBody>
+          <MountedCatalogReportWorkspace />
         </WorkspaceBody>
       );
     default:

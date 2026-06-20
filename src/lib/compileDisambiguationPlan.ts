@@ -17,6 +17,13 @@ import { normalizeCategoryOrders, type TokenCategory } from './dictionaryTree';
 import { buildCorpusItemsFromPaths, normalizeSlotCategoryKey } from './slotExtract';
 import { buildVincoloAskSignature } from './disambiguationPlanMessages';
 import { isAgeVincoloCategoryName } from './vincoloResolutionGrammar';
+import {
+  getItemAttributoValueSetKey,
+  getItemAttributoValues,
+  parseValueSetKey,
+  valueSetContainsAll,
+  valueSetsEqual,
+} from './valueSet';
 
 const MISSING_VALUE = 'none';
 
@@ -29,6 +36,8 @@ export interface CompileDisambiguationPlanInput {
 interface PlanState {
   acquired: Record<string, string>;
   ageYears: number | null;
+  /** Attributo categories committed via an explicit disambiguation option pick. */
+  exactAttributoCategories: string[];
 }
 
 interface NextStepResult {
@@ -124,18 +133,34 @@ function getItemSegmentValue(
 }
 
 function getItemAttributoValue(item: BundleCorpusItem, categoryName: string): string {
-  return getItemSegmentValue(item, categoryName, 'attributo');
+  return getItemAttributoValueSetKey(item, categoryName);
+}
+
+function isExactAttributoCategory(
+  exactAttributoCategories: readonly string[],
+  categoryName: string,
+): boolean {
+  return exactAttributoCategories.some(
+    (c) => c.trim() && c.trim() === categoryName.trim(),
+  );
 }
 
 function itemMatchesAcquired(
   item: BundleCorpusItem,
   acquired: Record<string, string>,
   categories: TokenCategory[],
+  exactAttributoCategories: readonly string[],
 ): boolean {
-  for (const [catKey, value] of Object.entries(acquired)) {
+  for (const [catKey, setKey] of Object.entries(acquired)) {
     const category = categories.find((c) => normalizeSlotCategoryKey(c.name) === catKey);
     if (!category) continue;
-    if (getItemAttributoValue(item, category.name) !== value) return false;
+    const mentioned = parseValueSetKey(setKey);
+    const itemValues = getItemAttributoValues(item, category.name);
+    if (isExactAttributoCategory(exactAttributoCategories, category.name)) {
+      if (!valueSetsEqual(itemValues, mentioned)) return false;
+      continue;
+    }
+    if (!valueSetContainsAll(itemValues, mentioned)) return false;
   }
   return true;
 }
@@ -145,7 +170,9 @@ function filterCandidates(
   state: PlanState,
   categories: TokenCategory[],
 ): BundleCorpusItem[] {
-  let items = allItems.filter((item) => itemMatchesAcquired(item, state.acquired, categories));
+  let items = allItems.filter((item) =>
+    itemMatchesAcquired(item, state.acquired, categories, state.exactAttributoCategories),
+  );
   if (state.ageYears != null) {
     items = items.filter((item) =>
       pathSatisfiesAgeConstraints(state.ageYears!, item.constraints as CompiledAgeConstraint[]),
@@ -160,7 +187,7 @@ function distinctAttributoValues(
 ): Set<string> {
   const values = new Set<string>();
   for (const item of candidates) {
-    values.add(getItemAttributoValue(item, categoryName));
+    values.add(getItemAttributoValueSetKey(item, categoryName));
   }
   return values;
 }
@@ -179,6 +206,39 @@ function distinctVincoloValues(
 function hasMeaningfulDistinctValues(values: Set<string>): boolean {
   if (values.size === 0) return false;
   if (values.size === 1 && values.has(MISSING_VALUE)) return false;
+  return true;
+}
+
+/** Mirrors VB AgentSlotMatch.IsAttributoCategoryResolved — partial NLU stays unresolved. */
+function isAttributoCategoryResolved(
+  candidates: BundleCorpusItem[],
+  acquired: Record<string, string>,
+  categoryName: string,
+  exactAttributoCategories: readonly string[],
+): boolean {
+  if (candidates.length <= 1) return true;
+
+  const key = normalizeSlotCategoryKey(categoryName);
+  const acquiredKey = acquired[key];
+  if (acquiredKey == null) return false;
+
+  const distinctKeys = distinctAttributoValues(candidates, categoryName);
+  if (distinctKeys.size <= 1) return true;
+  if (!distinctKeys.has(acquiredKey)) return false;
+
+  if (isExactAttributoCategory(exactAttributoCategories, categoryName)) return true;
+
+  const acquiredValues = parseValueSetKey(acquiredKey);
+  for (const otherKey of distinctKeys) {
+    if (otherKey === acquiredKey) continue;
+    const otherValues = parseValueSetKey(otherKey);
+    if (
+      otherValues.length > acquiredValues.length &&
+      valueSetContainsAll(otherValues, acquiredValues)
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -255,12 +315,16 @@ function shouldAskAge(
 
 function findDisambiguationTarget(
   candidates: BundleCorpusItem[],
-  acquired: Record<string, string>,
+  state: PlanState,
   categories: TokenCategory[],
 ): { categoryName: string; options: string[] } | null {
   for (const category of orderedAttributoCategories(categories, candidates)) {
-    const key = normalizeSlotCategoryKey(category.name);
-    if (acquired[key] != null) continue;
+    if (isAttributoCategoryResolved(
+      candidates,
+      state.acquired,
+      category.name,
+      state.exactAttributoCategories,
+    )) continue;
 
     const values = distinctAttributoValues(candidates, category.name);
     if (values.size < 2) continue;
@@ -289,7 +353,7 @@ function decideNextStep(
     return { action: 'confirm' };
   }
 
-  const target = findDisambiguationTarget(candidates, state.acquired, categories);
+  const target = findDisambiguationTarget(candidates, state, categories);
   if (target) {
     return {
       action: 'disambiguate',
@@ -344,11 +408,19 @@ export function expandAgeSuccessorStates(
     const setKey = filtered.map((i) => i.path).sort((a, b) => a.localeCompare(b, 'it')).join('|');
     if (seenCandidateSets.has(setKey)) continue;
     seenCandidateSets.add(setKey);
-    successors.push({ acquired: { ...state.acquired }, ageYears: age });
+    successors.push({
+      acquired: { ...state.acquired },
+      ageYears: age,
+      exactAttributoCategories: [...state.exactAttributoCategories],
+    });
   }
 
   if (successors.length === 0 && candidates.length > 0) {
-    successors.push({ acquired: { ...state.acquired }, ageYears: 30 });
+    successors.push({
+      acquired: { ...state.acquired },
+      ageYears: 30,
+      exactAttributoCategories: [...state.exactAttributoCategories],
+    });
   }
 
   return successors;
@@ -413,7 +485,7 @@ export function compileDisambiguationPlan(
   let deadStates = 0;
   let stuckStates = 0;
 
-  const queue: PlanState[] = [{ acquired: {}, ageYears: null }];
+  const queue: PlanState[] = [{ acquired: {}, ageYears: null, exactAttributoCategories: [] }];
 
   while (queue.length > 0) {
     const state = queue.shift()!;
@@ -486,9 +558,12 @@ export function compileDisambiguationPlan(
 
       for (const opt of step.options) {
         const catKey = normalizeSlotCategoryKey(step.categoryName);
+        const exact = state.exactAttributoCategories.filter((c) => c !== step.categoryName);
+        exact.push(step.categoryName);
         queue.push({
           acquired: { ...state.acquired, [catKey]: opt },
           ageYears: state.ageYears,
+          exactAttributoCategories: exact,
         });
       }
     }

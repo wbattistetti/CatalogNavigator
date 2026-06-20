@@ -9,9 +9,12 @@ import type { CorpusDescriptionFilter } from '../useCorpusDescriptionFilter';
 export function CorpusTableHeader({
   filter,
   progress,
+  ontologyItemCount,
 }: {
   filter: CorpusDescriptionFilter;
   progress: SegmentationCacheProgress;
+  /** Saved ontology leaf paths (`analysis.item_paths`). */
+  ontologyItemCount: number;
 }) {
   return (
     <>
@@ -29,6 +32,9 @@ export function CorpusTableHeader({
         </div>
         <div className="min-w-0 px-3 py-1.5 border-l border-[#1a3a2a] font-mono text-[10px] text-amber-300/85 uppercase tracking-wider">
           Segmentazione
+          <span className="ml-1.5 tabular-nums text-amber-200/95 normal-case">
+            ({ontologyItemCount.toLocaleString('it-IT')})
+          </span>
           {!progress.ready && progress.total > 0 && (
             <span className="ml-2 normal-case text-emerald-400/45 tabular-nums">
               {progress.processed.toLocaleString('it-IT')}

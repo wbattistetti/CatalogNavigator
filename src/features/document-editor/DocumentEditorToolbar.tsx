@@ -2,7 +2,7 @@
  * Contextual toolbar rendered in the global App header while a project document is open.
  */
 import {
-  Braces, FileSpreadsheet, FlaskConical, Loader2, MessageSquare, Mic,
+  Braces, FileSpreadsheet, FlaskConical, Loader2, Mic,
   RefreshCw, RotateCcw, Save, X,
 } from 'lucide-react';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
@@ -13,8 +13,9 @@ import { exportOntologyToExcel } from '../../lib/exportOntologyExcel';
 const outlineBtn = 'flex items-center gap-1 px-2 py-1 font-mono text-xs border rounded transition-colors disabled:opacity-40';
 const outlineActive = 'text-emerald-200 border-emerald-400/45 bg-emerald-400/10';
 const outlineIdle = 'text-emerald-300/75 border-[#1a3a2a] hover:border-emerald-400/35 hover:text-emerald-200';
+const headerChip = 'inline-flex items-center gap-1 px-2 py-0.5 font-mono text-xs border rounded transition-colors disabled:opacity-40 flex-shrink-0';
 
-/** Left header link: saves dictionary + ontology when dirty. */
+/** Left header chip: saves dictionary + ontology when dirty. */
 export function ProjectLeftActions() {
   const {
     dictionaryMode,
@@ -28,18 +29,22 @@ export function ProjectLeftActions() {
   if (!dictionaryMode) return null;
 
   const { analysisDirty, hasTaxonomy } = analysisApi;
+  const saveTooltip = [
+    dictState?.canSave ? 'dizionario' : null,
+    analysisDirty && hasTaxonomy ? 'ontologia, messaggi e grammatiche agente' : null,
+  ].filter(Boolean).join(' + ') || 'Nessuna modifica da salvare';
 
   return (
     <button
       type="button"
       onClick={() => void saveProject()}
       disabled={!canSaveProject || savingProject}
-      title={[
-        dictState?.canSave ? 'dizionario' : null,
-        analysisDirty && hasTaxonomy ? 'ontologia e grammatiche agente' : null,
-      ].filter(Boolean).join(' + ') || 'Nessuna modifica da salvare'}
-      className="font-mono text-xs text-red-400/85 hover:text-red-300 disabled:opacity-40 transition-colors flex-shrink-0"
+      title={saveTooltip}
+      className={`${headerChip} text-[#e8d48b]/80 border-[#e8d48b]/30 hover:border-[#e8d48b]/50 hover:text-[#e8d48b] hover:bg-[#e8d48b]/8 disabled:hover:bg-transparent disabled:hover:border-[#e8d48b]/30`}
     >
+      {savingProject
+        ? <Loader2 className="w-3 h-3 animate-spin" />
+        : <Save className="w-3 h-3" />}
       {savingProject ? 'Salvataggio…' : 'Salva progetto'}
     </button>
   );
@@ -51,8 +56,6 @@ function ProjectActionsToolbar() {
     dictionaryMode,
     analysisApi,
     dictState,
-    messagesPanelOpen,
-    setMessagesPanelOpen,
     convaiOpen,
     setConvaiOpen,
     testOpen,
@@ -60,6 +63,8 @@ function ProjectActionsToolbar() {
     agentDictionaryContext,
     agentNeedsUpdate,
     canRefreshOntology,
+    showOntologyRefreshButton,
+    ontologyRefreshDisabledReason,
     refreshingOntology,
     ontologyRefreshProgress,
     cancelOntologyRefresh,
@@ -83,18 +88,24 @@ function ProjectActionsToolbar() {
         : `${ontologyRefreshProgress.current.toLocaleString('it-IT')} / ${ontologyRefreshProgress.total.toLocaleString('it-IT')}`
       : 'Ricreazione ontologia…';
 
-    return (canRefreshOntology || refreshingOntology) ? (
+    if (!showOntologyRefreshButton && !refreshingOntology) return null;
+
+    const disabled = refreshingOntology || !canRefreshOntology;
+    const title = ontologyRefreshDisabledReason
+      ?? 'Ricalcola i path dell\'albero dal dizionario corrente (ordine categorie incluso)';
+
+    return (
       <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={refreshOntology}
-          disabled={refreshingOntology}
+          disabled={disabled}
           className={`${outlineBtn} ${
             highlight
               ? 'text-amber-200 border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/15'
               : outlineIdle
           }`}
-          title="Ricalcola i path dell'albero dal dizionario corrente (ordine categorie incluso)"
+          title={title}
         >
           {refreshingOntology
             ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -112,7 +123,7 @@ function ProjectActionsToolbar() {
           </button>
         )}
       </div>
-    ) : null;
+    );
   };
 
   const runExportOntology = () => {
@@ -139,25 +150,15 @@ function ProjectActionsToolbar() {
   return (
     <>
       {ontologyRefreshButton(hasTaxonomy ? 'Ricrea ontologia' : 'Crea ontologia', agentNeedsUpdate)}
-      <button
-        type="button"
-        onClick={() => setMessagesPanelOpen((open) => !open)}
-        title="Apri il pannello messaggi dialogo (calcola piano, genera copy IA, valida)"
-        className={`${outlineBtn} ${messagesPanelOpen ? outlineActive : outlineIdle}`}
-      >
-        {generating && generatingPhase === 'disambiguation'
-          ? <Loader2 className="w-3 h-3 animate-spin" />
-          : <MessageSquare className="w-3 h-3" />}
-        Messaggi
-      </button>
       {generating && generatingPhase === 'disambiguation' && (
         <button
           type="button"
           onClick={cancelGeneration}
           className={`${outlineBtn} text-red-300/90 border-red-400/40 hover:bg-red-400/10`}
-          title="Annulla generazione"
+          title="Annulla generazione messaggi"
         >
           <X className="w-3 h-3" />
+          Annulla generazione
         </button>
       )}
       <button
@@ -178,7 +179,7 @@ function ProjectActionsToolbar() {
         className={`${outlineBtn} ${convaiOpen ? outlineActive : outlineIdle}`}
       >
         <Mic className="w-3 h-3" />
-        Convai
+        Deploy Convai
       </button>
       {canTest && (
         <button
@@ -190,7 +191,7 @@ function ProjectActionsToolbar() {
           className={`${outlineBtn} ${testOpen ? outlineActive : outlineIdle}`}
         >
           <FlaskConical className="w-3 h-3" />
-          test
+          Test
         </button>
       )}
     </>
@@ -204,9 +205,6 @@ export function DocumentEditorToolbar() {
     dictState,
     dicts,
     analysisApi,
-    canSaveProject,
-    savingProject,
-    saveProject,
   } = useDocumentEditorController();
   const { activeTab } = useDocumentEditorTab();
 
@@ -216,33 +214,10 @@ export function DocumentEditorToolbar() {
     cancelGeneration,
   } = analysisApi;
 
-  const saveDictionaryBtn = (
-    onClick: () => void,
-    disabled: boolean,
-    saving = false,
-  ) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`${outlineBtn} ${outlineIdle}`}
-    >
-      {saving
-        ? <Loader2 className="w-3 h-3 animate-spin" />
-        : <Save className="w-3 h-3" />}
-      Salva dizionario
-    </button>
-  );
-
   if (activeTab === EDITOR_TAB_IDS.ontology && showOntologyTab) {
     return (
       <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
         <ProjectActionsToolbar />
-        {saveDictionaryBtn(
-          () => void saveProject(),
-          !canSaveProject || savingProject,
-          savingProject,
-        )}
         {dictState?.dirty && (
           <button
             type="button"
@@ -253,6 +228,14 @@ export function DocumentEditorToolbar() {
             Annulla
           </button>
         )}
+      </div>
+    );
+  }
+
+  if (activeTab === EDITOR_TAB_IDS.disambiguation && showOntologyTab) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
+        <ProjectActionsToolbar />
       </div>
     );
   }
@@ -325,13 +308,21 @@ export function DocumentEditorToolbar() {
             <X className="w-3 h-3" />
           </button>
         )}
-        {saveDictionaryBtn(
-          () => {
+        <button
+          type="button"
+          onClick={() => {
             if (!activeId) return;
             void dicts.saveDictionary(activeId);
-          },
-          !canSave,
-        )}
+          }}
+          disabled={!canSave}
+          title="Salva il dizionario in modifica (tab Dizionari)"
+          className={`${outlineBtn} ${outlineIdle}`}
+        >
+          {dicts.savingDictionaryId === activeId
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <Save className="w-3 h-3" />}
+          Salva dizionario
+        </button>
         {session?.dirty && activeId && (
           <button
             type="button"

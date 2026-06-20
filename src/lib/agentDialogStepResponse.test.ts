@@ -20,7 +20,7 @@ describe('agentDialogStepResponse', () => {
       spokenHint: 'Per target, preferisce adulto o pediatrica?',
       candidateCount: 2,
       nextState: {
-        acquiredConcepts: [{ category: 'specialita', value: 'cardiologica', kind: 'attributo' }],
+        acquiredConcepts: [{ category: 'specialita', values: ['cardiologica'], kind: 'attributo' }],
         selectedPath: null,
         noMatchCount: 0,
       },
@@ -31,7 +31,7 @@ describe('agentDialogStepResponse', () => {
     expect(http.candidateCount).toBe(2);
     expect(http.debug.log).toBe('DISAMBIGUATE: category=target');
     expect(http.debug.parsedBlock).toContain('PROSSIMA_AZIONE: disambiguate');
-    expect(http.debug.nextState.acquiredConcepts[0]?.value).toBe('cardiologica');
+    expect(http.debug.nextState.acquiredConcepts[0]?.values).toEqual(['cardiologica']);
     expect(formatInstructionLog({ action: 'no_match' })).toBe('NO_MATCH');
     expect(
       formatInstructionLog({

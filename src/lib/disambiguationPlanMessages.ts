@@ -13,6 +13,7 @@ import {
   DISAMBIGUATION_MULTI_CHOICE_THRESHOLD,
 } from './disambiguationPlanTypes';
 import type { TokenCategory } from './dictionaryTree';
+import { deriveDisambiguationParents, type DisambiguationContextVariant, type DisambiguationParentInfo } from './disambiguationParents';
 import { defaultNoMatchReplies } from './messageAssembly';
 import { compileTurnAnswerGrammar } from './turnAnswerGrammar';
 import { AGE_YEARS_QUESTION } from './constraintValidation';
@@ -20,6 +21,10 @@ import { AGE_YEARS_QUESTION } from './constraintValidation';
 export interface DisambiguationEditorRow extends DisambiguationMessageRecord {
   nodeKeys: string[];
   sampleAcquired: Record<string, string>;
+  parentInfo: DisambiguationParentInfo;
+  candidatePaths: string[];
+  /** Distinct acquired situations merged under this signature. */
+  contextVariants: DisambiguationContextVariant[];
 }
 
 /** Compact copy key for vincolo ask steps (one row per vincolo category). */
@@ -96,7 +101,49 @@ export function compileDisambiguationAnswerGrammar(options: string[]) {
 export function formatAcquiredContext(acquired: Record<string, string>): string {
   const entries = Object.entries(acquired);
   if (entries.length === 0) return '—';
-  return entries.map(([k, v]) => `${k}=${v}`).join(', ');
+  return entries.map(([k, v]) => `${k}=${v}`).join(' · ');
+}
+
+function acquiredContextKey(acquired: Record<string, string>): string {
+  return Object.entries(acquired)
+    .sort(([a], [b]) => a.localeCompare(b, 'it'))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('|');
+}
+
+function contextVariantKey(pathPrefix: string, acquired: Record<string, string>): string {
+  return `${pathPrefix}||${acquiredContextKey(acquired)}`;
+}
+
+function addContextVariant(
+  variants: DisambiguationContextVariant[],
+  seen: Set<string>,
+  acquired: Record<string, string>,
+  pathPrefix: string,
+): void {
+  const trimmedPrefix = pathPrefix.trim();
+  if (!trimmedPrefix) return;
+  const key = contextVariantKey(trimmedPrefix, acquired);
+  if (seen.has(key)) return;
+  seen.add(key);
+  variants.push({ pathPrefix: trimmedPrefix, acquired: { ...acquired } });
+}
+
+function addNodeContextVariants(
+  variants: DisambiguationContextVariant[],
+  seen: Set<string>,
+  node: DisambiguationPlanNode,
+  categories: TokenCategory[],
+): void {
+  const categoryName = node.categoryName?.trim();
+  if (!categoryName) return;
+  const paths = (node.candidatePathsSample ?? []).map((p) => p.trim()).filter(Boolean);
+  const parentInfo = deriveDisambiguationParents(categoryName, paths, categories);
+  const prefixes = parentInfo.contextPrefixes.filter((p) => p.trim());
+  if (prefixes.length === 0) return;
+  for (const prefix of prefixes) {
+    addContextVariant(variants, seen, node.acquired ?? {}, prefix);
+  }
 }
 
 function buildEditorRowFromGroup(
@@ -105,8 +152,11 @@ function buildEditorRowFromGroup(
     node: DisambiguationPlanNode;
     nodeKeys: string[];
     sampleAcquired: Record<string, string>;
+    candidatePaths: Set<string>;
+    contextVariants: DisambiguationContextVariant[];
   },
   savedBySig: Map<string, DisambiguationMessageRecord>,
+  categories: TokenCategory[],
 ): DisambiguationEditorRow {
   const savedRow = savedBySig.get(signature)
     ?? savedBySig.get('ask_age');
@@ -141,6 +191,15 @@ function buildEditorRowFromGroup(
     contextCount: nodeKeys.length,
     nodeKeys,
     sampleAcquired,
+    parentInfo: deriveDisambiguationParents(
+      node.categoryName!,
+      [...group.candidatePaths],
+      categories,
+    ),
+    candidatePaths: [...group.candidatePaths].sort((a, b) => a.localeCompare(b, 'it')),
+    contextVariants: group.contextVariants.sort((a, b) => (
+      a.pathPrefix.localeCompare(b.pathPrefix, 'it')
+    )),
   };
 }
 
@@ -148,8 +207,9 @@ function buildEditorRowFromGroup(
 export function buildDisambiguationEditorRows(
   plan: DisambiguationPlanResult,
   saved?: DisambiguationPlanStorage | null,
-  vincoloCategories: TokenCategory[] = [],
+  categories: TokenCategory[] = [],
 ): DisambiguationEditorRow[] {
+  const vincoloCategories = categories.filter((c) => c.type === 'vincolo');
   const savedBySig = new Map<string, DisambiguationMessageRecord>();
   for (const message of saved?.messages ?? []) {
     const sig = normalizeSavedSignature(message.signature, message.categoryName);
@@ -160,7 +220,44 @@ export function buildDisambiguationEditorRows(
     node: DisambiguationPlanNode;
     nodeKeys: string[];
     sampleAcquired: Record<string, string>;
+    candidatePaths: Set<string>;
+    contextVariants: DisambiguationContextVariant[];
+    contextVariantSeen: Set<string>;
   }>();
+
+  const addNodePaths = (group: { candidatePaths: Set<string> }, node: DisambiguationPlanNode) => {
+    for (const path of node.candidatePathsSample ?? []) {
+      const trimmed = path.trim();
+      if (trimmed) group.candidatePaths.add(trimmed);
+    }
+  };
+
+  const mergeNode = (group: {
+    nodeKeys: string[];
+    candidatePaths: Set<string>;
+    contextVariants: DisambiguationContextVariant[];
+    contextVariantSeen: Set<string>;
+  }, node: DisambiguationPlanNode) => {
+    group.nodeKeys.push(node.key);
+    addNodePaths(group, node);
+    addNodeContextVariants(group.contextVariants, group.contextVariantSeen, node, categories);
+  };
+
+  const createGroup = (node: DisambiguationPlanNode) => {
+    const candidatePaths = new Set<string>();
+    addNodePaths({ candidatePaths }, node);
+    const contextVariants: DisambiguationContextVariant[] = [];
+    const contextVariantSeen = new Set<string>();
+    addNodeContextVariants(contextVariants, contextVariantSeen, node, categories);
+    return {
+      node,
+      nodeKeys: [node.key],
+      sampleAcquired: node.acquired,
+      candidatePaths,
+      contextVariants,
+      contextVariantSeen,
+    };
+  };
 
   for (const node of plan.nodes) {
     if (node.action === 'disambiguate') {
@@ -168,13 +265,9 @@ export function buildDisambiguationEditorRows(
       const sig = node.signature;
       const existing = groups.get(sig);
       if (existing) {
-        existing.nodeKeys.push(node.key);
+        mergeNode(existing, node);
       } else {
-        groups.set(sig, {
-          node,
-          nodeKeys: [node.key],
-          sampleAcquired: node.acquired,
-        });
+        groups.set(sig, createGroup(node));
       }
       continue;
     }
@@ -191,13 +284,9 @@ export function buildDisambiguationEditorRows(
       };
       const existing = groups.get(sig);
       if (existing) {
-        existing.nodeKeys.push(node.key);
+        mergeNode(existing, normalizedNode);
       } else {
-        groups.set(sig, {
-          node: normalizedNode,
-          nodeKeys: [node.key],
-          sampleAcquired: node.acquired,
-        });
+        groups.set(sig, createGroup(normalizedNode));
       }
     }
   }
@@ -221,12 +310,15 @@ export function buildDisambiguationEditorRows(
       },
       nodeKeys: [],
       sampleAcquired: {},
+      candidatePaths: new Set<string>(),
+      contextVariants: [],
+      contextVariantSeen: new Set<string>(),
     });
   }
 
   return [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b, 'it'))
-    .map(([signature, group]) => buildEditorRowFromGroup(signature, group, savedBySig));
+    .map(([signature, group]) => buildEditorRowFromGroup(signature, group, savedBySig, categories));
 }
 
 /** Default question copy for vincolo ask rows when none is saved. */
@@ -334,7 +426,10 @@ export { buildRestorePlanKey };
 export function patchDisambiguationPlanMessage(
   plan: DisambiguationPlanStorage | null | undefined,
   signature: string,
-  patch: Partial<Pick<DisambiguationMessageRecord, 'question' | 'no_match_1' | 'no_match_2' | 'no_match_3'>>,
+  patch: Partial<Pick<
+    DisambiguationMessageRecord,
+    'question' | 'no_match_1' | 'no_match_2' | 'no_match_3' | 'answer_grammar'
+  >>,
 ): DisambiguationPlanStorage {
   const existing = plan?.messages ?? [];
   const index = existing.findIndex((m) => m.signature === signature);

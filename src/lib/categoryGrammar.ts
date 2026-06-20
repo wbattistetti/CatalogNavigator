@@ -115,6 +115,33 @@ export function compileCategoryGrammar(
   return entry;
 }
 
+/** True when any category's token assignment changed (drag/reassign), not manual grammar edits. */
+export function categoryTokenAssignmentChanged(
+  previous: TokenCategory[],
+  next: TokenCategory[],
+): boolean {
+  const prevById = new Map(previous.map((cat) => [cat.id, cat]));
+  for (const category of next) {
+    const prev = prevById.get(category.id);
+    if (!prev) return true;
+    const prevTexts = [...(prev.tokenTexts ?? [])].sort().join('\0');
+    const nextTexts = [...(category.tokenTexts ?? [])].sort().join('\0');
+    if (prevTexts !== nextTexts) return true;
+  }
+  if (next.length !== previous.length) return true;
+  return false;
+}
+
+/** Clears all stored category grammars (and age-vincolo resolution) before a full rebuild. */
+export function clearCategoryGrammars(categories: TokenCategory[]): TokenCategory[] {
+  return normalizeCategoryOrders(categories).map((category) => {
+    if (category.type === 'vincolo' && isAgeVincoloCategoryName(category.name)) {
+      return { ...category, grammar: null, resolution: null, valueKind: null };
+    }
+    return { ...category, grammar: null };
+  });
+}
+
 export function applyCategoryGrammars(
   categories: TokenCategory[],
   tokens: TokenEntry[],
@@ -223,14 +250,7 @@ export function matchAllCategoryGrammarValues(
   const trimmed = text.trim().toLowerCase();
   if (!trimmed) return [];
 
-  const canonicals = [
-    ...new Set([
-      ...(category.tokenTexts ?? []),
-      ...Object.values(category.grammar?.mappings ?? {})
-        .map((value) => value?.trim())
-        .filter((value): value is string => Boolean(value)),
-    ]),
-  ];
+  const canonicals = [...new Set(category.tokenTexts ?? [])];
 
   const values: string[] = [];
   for (const canonical of canonicals) {

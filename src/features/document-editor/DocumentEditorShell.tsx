@@ -7,10 +7,10 @@ import { DocumentEditorToolbar, ProjectLeftActions } from './DocumentEditorToolb
 import { DocumentEditorTabStrip } from './DocumentEditorTabStrip';
 import { DocumentEditorWorkspace } from './DocumentEditorWorkspace';
 import { DocumentEditorTestRail } from './DocumentEditorTestRail';
-import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
 import { DocumentEditorAgentOverlays } from './DocumentEditorAgentOverlays';
 import { ResizableTestRail } from './ResizableTestRail';
 import { OntologyRefreshProgressBar } from './OntologyRefreshProgressBar';
+import { CatalogSanityStrip } from './CatalogSanityStrip';
 import { EDITOR_TAB_IDS } from './editorTabIds';
 import { Loader2 } from 'lucide-react';
 
@@ -35,13 +35,11 @@ export function DocumentEditorShell() {
   const {
     dictionaryMode,
     testOpen,
-    messagesPanelOpen,
-    setMessagesPanelOpen,
   } = useDocumentEditorController();
 
   const showTestRail = testOpen
     && dictionaryMode
-    && (activeTab === EDITOR_TAB_IDS.ontology || messagesPanelOpen);
+    && (activeTab === EDITOR_TAB_IDS.ontology || activeTab === EDITOR_TAB_IDS.disambiguation);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
@@ -58,14 +56,11 @@ export function DocumentEditorShell() {
 
       <DisambiguationGenerationProgress />
       <OntologyRefreshProgressBar />
+      <CatalogSanityStrip />
 
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
-          {messagesPanelOpen ? (
-            <DocumentEditorMessagesPanel onClose={() => setMessagesPanelOpen(false)} />
-          ) : (
-            <DocumentEditorWorkspace />
-          )}
+          <DocumentEditorWorkspace />
         </div>
         {showTestRail && (
           <ResizableTestRail>

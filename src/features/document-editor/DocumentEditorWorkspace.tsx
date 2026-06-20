@@ -87,7 +87,7 @@ function SplitWorkspace({
 }
 
 export function DocumentEditorWorkspace() {
-  const { dictionaryMode, showOntologyTab, content } = useDocumentEditorController();
+  const { dictionaryMode, showOntologyTab, content, catalogSanityHasIssues } = useDocumentEditorController();
   const { activeTab, splitLayout, setSplitLayout } = useDocumentEditorTab();
   const mountedTabs = useWorkspaceEagerMount(
     activeTab,
@@ -170,6 +170,24 @@ export function DocumentEditorWorkspace() {
               <EditorWorkspacePanel
                 tabId={EDITOR_TAB_IDS.ontology}
                 mounted={mountedTabs.has(EDITOR_TAB_IDS.ontology)}
+              />
+            </WorkspacePanel>
+          )}
+
+          {showOntologyTab && (
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.disambiguation}>
+              <EditorWorkspacePanel
+                tabId={EDITOR_TAB_IDS.disambiguation}
+                mounted={mountedTabs.has(EDITOR_TAB_IDS.disambiguation)}
+              />
+            </WorkspacePanel>
+          )}
+
+          {showOntologyTab && catalogSanityHasIssues && (
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.report}>
+              <EditorWorkspacePanel
+                tabId={EDITOR_TAB_IDS.report}
+                mounted={mountedTabs.has(EDITOR_TAB_IDS.report) || activeTab === EDITOR_TAB_IDS.report}
               />
             </WorkspacePanel>
           )}

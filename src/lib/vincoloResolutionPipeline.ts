@@ -62,10 +62,9 @@ export interface VincoloResolutionPipeline {
   steps: ResolutionStep[];
 }
 
+/** Excluded from lexicon: Italian articles, not age ("una prima visita"). */
 const ITALIAN_ONES: Readonly<Record<string, number>> = {
   zero: 0,
-  uno: 1,
-  una: 1,
   due: 2,
   tre: 3,
   quattro: 4,
@@ -204,15 +203,30 @@ export function buildAgeWordAlternation(lexicon: Record<string, number>): string
 const UNIT_ALT = 'anni|anno|mesi|mese|giorni|giorno|settimane|settimana';
 const VERB_PREFIX = String.raw`(?:ho|ha|sono|è|e|di)\s+`;
 
+/** Must not match via word_map (no unit); "un" only via word_unit with explicit unit. */
+const AMBIGUOUS_STANDALONE_AGE_WORDS = new Set(['un', 'uno', 'una']);
+
+/** Lexicon for word_unit_capture: includes "un" for "un anno", excludes article-only false positives in word_map. */
+function buildWordUnitLexicon(base: Record<string, number>): Record<string, number> {
+  return { ...base, un: 1 };
+}
+
+function buildWordMapEntries(lexicon: Record<string, number>): WordMapEntry[] {
+  return Object.entries(lexicon)
+    .filter(([word]) => !AMBIGUOUS_STANDALONE_AGE_WORDS.has(word))
+    .map(([word, value]) => ({
+      word,
+      value,
+      unit: 'years' as const,
+    }));
+}
+
 /** Builds pipeline v1 for age vincolo categories. */
 export function compileAgeVincoloResolutionPipeline(): VincoloResolutionPipeline {
   const lexicon = buildItalianAgeWordLexicon();
-  const wordAlt = buildAgeWordAlternation(lexicon);
-  const wordEntries: WordMapEntry[] = Object.entries(lexicon).map(([word, value]) => ({
-    word,
-    value,
-    unit: 'years' as const,
-  }));
+  const wordUnitLexicon = buildWordUnitLexicon(lexicon);
+  const wordAlt = buildAgeWordAlternation(wordUnitLexicon);
+  const wordEntries = buildWordMapEntries(lexicon);
 
   return {
     engine: 'pipeline',
@@ -236,12 +250,11 @@ export function compileAgeVincoloResolutionPipeline(): VincoloResolutionPipeline
       },
       {
         type: 'word_unit_capture',
-        pattern: String.raw`(?:^|\s|${VERB_PREFIX})(${wordAlt})(?:\s*(${UNIT_ALT}))?\b`,
+        pattern: String.raw`(?:^|\s|${VERB_PREFIX})(${wordAlt})\s+(${UNIT_ALT})\b`,
         wordGroup: 1,
         unitGroup: 2,
-        wordValueMap: lexicon,
+        wordValueMap: wordUnitLexicon,
         unitMap: UNIT_MAP,
-        defaultUnit: 'years',
       },
       {
         type: 'word_map',
@@ -369,12 +382,15 @@ export function runResolutionPipelineForTest(
       const unitToken = step.unitGroup != null && step.unitGroup > 0
         ? (match[step.unitGroup] ?? '')
         : '';
+      if (!unitToken.trim()) continue;
       const unit = resolveUnitFromMatch(unitToken, step.unitMap, step.defaultUnit ?? 'years');
       return { value, unit };
     }
     if (step.type === 'word_map') {
       const sorted = [...step.entries].sort((a, b) => b.word.length - a.word.length);
+      const ambiguous = new Set(['un', 'uno', 'una']);
       for (const entry of sorted) {
+        if (ambiguous.has(entry.word.toLowerCase())) continue;
         const re = new RegExp(String.raw`\b${entry.word.replace(/'/g, '')}\b`, 'i');
         if (re.test(normalized)) return { value: entry.value, unit: entry.unit };
       }

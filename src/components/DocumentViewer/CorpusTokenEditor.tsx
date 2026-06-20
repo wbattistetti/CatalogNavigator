@@ -31,6 +31,8 @@ export interface CorpusTokenEditorProps {
   onTokensChange: (tokens: TokenEntry[]) => void;
   onCategoriesChange: (categories: TokenCategory[]) => void;
   onRowFilterStatsChange?: (stats: { visible: number; total: number; active: boolean }) => void;
+  /** Saved ontology leaf paths (`analysis.item_paths`). */
+  ontologyItemCount?: number;
 }
 
 export function CorpusTokenEditor({
@@ -42,6 +44,7 @@ export function CorpusTokenEditor({
   onTokensChange,
   onCategoriesChange,
   onRowFilterStatsChange,
+  ontologyItemCount = 0,
 }: CorpusTokenEditorProps) {
   const { dictionaryAliasPick } = useDocumentEditorDictionaryNav();
   const projectDictionaryId = editingDictionaryId;
@@ -106,6 +109,7 @@ export function CorpusTokenEditor({
               onMouseUp={menus.handleMouseUp}
               onContextMenu={menus.handleContextMenu}
               onClearSelectionClick={handleClearSelectionClick}
+              ontologyItemCount={ontologyItemCount}
             />
           </div>
         </div>

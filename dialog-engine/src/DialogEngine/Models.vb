@@ -99,14 +99,18 @@ Namespace Models
         Public Property Max As Integer?
         ''' <summary>Inclusive lower bound in total months (preferred when set).</summary>
         Public Property MinMonths As Integer?
-        ''' <summary>Inclusive upper bound in total months (preferred when set).</summary>
+        ''' <summary>Inclusive upper bound in total months (legacy).</summary>
         Public Property MaxMonths As Integer?
+        ''' <summary>Inclusive lower bound in total weeks (canonical runtime unit).</summary>
+        Public Property MinWeeks As Integer?
+        ''' <summary>Inclusive upper bound in total weeks (canonical runtime unit).</summary>
+        Public Property MaxWeeks As Integer?
     End Class
 
-    ''' <summary>Category + canonical value; Kind (attributo/vincolo) set on catalog items only.</summary>
+    ''' <summary>Category + canonical values; Kind (attributo/vincolo) set on catalog items only.</summary>
     Public Class Concept
         Public Property Category As String
-        Public Property Value As String
+        Public Property Values As List(Of String) = New List(Of String)()
         Public Property Kind As ConceptKind = ConceptKind.Attributo
         ''' <summary>Vincolo resolution unit: years, months, weeks, days.</summary>
         Public Property Unit As String
@@ -160,10 +164,20 @@ Namespace Models
     Public Class AgentSessionState
         ''' <summary>Concepts acquired during the conversation (attributo + vincolo).</summary>
         Public Property AcquiredConcepts As List(Of Concept) = New List(Of Concept)()
+        ''' <summary>Attributo categories committed via an explicit disambiguation option pick.</summary>
+        Public Property ExactAttributoCategories As List(Of String) = New List(Of String)()
         Public Property SelectedPath As String
         Public Property NoMatchCount As Integer
         Public Property LastTranscript As String
         Public Property PendingConstraint As ExpectedConstraint
+    End Class
+
+    ''' <summary>Explicit reply anchor: user utterance answers this disambiguation prompt (survives lost session pending).</summary>
+    Public Class DisambiguationAnswerContext
+        Public Property CategoryName As String
+        Public Property Options As List(Of String) = New List(Of String)()
+        Public Property Signature As String
+        Public Property ValueKind As String
     End Class
 
     Public Class AgentTurnInput
@@ -171,6 +185,8 @@ Namespace Models
         Public Property IncomingConcepts As List(Of Concept) = New List(Of Concept)()
         Public Property Transcript As String
         Public Property ConfirmImplicitConcepts As Boolean
+        ''' <summary>When set, restores pending disambiguation if session cache was lost between question and reply.</summary>
+        Public Property DisambiguationAnswerContext As DisambiguationAnswerContext
     End Class
 
     Public Class AgentTurnResult

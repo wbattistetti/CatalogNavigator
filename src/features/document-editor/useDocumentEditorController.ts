@@ -34,8 +34,15 @@ import {
   shouldShowOntologyTab,
 } from '../../lib/columnRoles';
 import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRefresh';
+import { useCorpusExclusions } from './useCorpusExclusions';
+import { useCatalogSanityReport } from './useCatalogSanityReport';
 
 export type { AgentDictionaryContext };
+
+export interface DisambiguationNavRequest {
+  signature: string;
+  focusGrammar?: boolean;
+}
 
 export interface UseDocumentEditorControllerOptions {
   doc: KbDocument;
@@ -49,7 +56,7 @@ export function useDocumentEditorController({
   onDocUpdated,
 }: UseDocumentEditorControllerOptions) {
   const [dictState, setDictState] = useState<DictionaryPanelState | null>(null);
-  const [messagesPanelOpen, setMessagesPanelOpen] = useState(false);
+  const [disambiguationNavRequest, setDisambiguationNavRequest] = useState<DisambiguationNavRequest | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const [convaiOpen, setConvaiOpen] = useState(false);
   const [convaiNoBeOpen, setConvaiNoBeOpen] = useState(false);
@@ -113,6 +120,14 @@ export function useDocumentEditorController({
   const dicts = useProjectDictionaries(doc, descriptionColumn, onDocUpdated);
   const analysisApi = useAnalysis(doc.id);
   const {
+    corpusSegmentExclusions,
+    corpusItemExclusions,
+    removeCorpusSegment,
+    excludeCorpusSegmentOccurrence,
+    excludeCorpusItem,
+    restoreCorpusItem,
+  } = useCorpusExclusions(doc.id);
+  const {
     load,
     initialLoadDone,
     syncTaxonomyFromLoadedRefs,
@@ -136,7 +151,7 @@ export function useDocumentEditorController({
 
   useEffect(() => {
     setDictState(null);
-    setMessagesPanelOpen(false);
+    setDisambiguationNavRequest(null);
     setTestOpen(false);
     setConvaiOpen(false);
     setConvaiNoBeOpen(false);
@@ -250,7 +265,25 @@ export function useDocumentEditorController({
     ).filter(Boolean);
   }, [content.tabular, ontologyColumns]);
 
-  const { agentNeedsUpdate, canRefreshOntology, refreshingOntology, ontologyRefreshProgress, cancelOntologyRefresh, refreshOntology, buildLiveLoadedRefs, liveLoadedRefs, pathOrderingCategories } = useOntologyRefresh({
+  const [ontologyRefreshSanityNotice, setOntologyRefreshSanityNotice] = useState<'idle' | 'ready'>('idle');
+  const [pendingCatalogReportTab, setPendingCatalogReportTab] = useState(false);
+
+  const dismissOntologyRefreshSanityNotice = useCallback(() => {
+    setOntologyRefreshSanityNotice('idle');
+  }, []);
+
+  const clearPendingCatalogReportTab = useCallback(() => {
+    setPendingCatalogReportTab(false);
+  }, []);
+
+  const handleOntologyRefreshComplete = useCallback(({ cancelled }: { cancelled: boolean }) => {
+    if (!cancelled) {
+      setOntologyRefreshSanityNotice('ready');
+      setPendingCatalogReportTab(true);
+    }
+  }, []);
+
+  const { agentNeedsUpdate, canRefreshOntology, showOntologyRefreshButton, ontologyRefreshDisabledReason, refreshingOntology, ontologyRefreshProgress, cancelOntologyRefresh, refreshOntology, buildLiveLoadedRefs, liveLoadedRefs, pathOrderingCategories } = useOntologyRefresh({
     dictState,
     agentDictionaryContext,
     corpusDescriptions,
@@ -258,7 +291,43 @@ export function useDocumentEditorController({
     hasTaxonomy: analysisApi.hasTaxonomy,
     generating: analysisApi.generating,
     itemPaths: analysisApi.analysis?.item_paths,
-    syncTaxonomyFromLoadedRefsAsync,
+    segmentExclusions: corpusSegmentExclusions,
+    itemExclusions: corpusItemExclusions,
+    syncTaxonomyFromLoadedRefsAsync: (descriptions, loadedRefs, options) =>
+      syncTaxonomyFromLoadedRefsAsync(descriptions, loadedRefs, {
+        ...options,
+        segmentExclusions: corpusSegmentExclusions,
+    itemExclusions: corpusItemExclusions,
+      }),
+    onRefreshComplete: handleOntologyRefreshComplete,
+  });
+
+  const catalogDescriptions = useMemo(() => {
+    const fromPanel = dictState?.getDescriptions() ?? agentDictionaryContext?.descriptions;
+    if (fromPanel?.some((d) => d.trim().length > 0)) return fromPanel;
+    return corpusDescriptions;
+  }, [dictState, agentDictionaryContext, corpusDescriptions]);
+
+  const catalogSanityCanCompute = !!(
+    analysisApi.analysis?.rows?.length
+    && agentDictionaryContext?.dictionary?.categories?.length
+    && catalogDescriptions.some((line) => line.trim().length > 0)
+  );
+
+  const { catalogSanityReport, catalogSanityHasIssues } = useCatalogSanityReport({
+    canCompute: catalogSanityCanCompute,
+    documentName: doc.name,
+    documentId: doc.id,
+    dictionary: agentDictionaryContext?.dictionary,
+    descriptions: catalogDescriptions,
+    analysis: analysisApi.analysis,
+    loadedRefs: liveLoadedRefs,
+    leafDescriptionMap,
+    dictionaryDirty: dictState?.dirty ?? false,
+    analysisDirty: analysisApi.analysisDirty,
+    pathsOutOfSync: agentNeedsUpdate,
+    segmentExclusions: corpusSegmentExclusions,
+    itemExclusions: corpusItemExclusions,
   });
 
   const handleDictionaryAfterSave = useCallback(
@@ -269,7 +338,10 @@ export function useDocumentEditorController({
         // Re-segment only if no ontology exists yet — once item_paths are set,
         // saving the dictionary must not overwrite them with re-segmented paths.
         if (!analysisApi.hasTaxonomy) {
-          syncTaxonomyFromLoadedRefs(descriptions, liveRefs);
+          syncTaxonomyFromLoadedRefs(descriptions, liveRefs, {
+            segmentExclusions: corpusSegmentExclusions,
+    itemExclusions: corpusItemExclusions,
+          });
         }
         bindGrammarTokens(tokens);
         syncGrammarsFromTokens(tokens);
@@ -283,6 +355,8 @@ export function useDocumentEditorController({
       syncTaxonomyFromLoadedRefs,
       bindGrammarTokens,
       syncGrammarsFromTokens,
+      corpusSegmentExclusions,
+      corpusItemExclusions,
     ],
   );
 
@@ -339,7 +413,10 @@ export function useDocumentEditorController({
       try {
         const liveRefs = buildLiveLoadedRefs();
         if (liveRefs.length === 0) return;
-        syncTaxonomyFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs);
+        syncTaxonomyFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs, {
+          segmentExclusions: corpusSegmentExclusions,
+    itemExclusions: corpusItemExclusions,
+        });
         // Mark only after sync actually ran — avoids skipping mount when idle callback is cancelled.
         lastAgentMountRevision.current = agentMountRevision;
       } catch {
@@ -386,7 +463,10 @@ export function useDocumentEditorController({
         );
 
         if (descriptions.length > 0) {
-          syncTaxonomyFromLoadedRefs(descriptions, liveRefs);
+          syncTaxonomyFromLoadedRefs(descriptions, liveRefs, {
+            segmentExclusions: corpusSegmentExclusions,
+    itemExclusions: corpusItemExclusions,
+          });
         }
 
         const tokens = mergeLoadedTokens(liveRefs);
@@ -403,6 +483,8 @@ export function useDocumentEditorController({
       syncTaxonomyFromLoadedRefs,
       bindGrammarTokens,
       syncGrammarsFromTokens,
+      corpusSegmentExclusions,
+      corpusItemExclusions,
     ],
   );
 
@@ -439,6 +521,20 @@ export function useDocumentEditorController({
     }
   }, [analysisApi, dictState, dictionaryMode]);
 
+  const openDisambiguationMessage = useCallback((
+    signature: string,
+    opts?: { focusGrammar?: boolean },
+  ) => {
+    setDisambiguationNavRequest({
+      signature,
+      focusGrammar: opts?.focusGrammar ?? true,
+    });
+  }, []);
+
+  const clearDisambiguationNavRequest = useCallback(() => {
+    setDisambiguationNavRequest(null);
+  }, []);
+
   return {
     doc,
     fileUrl,
@@ -461,8 +557,9 @@ export function useDocumentEditorController({
     analysisApi,
     dictState,
     setDictState: handleDictStateChange,
-    messagesPanelOpen,
-    setMessagesPanelOpen,
+    disambiguationNavRequest,
+    openDisambiguationMessage,
+    clearDisambiguationNavRequest,
     testOpen,
     setTestOpen,
     convaiOpen,
@@ -485,6 +582,8 @@ export function useDocumentEditorController({
     agentDictionaryContext,
     agentNeedsUpdate,
     canRefreshOntology,
+    showOntologyRefreshButton,
+    ontologyRefreshDisabledReason,
     refreshingOntology,
     ontologyRefreshProgress,
     cancelOntologyRefresh,
@@ -492,6 +591,18 @@ export function useDocumentEditorController({
     buildLiveLoadedRefs,
     liveLoadedRefs,
     pathOrderingCategories,
+      corpusSegmentExclusions,
+    corpusItemExclusions,
+    removeCorpusSegment,
+    excludeCorpusSegmentOccurrence,
+    excludeCorpusItem,
+    restoreCorpusItem,
+    catalogSanityReport,
+    catalogSanityHasIssues,
+    ontologyRefreshSanityNotice,
+    dismissOntologyRefreshSanityNotice,
+    pendingCatalogReportTab,
+    clearPendingCatalogReportTab,
     canSaveProject,
     savingProject,
     saveProject,

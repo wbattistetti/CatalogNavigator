@@ -207,12 +207,22 @@ Public Module DisambiguationCopy
         categoryName As String,
         options As IList(Of String)
     ) As Models.DisambiguationMessage
+        Dim signature = BuildSignature(categoryName, options)
+        Return FindMessageRecordBySignature(bundle, signature)
+    End Function
+
+    ''' <summary>Looks up plan copy by exact signature (same key as client answer-context / chat bubble).</summary>
+    Public Function FindMessageRecordBySignature(
+        bundle As Models.AgentBundle,
+        signature As String
+    ) As Models.DisambiguationMessage
         Dim plan = bundle?.Ontology?.DisambiguationPlan
         If plan?.Messages Is Nothing OrElse plan.Messages.Count = 0 Then Return Nothing
+        If String.IsNullOrWhiteSpace(signature) Then Return Nothing
 
-        Dim signature = BuildSignature(categoryName, options)
+        Dim key = signature.Trim()
         Return plan.Messages.FirstOrDefault(
-            Function(m) m IsNot Nothing AndAlso String.Equals(m.Signature?.Trim(), signature, StringComparison.Ordinal))
+            Function(m) m IsNot Nothing AndAlso String.Equals(m.Signature?.Trim(), key, StringComparison.Ordinal))
     End Function
 
     Private Function InferQuestionStyle(options As IList(Of String)) As String

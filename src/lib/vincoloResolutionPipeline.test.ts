@@ -89,6 +89,24 @@ describe('compileAgeVincoloResolutionPipeline', () => {
       unit: 'years',
     });
   });
+
+  it('does not treat article "una" in booking phrase as age', () => {
+    const pipeline = compileAgeVincoloResolutionPipeline();
+    expect(
+      runResolutionPipelineForTest(
+        pipeline,
+        'vorrei prenotare una prima visita angiologica con ecodoppler',
+      ),
+    ).toBeNull();
+  });
+
+  it('resolves un anno with explicit unit', () => {
+    const pipeline = compileAgeVincoloResolutionPipeline();
+    expect(runResolutionPipelineForTest(pipeline, 'il bambino ha un anno')).toEqual({
+      value: 1,
+      unit: 'years',
+    });
+  });
 });
 
 describe('compileVincoloResolutionPipeline', () => {

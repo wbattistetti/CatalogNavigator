@@ -6,9 +6,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mergeAllDictionarySessionsIntoLoadedRefs,
   mergeLoadedTokens,
-  segmentAllDescriptionsFromLoadedRefs,
   type LoadedDictionaryRef,
 } from '../../lib/multiDictionarySegment';
+import {
+  resolveCorpusItemPaths,
+  buildCorpusSegmentationInputFromLoadedRefs,
+  type CorpusSegmentExclusions,
+  type CorpusItemExclusions,
+} from '../../lib/corpusItemPaths';
 import {
   canonicalizedPathSetsEqual,
   getPathOrderingCategories,
@@ -51,6 +56,8 @@ export interface UseOntologyRefreshParams {
   hasTaxonomy: boolean;
   generating: boolean;
   itemPaths: string[] | null | undefined;
+  segmentExclusions?: CorpusSegmentExclusions;
+  itemExclusions?: CorpusItemExclusions;
   syncTaxonomyFromLoadedRefsAsync: (
     descriptions: string[],
     loadedRefs: LoadedDictionaryRef[],
@@ -60,6 +67,7 @@ export interface UseOntologyRefreshParams {
       shouldCancel?: () => boolean;
     },
   ) => Promise<{ result: unknown; cancelled: boolean }>;
+  onRefreshComplete?: (result: { cancelled: boolean }) => void;
 }
 
 function resolveRefreshDescriptions(
@@ -75,9 +83,13 @@ function resolveRefreshDescriptions(
 function computeLeafPaths(
   descriptions: string[],
   loadedRefs: LoadedDictionaryRef[],
+  segmentExclusions?: CorpusSegmentExclusions,
+  itemExclusions?: CorpusItemExclusions,
 ): string[] {
   if (descriptions.length === 0 || loadedRefs.length === 0) return [];
-  return segmentAllDescriptionsFromLoadedRefs(descriptions, loadedRefs).leafPaths;
+  return resolveCorpusItemPaths(
+    buildCorpusSegmentationInputFromLoadedRefs(descriptions, loadedRefs, segmentExclusions, itemExclusions),
+  );
 }
 
 export function useOntologyRefresh({
@@ -88,7 +100,10 @@ export function useOntologyRefresh({
   hasTaxonomy,
   generating,
   itemPaths,
+  segmentExclusions,
+  itemExclusions,
   syncTaxonomyFromLoadedRefsAsync,
+  onRefreshComplete,
 }: UseOntologyRefreshParams) {
   const [refreshingOntology, setRefreshingOntology] = useState(false);
   const [ontologyRefreshProgress, setOntologyRefreshProgress] = useState<OntologyRefreshProgress | null>(null);
@@ -149,7 +164,7 @@ export function useOntologyRefresh({
     const runFullCheck = () => {
       if (cancelled) return;
       try {
-        const leafPaths = computeLeafPaths(refreshDescriptions, liveLoadedRefs);
+        const leafPaths = computeLeafPaths(refreshDescriptions, liveLoadedRefs, segmentExclusions, itemExclusions);
         if (leafPaths.length === 0) {
           applyResult(false);
           return;
@@ -188,12 +203,26 @@ export function useOntologyRefresh({
     refreshDescriptions,
     activeTokenCount,
     dicts.dictionarySessionsRevision,
+    segmentExclusions,
+    itemExclusions,
   ]);
 
-  const canRefreshOntology = !generating
-    && !refreshingOntology
-    && liveLoadedRefs.length > 0
-    && (refreshDescriptions.some((d) => d.trim().length > 0) || hasTaxonomy);
+  const hasCorpusDescriptions = refreshDescriptions.some((d) => d.trim().length > 0);
+
+  const ontologyRefreshDisabledReason = useMemo((): string | null => {
+    if (generating) return 'Attendi il termine della generazione in corso.';
+    if (liveLoadedRefs.length === 0) {
+      return 'Carica o crea un dizionario di progetto (tab Dizionari).';
+    }
+    if (!hasCorpusDescriptions && !hasTaxonomy) {
+      return 'Nel tab Documento originale imposta almeno una colonna come Selector o Descrizione.';
+    }
+    return null;
+  }, [generating, liveLoadedRefs.length, hasCorpusDescriptions, hasTaxonomy]);
+
+  const canRefreshOntology = ontologyRefreshDisabledReason === null && !refreshingOntology;
+
+  const showOntologyRefreshButton = liveLoadedRefs.length > 0 && !generating;
 
   const cancelOntologyRefresh = useCallback(() => {
     cancelRefreshRef.current = true;
@@ -233,8 +262,10 @@ export function useOntologyRefresh({
       if (!cancelled) {
         setAgentNeedsUpdate(false);
       }
+      onRefreshComplete?.({ cancelled });
     } catch {
       /* error surfaced via analysisApi.error */
+      onRefreshComplete?.({ cancelled: true });
     } finally {
       setRefreshingOntology(false);
       setOntologyRefreshProgress(null);
@@ -243,6 +274,7 @@ export function useOntologyRefresh({
     buildLiveLoadedRefs,
     refreshDescriptions,
     syncTaxonomyFromLoadedRefsAsync,
+    onRefreshComplete,
   ]);
 
   const pathOrderingCategories = useMemo(
@@ -253,6 +285,8 @@ export function useOntologyRefresh({
   return {
     agentNeedsUpdate,
     canRefreshOntology,
+    showOntologyRefreshButton,
+    ontologyRefreshDisabledReason,
     refreshingOntology,
     ontologyRefreshProgress,
     cancelOntologyRefresh,

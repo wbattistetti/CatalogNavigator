@@ -73,6 +73,56 @@ static ConceptKind ParseConceptKind(string? kind)
     return ConceptKind.Attributo;
 }
 
+static List<string> ParseIncomingConceptValues(JsonElement item)
+{
+    if (item.TryGetProperty("values", out var valuesEl) && valuesEl.ValueKind == JsonValueKind.Array)
+    {
+        return valuesEl.EnumerateArray()
+            .Select(v => v.GetString()?.Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => v!)
+            .ToList();
+    }
+
+    var value = item.TryGetProperty("value", out var valEl) ? valEl.GetString()?.Trim() : null;
+    if (string.IsNullOrWhiteSpace(value)) return new List<string>();
+    return ValueSetOps.ParseValueSetKey(value);
+}
+
+static List<string> ParseStringList(JsonElement parent, string propertyName)
+{
+    if (!parent.TryGetProperty(propertyName, out var el) || el.ValueKind != JsonValueKind.Array)
+        return new List<string>();
+    return el.EnumerateArray()
+        .Select(v => v.GetString()?.Trim())
+        .Where(v => !string.IsNullOrWhiteSpace(v))
+        .Select(v => v!)
+        .ToList();
+}
+
+static DisambiguationAnswerContext? ParseAnswerContext(JsonElement root)
+{
+    if (!root.TryGetProperty("answerContext", out var ctxEl) || ctxEl.ValueKind != JsonValueKind.Object)
+        return null;
+
+    var categoryName = ctxEl.TryGetProperty("categoryName", out var catEl) ? catEl.GetString()?.Trim() : null;
+    if (string.IsNullOrWhiteSpace(categoryName)) return null;
+
+    var options = ParseStringList(ctxEl, "options");
+    if (options.Count == 0) return null;
+
+    var signature = ctxEl.TryGetProperty("signature", out var sigEl) ? sigEl.GetString()?.Trim() : null;
+    var valueKind = ctxEl.TryGetProperty("valueKind", out var vkEl) ? vkEl.GetString()?.Trim() : null;
+
+    return new DisambiguationAnswerContext
+    {
+        CategoryName = categoryName,
+        Options = options,
+        Signature = signature,
+        ValueKind = valueKind,
+    };
+}
+
 static AgentTurnInput ParseTurnInput(JsonElement root)
 
 {
@@ -84,43 +134,37 @@ static AgentTurnInput ParseTurnInput(JsonElement root)
     {
 
         foreach (var item in conceptsEl.EnumerateArray())
-
         {
-
             var category = item.TryGetProperty("category", out var catEl) ? catEl.GetString()?.Trim() : null;
+            if (string.IsNullOrWhiteSpace(category)) continue;
 
-            var value = item.TryGetProperty("value", out var valEl) ? valEl.GetString()?.Trim() : null;
-
-            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(value)) continue;
+            var values = ParseIncomingConceptValues(item);
+            if (values.Count == 0) continue;
 
             var kind = item.TryGetProperty("kind", out var kindEl) ? kindEl.GetString()?.Trim() : null;
-
             var unit = item.TryGetProperty("unit", out var unitEl) ? unitEl.GetString()?.Trim() : null;
 
-            incoming.Add(new Concept { Category = category, Value = value, Kind = ParseConceptKind(kind), Unit = unit });
-
+            incoming.Add(new Concept
+            {
+                Category = category,
+                Values = values,
+                Kind = ParseConceptKind(kind),
+                Unit = unit,
+            });
         }
-
     }
-
     else if (root.TryGetProperty("incomingSlots", out var slotsEl) && slotsEl.ValueKind == JsonValueKind.Array)
-
     {
-
         foreach (var item in slotsEl.EnumerateArray())
-
         {
-
             var category = item.TryGetProperty("categoryName", out var catEl) ? catEl.GetString()?.Trim() : null;
+            if (string.IsNullOrWhiteSpace(category)) continue;
 
-            var value = item.TryGetProperty("value", out var valEl) ? valEl.GetString()?.Trim() : null;
+            var values = ParseIncomingConceptValues(item);
+            if (values.Count == 0) continue;
 
-            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(value)) continue;
-
-            incoming.Add(new Concept { Category = category, Value = value });
-
+            incoming.Add(new Concept { Category = category, Values = values });
         }
-
     }
 
 
@@ -140,6 +184,8 @@ static AgentTurnInput ParseTurnInput(JsonElement root)
         Transcript = transcript,
 
         ConfirmImplicitConcepts = confirmImplicit,
+
+        DisambiguationAnswerContext = ParseAnswerContext(root),
 
     };
 
@@ -321,7 +367,9 @@ app.MapPost("/api/test/text-turn", async (HttpRequest request) =>
 
 
 
-        var result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, userText);
+        var answerContext = ParseAnswerContext(root);
+
+        var result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, userText, answerContext);
 
 
 

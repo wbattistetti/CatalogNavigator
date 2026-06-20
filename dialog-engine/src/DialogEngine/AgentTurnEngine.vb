@@ -6,6 +6,7 @@ Public Module AgentTurnEngine
     Public Function InitAgentSession() As Models.AgentSessionState
         Return New Models.AgentSessionState With {
             .AcquiredConcepts = New List(Of Models.Concept)(),
+            .ExactAttributoCategories = New List(Of String)(),
             .SelectedPath = Nothing,
             .NoMatchCount = 0,
             .PendingConstraint = Nothing
@@ -20,6 +21,8 @@ Public Module AgentTurnEngine
         Dim earlyExit = TryAlreadyDoneResult(bundle, conversation)
         If earlyExit IsNot Nothing Then Return earlyExit
 
+        conversation = ReconcilePendingFromTurn(conversation, turn)
+
         If HasExternalSlots(turn) Then
             Return FinishTurn(bundle, ProcessExternalSlots(bundle, conversation, turn))
         End If
@@ -30,19 +33,30 @@ Public Module AgentTurnEngine
     Public Function ProcessAgentTurnFromText(
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
-        userText As String
+        userText As String,
+        Optional answerContext As Models.DisambiguationAnswerContext = Nothing
     ) As Models.AgentTurnResult
-        Dim earlyExit = TryAlreadyDoneResult(bundle, conversation)
-        If earlyExit IsNot Nothing Then Return earlyExit
-        Dim turn = New Models.AgentTurnInput With {.Transcript = If(userText, String.Empty).Trim()}
-        Return FinishTurn(bundle, ProcessUtterance(bundle, conversation, turn))
+        Dim turn = New Models.AgentTurnInput With {
+            .Transcript = If(userText, String.Empty).Trim(),
+            .DisambiguationAnswerContext = answerContext
+        }
+        Return ProcessAgentTurn(bundle, conversation, turn)
+    End Function
+
+    Private Function ReconcilePendingFromTurn(
+        conversation As Models.AgentSessionState,
+        turn As Models.AgentTurnInput
+    ) As Models.AgentSessionState
+        If turn Is Nothing OrElse turn.DisambiguationAnswerContext Is Nothing Then Return conversation
+        If String.IsNullOrWhiteSpace(turn.Transcript) AndAlso Not HasExternalSlots(turn) Then Return conversation
+        Return PendingDisambiguationReconcile.Reconcile(conversation, turn.DisambiguationAnswerContext)
     End Function
 
     Public Function FormatAgentParsedBlock(
         parsed As IList(Of Models.Concept),
         instruction As Models.AgentTurnInstruction
     ) As String
-        Dim lines = parsed.Select(Function(p) $"{p.Category}: {p.Value}").ToList()
+        Dim lines = parsed.Select(Function(p) $"{p.Category}: {ValueSetOps.FormatConceptValues(p)}").ToList()
         lines.Add($"PROSSIMA_AZIONE: {instruction.Action}")
         Return $"---PARSED---{Environment.NewLine}{String.Join(Environment.NewLine, lines)}"
     End Function
@@ -65,7 +79,7 @@ Public Module AgentTurnEngine
         turn As Models.AgentTurnInput
     ) As Models.AgentTurnResult
         Dim transcript = If(turn IsNot Nothing AndAlso turn.Transcript IsNot Nothing, turn.Transcript.Trim(), String.Empty)
-        Dim conceptsThisTurn = ExtractConceptsFromTranscript(bundle, conversation, transcript)
+        Dim conceptsThisTurn = ExtractConceptsFromTranscript(bundle, conversation, transcript, turn)
         Return ContinueDialogStep(bundle, conversation, turn, conceptsThisTurn, transcript)
     End Function
 
@@ -80,7 +94,7 @@ Public Module AgentTurnEngine
 
         Dim transcript = If(turn IsNot Nothing AndAlso turn.Transcript IsNot Nothing, turn.Transcript.Trim(), String.Empty)
         If Not String.IsNullOrWhiteSpace(transcript) Then
-            Dim fromTranscript = ExtractConceptsFromTranscript(bundle, conversation, transcript)
+            Dim fromTranscript = ExtractConceptsFromTranscript(bundle, conversation, transcript, turn)
             conceptsThisTurn = ConceptOps.MergeAcquired(fromTranscript, conceptsThisTurn, bundle.Ontology)
         End If
 
@@ -90,16 +104,35 @@ Public Module AgentTurnEngine
     Private Function ExtractConceptsFromTranscript(
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
-        transcript As String
+        transcript As String,
+        Optional turn As Models.AgentTurnInput = Nothing
     ) As List(Of Models.Concept)
         If String.IsNullOrWhiteSpace(transcript) Then Return New List(Of Models.Concept)()
 
-        Dim pendingOnly = IsCollectingPendingInput(conversation)
+        Dim answerContext = turn?.DisambiguationAnswerContext
+        Dim pendingOnly = IsCollectingPendingInput(conversation) OrElse answerContext IsNot Nothing
         Dim pendingCategory = If(pendingOnly, PendingCategoryName(conversation, bundle), Nothing)
+        If answerContext IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(answerContext.CategoryName) Then
+            pendingCategory = answerContext.CategoryName.Trim()
+            pendingOnly = True
+        End If
+
         Dim pendingValueKind = If(conversation?.PendingConstraint?.ValueKind, Nothing)
+        If answerContext IsNot Nothing Then
+            pendingValueKind = If(
+                String.IsNullOrWhiteSpace(answerContext.ValueKind),
+                CategoryTypes.ValueKindCanonicalToken,
+                answerContext.ValueKind.Trim())
+        End If
+
         Dim pendingAllowedTokens = ResolvePendingAllowedTokens(bundle, conversation, pendingCategory, pendingValueKind)
+        If answerContext?.Options IsNot Nothing AndAlso answerContext.Options.Count > 0 Then
+            pendingAllowedTokens = answerContext.Options
+        End If
+
+        Dim planSignature = If(answerContext?.Signature, Nothing)
         Dim extracted = ConceptExtraction.ExtractConceptsFromUtterance(
-            transcript, bundle.Ontology, pendingCategory, pendingOnly, pendingValueKind, pendingAllowedTokens, bundle)
+            transcript, bundle.Ontology, pendingCategory, pendingOnly, pendingValueKind, pendingAllowedTokens, bundle, planSignature)
         Return ConceptExtraction.NormalizeExtractedConcepts(extracted, bundle.Ontology)
     End Function
 
@@ -146,7 +179,9 @@ Public Module AgentTurnEngine
                 bundle, nextConversation, conceptsThisTurn, target, AgentSlotMatch.CandidatePaths(priorCandidates))
         End If
 
-        conversation = MergeIntoConversation(bundle, conversation, conceptsThisTurn, transcript)
+        conversation = MergeIntoConversation(
+            bundle, conversation, conceptsThisTurn, transcript,
+            ConceptOps.ResolveExactAttributoCommits(priorConversation, conceptsThisTurn))
 
         Dim candidates = CatalogFilter.FilterCandidates(bundle.Catalog, conversation)
         Dim confirmImplicit = turn IsNot Nothing AndAlso turn.ConfirmImplicitConcepts
@@ -167,6 +202,7 @@ Public Module AgentTurnEngine
     Private Function CloneConversationWithNoMatch(conversation As Models.AgentSessionState) As Models.AgentSessionState
         Return New Models.AgentSessionState With {
             .AcquiredConcepts = ConceptOps.CloneConceptList(conversation.AcquiredConcepts),
+            .ExactAttributoCategories = ConceptOps.CloneExactAttributoCategories(conversation.ExactAttributoCategories),
             .SelectedPath = conversation.SelectedPath,
             .NoMatchCount = Math.Min(conversation.NoMatchCount + 1, 2),
             .LastTranscript = conversation.LastTranscript,
@@ -178,7 +214,8 @@ Public Module AgentTurnEngine
         bundle As Models.AgentBundle,
         conversation As Models.AgentSessionState,
         conceptsInUtterance As IList(Of Models.Concept),
-        utterance As String
+        utterance As String,
+        exactAttributoCategories As IList(Of String)
     ) As Models.AgentSessionState
         Dim prior = If(conversation IsNot Nothing AndAlso conversation.AcquiredConcepts IsNot Nothing,
             conversation.AcquiredConcepts, New List(Of Models.Concept)())
@@ -186,6 +223,7 @@ Public Module AgentTurnEngine
 
         Return New Models.AgentSessionState With {
             .AcquiredConcepts = ConceptOps.MergeAcquired(prior, conceptsInUtterance, ontology),
+            .ExactAttributoCategories = ConceptOps.CloneExactAttributoCategories(exactAttributoCategories),
             .SelectedPath = If(conversation IsNot Nothing, conversation.SelectedPath, Nothing),
             .NoMatchCount = If(conversation IsNot Nothing, conversation.NoMatchCount, 0),
             .LastTranscript = If(String.IsNullOrWhiteSpace(utterance) AndAlso conversation IsNot Nothing,
@@ -225,13 +263,15 @@ Public Module AgentTurnEngine
         End If
 
         If confirmImplicit Then
-            Dim inferred = AgentSlotMatch.FindInferredConcept(bundle, candidates, conversation.AcquiredConcepts)
+            Dim inferred = AgentSlotMatch.FindInferredConcept(
+                bundle, candidates, conversation.AcquiredConcepts, conversation.ExactAttributoCategories)
             If inferred IsNot Nothing Then
                 Return TurnResultBuilder.ConfirmImplicit(conversation, conceptsInUtterance, inferred, survivingPaths)
             End If
         End If
 
-        Dim disambiguation = AgentSlotMatch.FindDisambiguationTarget(bundle, candidates, conversation.AcquiredConcepts)
+        Dim disambiguation = AgentSlotMatch.FindDisambiguationTarget(
+            bundle, candidates, conversation.AcquiredConcepts, conversation.ExactAttributoCategories)
         If disambiguation IsNot Nothing Then
             Return TurnResultBuilder.Disambiguate(bundle, conversation, conceptsInUtterance, disambiguation, survivingPaths)
         End If

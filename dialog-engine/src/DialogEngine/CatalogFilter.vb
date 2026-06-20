@@ -3,8 +3,6 @@
 ''' </summary>
 Public Module CatalogFilter
 
-    Private ReadOnly MissingCategoryValue As String = CategoryTypes.MissingCategoryValue
-
     Public Function FilterCandidates(
         catalog As Models.Catalog,
         conversation As Models.AgentSessionState
@@ -17,25 +15,32 @@ Public Module CatalogFilter
             Return New List(Of Models.CatalogItem)()
         End If
 
-        Return catalog.Items.Where(Function(item) ItemSatisfiesAllConcepts(item, conversation.AcquiredConcepts)).ToList()
+        Return catalog.Items.Where(
+            Function(item) ItemSatisfiesAllConcepts(item, conversation.AcquiredConcepts, conversation.ExactAttributoCategories)
+        ).ToList()
     End Function
 
     Public Function ItemSatisfiesAllConcepts(
         item As Models.CatalogItem,
-        concepts As IList(Of Models.Concept)
+        concepts As IList(Of Models.Concept),
+        Optional exactAttributoCategories As IList(Of String) = Nothing
     ) As Boolean
         If item Is Nothing Then Return False
         If concepts Is Nothing OrElse concepts.Count = 0 Then Return False
 
         For Each concept In concepts
             If concept Is Nothing Then Continue For
-            If Not ItemSatisfiesConcept(item, concept) Then Return False
+            If Not ItemSatisfiesConcept(item, concept, exactAttributoCategories) Then Return False
         Next
 
         Return True
     End Function
 
-    Public Function ItemSatisfiesConcept(item As Models.CatalogItem, concept As Models.Concept) As Boolean
+    Public Function ItemSatisfiesConcept(
+        item As Models.CatalogItem,
+        concept As Models.Concept,
+        Optional exactAttributoCategories As IList(Of String) = Nothing
+    ) As Boolean
         If item Is Nothing OrElse concept Is Nothing Then Return False
         If String.IsNullOrWhiteSpace(concept.Category) Then Return False
 
@@ -43,23 +48,23 @@ Public Module CatalogFilter
             Return ItemSatisfiesVincoloConcept(item, concept)
         End If
 
-        If String.Equals(concept.Value, CategoryTypes.MissingCategoryValue, StringComparison.OrdinalIgnoreCase) OrElse
-           CategoryTypes.IsMissingCategoryValue(concept.Value) Then
+        Dim acquiredValues = ValueSetOps.ValuesFromConcept(concept)
+        If ValueSetOps.IsMissingValueList(acquiredValues) Then
             Return ItemMissingCategoryValue(item, concept.Category)
         End If
 
-        Return item.Concepts.Any(
-            Function(c) (c.Kind = Models.ConceptKind.Attributo) AndAlso
-                        c.Category = concept.Category AndAlso
-                        c.Value = concept.Value
-        )
+        Dim itemValues = ValueSetOps.ItemAttributoValues(item, concept.Category)
+        If ConceptOps.IsExactAttributoCategory(exactAttributoCategories, concept.Category) Then
+            Return ValueSetOps.ValueSetsEqual(itemValues, acquiredValues)
+        End If
+        Return ValueSetOps.ValueSetContainsAll(itemValues, acquiredValues)
     End Function
 
     Private Function ItemSatisfiesVincoloConcept(item As Models.CatalogItem, concept As Models.Concept) As Boolean
-        Dim totalMonths = ResolveTurnAge.ParseAgeTotalMonthsFromConcept(concept)
-        If Not totalMonths.HasValue Then Return True
-        Return ConstraintValidation.PathSatisfiesAgeConstraintsFromTotalMonths(
-            totalMonths.Value,
+        Dim totalWeeks = ResolveTurnAge.ParseAgeTotalWeeksFromConcept(concept)
+        If Not totalWeeks.HasValue Then Return True
+        Return ConstraintValidation.PathSatisfiesAgeConstraintsFromTotalWeeks(
+            totalWeeks.Value,
             item.AgeConstraints)
     End Function
 
@@ -67,13 +72,9 @@ Public Module CatalogFilter
         If item Is Nothing OrElse String.IsNullOrWhiteSpace(categoryName) Then Return False
         If item.Concepts Is Nothing OrElse item.Concepts.Count = 0 Then Return True
 
-        Dim categoryConcept = item.Concepts.FirstOrDefault(
-            Function(c) c IsNot Nothing AndAlso
-                        c.Kind = Models.ConceptKind.Attributo AndAlso
-                        String.Equals(c.Category, categoryName, StringComparison.Ordinal))
-
+        Dim categoryConcept = ValueSetOps.FindItemAttributoConcept(item, categoryName)
         If categoryConcept Is Nothing Then Return True
-        Return String.Equals(categoryConcept.Value, MissingCategoryValue, StringComparison.OrdinalIgnoreCase)
+        Return ValueSetOps.IsMissingValueList(ValueSetOps.ValuesFromConcept(categoryConcept))
     End Function
 
     Public Function FilterCandidatePathsByAge(
@@ -87,9 +88,9 @@ Public Module CatalogFilter
 
         Dim itemsByPath = catalog.Items.ToDictionary(Function(item) item.Path)
         Return paths.Where(Function(path)
-            If Not itemsByPath.ContainsKey(path) Then Return False
-            Return ConstraintValidation.PathSatisfiesAgeConstraints(ageYears, itemsByPath(path).AgeConstraints)
-        End Function).ToList()
+                               If Not itemsByPath.ContainsKey(path) Then Return False
+                               Return ConstraintValidation.PathSatisfiesAgeConstraints(ageYears, itemsByPath(path).AgeConstraints)
+                           End Function).ToList()
     End Function
 
 End Module

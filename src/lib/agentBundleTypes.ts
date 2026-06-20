@@ -19,10 +19,14 @@ export interface CompiledAgeConstraint {
   askKey: 'age_years';
   min: number | null;
   max: number | null;
-  /** Inclusive lower bound in total months (sub-year fasce). */
+  /** Inclusive lower bound in total months (legacy). */
   minMonths: number | null;
-  /** Inclusive upper bound in total months (sub-year fasce). */
+  /** Inclusive upper bound in total months (legacy). */
   maxMonths: number | null;
+  /** Inclusive lower bound in total weeks (canonical runtime unit). */
+  minWeeks: number | null;
+  /** Inclusive upper bound in total weeks (canonical runtime unit). */
+  maxWeeks: number | null;
   sourceToken: string;
 }
 
@@ -50,6 +54,7 @@ export interface AgentBundleMeta {
   version: string;
   compiledAt: string;
   warnings: string[];
+  catalogSanity?: CatalogSanityReport;
 }
 
 /** Snapshot consumed by preview deploy and published backend turns. */
@@ -64,17 +69,26 @@ export interface AgentBundle {
   itemPaths: string[];
 }
 
+/** Manual segment removals keyed by trimmed corpus description (right-column edits). */
+export type SegmentExclusionsByText = ReadonlyMap<string, ReadonlySet<string>>;
+
 export interface AgentBundleCompileInput {
   documentName: string;
   documentId?: string | null;
   mode?: AgentBundleMode;
   dictionary: TokenDictionary;
+  /** Corpus description lines used for live segmentation (in-memory, not saved item_paths). */
+  /** In-memory corpus lines; catalog paths are segmented from these, not from analysis.item_paths. */
   descriptions: string[];
   analysis: Analysis | null;
   /** Optional path → raw description map for corpus sourceText (not used for segmentation). */
   leafDescriptionMap?: ReadonlyMap<string, string> | Record<string, string>;
   /** Category layout for path token typing (multi-dictionary order when set). */
   loadedRefs?: LoadedDictionaryRef[];
+  /** Right-column manual segment removals applied before catalog compile. */
+  segmentExclusions?: SegmentExclusionsByText;
+  /** Whole corpus rows omitted from catalog compile. */
+  itemExclusions?: ReadonlySet<string>;
   dictionaryDirty?: boolean;
   analysisDirty?: boolean;
   pathsOutOfSync?: boolean;
@@ -132,12 +146,19 @@ export interface AgentTurnInput {
    * before being written to resolvedSlots. Silent implicit inference is disabled.
    */
   confirmImplicitSlots?: boolean;
+  /** Reply anchor: disambiguation prompt the user utterance answers (restores lost session pending). */
+  answerContext?: {
+    categoryName: string;
+    options: string[];
+    signature?: string;
+    valueKind?: ExpectedSlotValueKind;
+  };
 }
 
 /** One concept acquired during the conversation. */
 export interface AgentConcept {
   category: string;
-  value: string;
+  values: string[];
   kind?: ConceptKind;
   unit?: string;
 }
@@ -145,6 +166,8 @@ export interface AgentConcept {
 export interface AgentSessionState {
   /** Concepts acquired during the conversation (VB sole source of truth). */
   acquiredConcepts: AgentConcept[];
+  /** Attributo categories committed via an explicit disambiguation option pick. */
+  exactAttributoCategories?: string[];
   selectedPath: string | null;
   noMatchCount: number;
   lastTranscript?: string;
@@ -152,7 +175,7 @@ export interface AgentSessionState {
 }
 
 export function initAgentSession(): AgentSessionState {
-  return { acquiredConcepts: [], selectedPath: null, noMatchCount: 0 };
+  return { acquiredConcepts: [], exactAttributoCategories: [], selectedPath: null, noMatchCount: 0 };
 }
 
 export interface AgentTurnResult {

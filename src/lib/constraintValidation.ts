@@ -25,6 +25,33 @@ export function pathSatisfiesAgeConstraints(
   return ageRules.every((rule) => satisfiesAgeYears(age, rule.min, rule.max));
 }
 
+/** Inclusive age check against compiled week bounds (canonical). */
+export function satisfiesAgeTotalWeeks(
+  totalWeeks: number,
+  minWeeks: number | null,
+  maxWeeks: number | null,
+  minMonths: number | null,
+  maxMonths: number | null,
+  min: number | null,
+  max: number | null,
+): boolean {
+  if (!Number.isFinite(totalWeeks) || totalWeeks < 0) return false;
+  if (minWeeks != null || maxWeeks != null) {
+    if (minWeeks != null && totalWeeks < minWeeks) return false;
+    if (maxWeeks != null && totalWeeks > maxWeeks) return false;
+    return true;
+  }
+  if (minMonths != null || maxMonths != null) {
+    const totalMonths = Math.floor((totalWeeks * 12) / 52);
+    if (minMonths != null && totalMonths < minMonths) return false;
+    if (maxMonths != null && totalMonths > maxMonths) return false;
+    return true;
+  }
+  if (min != null && totalWeeks < min * 52) return false;
+  if (max != null && totalWeeks > max * 52 + 51) return false;
+  return true;
+}
+
 /** Inclusive age check against compiled min/max bounds (years or total months). */
 export function satisfiesAgeTotalMonths(
   totalMonths: number,
@@ -32,8 +59,14 @@ export function satisfiesAgeTotalMonths(
   max: number | null,
   minMonths: number | null,
   maxMonths: number | null,
+  minWeeks: number | null = null,
+  maxWeeks: number | null = null,
 ): boolean {
   if (!Number.isFinite(totalMonths) || totalMonths < 0) return false;
+  if (minWeeks != null || maxWeeks != null) {
+    const totalWeeks = Math.floor((totalMonths * 52) / 12);
+    return satisfiesAgeTotalWeeks(totalWeeks, minWeeks, maxWeeks, minMonths, maxMonths, min, max);
+  }
   if (minMonths != null || maxMonths != null) {
     if (minMonths != null && totalMonths < minMonths) return false;
     if (maxMonths != null && totalMonths > maxMonths) return false;
@@ -44,6 +77,26 @@ export function satisfiesAgeTotalMonths(
   return true;
 }
 
+/** True when every age constraint on the path accepts the given total weeks. */
+export function pathSatisfiesAgeConstraintsFromTotalWeeks(
+  totalWeeks: number,
+  constraints: CompiledAgeConstraint[],
+): boolean {
+  const ageRules = constraints.filter((c) => c.kind === 'age_years');
+  if (ageRules.length === 0) return true;
+  return ageRules.every((rule) =>
+    satisfiesAgeTotalWeeks(
+      totalWeeks,
+      rule.minWeeks,
+      rule.maxWeeks,
+      rule.minMonths,
+      rule.maxMonths,
+      rule.min,
+      rule.max,
+    ),
+  );
+}
+
 /** True when every age constraint on the path accepts the given total months. */
 export function pathSatisfiesAgeConstraintsFromTotalMonths(
   totalMonths: number,
@@ -52,7 +105,15 @@ export function pathSatisfiesAgeConstraintsFromTotalMonths(
   const ageRules = constraints.filter((c) => c.kind === 'age_years');
   if (ageRules.length === 0) return true;
   return ageRules.every((rule) =>
-    satisfiesAgeTotalMonths(totalMonths, rule.min, rule.max, rule.minMonths, rule.maxMonths),
+    satisfiesAgeTotalMonths(
+      totalMonths,
+      rule.min,
+      rule.max,
+      rule.minMonths,
+      rule.maxMonths,
+      rule.minWeeks,
+      rule.maxWeeks,
+    ),
   );
 }
 

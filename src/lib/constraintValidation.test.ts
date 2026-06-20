@@ -6,6 +6,7 @@ import {
   extractAgeYearsFromText,
   pathSatisfiesAgeConstraints,
   pathSatisfiesAgeConstraintsFromTotalMonths,
+  pathSatisfiesAgeConstraintsFromTotalWeeks,
   satisfiesAgeYears,
 } from './constraintValidation';
 import type { CompiledAgeConstraint } from './agentBundleTypes';
@@ -44,6 +45,8 @@ describe('pathSatisfiesAgeConstraints', () => {
         max: 15,
         minMonths: 72,
         maxMonths: 191,
+        minWeeks: 312,
+        maxWeeks: 831,
         sourceToken: 'da 6 anni a 15 anni',
       },
     ];
@@ -62,6 +65,8 @@ describe('pathSatisfiesAgeConstraintsFromTotalMonths', () => {
       max: 1,
       minMonths: 0,
       maxMonths: 23,
+      minWeeks: 0,
+      maxWeeks: 103,
       sourceToken: '0 1 anno',
     };
     const fourWeeks: CompiledAgeConstraint = {
@@ -72,10 +77,26 @@ describe('pathSatisfiesAgeConstraintsFromTotalMonths', () => {
       max: 0,
       minMonths: 0,
       maxMonths: 0,
+      minWeeks: 0,
+      maxWeeks: 4,
       sourceToken: 'entro le prime 4 settimane di vita',
     };
 
     expect(pathSatisfiesAgeConstraintsFromTotalMonths(6, [infantBand])).toBe(true);
     expect(pathSatisfiesAgeConstraintsFromTotalMonths(6, [fourWeeks])).toBe(false);
+    expect(pathSatisfiesAgeConstraintsFromTotalWeeks(6, [fourWeeks])).toBe(false);
+    expect(pathSatisfiesAgeConstraintsFromTotalWeeks(3, [fourWeeks])).toBe(true);
+    expect(pathSatisfiesAgeConstraintsFromTotalWeeks(1560, [{
+      kind: 'age_years',
+      categoryName: 'fascia di età',
+      askKey: 'age_years',
+      min: 1,
+      max: 16,
+      minMonths: 24,
+      maxMonths: 203,
+      minWeeks: 104,
+      maxWeeks: 883,
+      sourceToken: 'over 1 anno under 17 anni',
+    }])).toBe(false);
   });
 });

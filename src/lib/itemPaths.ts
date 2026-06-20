@@ -18,7 +18,10 @@ export function normalizeItemPaths(
   return sortSlotsTreeOrder([...out], categories);
 }
 
-/** True when no other path in the list extends this one (leaf prestation only). */
+/**
+ * Drops paths that are strict dot-prefixes of another path in the same list.
+ * For saved item_paths synced against the NLU tree only — not for live corpus compile.
+ */
 export function leafOnlyItemPaths(paths: string[]): string[] {
   return paths.filter(
     (path) => !paths.some((other) => other !== path && other.startsWith(`${path}.`)),

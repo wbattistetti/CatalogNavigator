@@ -7,6 +7,7 @@ import type {
   AgentTurnInstruction,
 } from './agentBundleTypes';
 import { initAgentSession } from './agentBundleTypes';
+import type { PendingDisambiguationAnswerContext } from './pendingDisambiguationAnswerContext';
 import {
   convertAgentBundleToVb,
   convertSessionStateFromVb,
@@ -48,6 +49,8 @@ export async function postVbTextTurn(params: {
   bundle: AgentBundle;
   state: AgentSessionState | null;
   reset?: boolean;
+  /** Explicit reply anchor from the agent bubble being answered. */
+  answerContext?: PendingDisambiguationAnswerContext;
 }): Promise<VbTextTurnResponse> {
   const res = await fetch(`${VB_ENGINE_BASE}/api/test/text-turn`, {
     method: 'POST',
@@ -57,6 +60,7 @@ export async function postVbTextTurn(params: {
       bundle: convertAgentBundleToVb(params.bundle),
       state: convertSessionStateToVb(params.state ?? initAgentSession()),
       reset: params.reset ?? false,
+      ...(params.answerContext ? { answerContext: params.answerContext } : {}),
     }),
   });
 

@@ -6,7 +6,10 @@ import { BookOpen, Loader2, AlertCircle, Check, Library, X } from 'lucide-react'
 import type { KbDocument } from '../../lib/supabase';
 import type { ParsedTabular } from '../../lib/parseTabular';
 import type { TokenCategory } from '../../lib/dictionaryTree';
-import { reconcileCategoryGrammarsWithTokens } from '../../lib/categoryGrammar';
+import {
+  categoryTokenAssignmentChanged,
+  reconcileCategoryGrammarsWithTokens,
+} from '../../lib/categoryGrammar';
 import {
   getActiveTokens,
   type TokenDictionary,
@@ -26,6 +29,7 @@ import type { UseProjectDictionariesResult } from '../../hooks/useProjectDiction
 import { DictionaryIcon } from './DictionaryIcon';
 import { CorpusTokenEditor } from './CorpusTokenEditor';
 import { OntologyCorpusSegmentationProvider } from '../../features/ontology-corpus/OntologyCorpusSegmentationContext';
+import type { CorpusSegmentExclusions } from '../../lib/corpusItemPaths';
 import { useDocumentEditorTab } from '../../features/document-editor/DocumentEditorContext';
 import { EDITOR_TAB_IDS } from '../../features/document-editor/editorTabIds';
 import { dictionaryTabDisplayName } from '../../lib/dictionaryTabOrder';
@@ -68,6 +72,10 @@ interface DictionaryPanelProps {
   onOpenDictionary?: (dictionaryId: string) => void;
   syncNotice?: string | null;
   error: string | null;
+  /** Saved ontology leaf paths (`analysis.item_paths`). */
+  ontologyItemCount?: number;
+  corpusSegmentExclusions: CorpusSegmentExclusions;
+  onRemoveCorpusSegment: (sourceText: string, segmentText: string) => void;
 }
 
 type SaveStatus = 'idle' | 'saved' | 'error';
@@ -87,6 +95,9 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   onOpenDictionary,
   syncNotice = null,
   error,
+  ontologyItemCount = 0,
+  corpusSegmentExclusions,
+  onRemoveCorpusSegment,
 }: DictionaryPanelProps) {
   const { activeTab } = useDocumentEditorTab();
   const segmentationCacheEnabled = activeTab === EDITOR_TAB_IDS.ontology;
@@ -198,8 +209,11 @@ export const DictionaryPanel = memo(function DictionaryPanel({
 
   const handleCategoriesChange = useCallback((next: TokenCategory[]) => {
     if (!projectDictId) return;
-    dicts.setSessionCategories(projectDictId, next);
-  }, [dicts, projectDictId]);
+    const synced = categoryTokenAssignmentChanged(editingCategories, next)
+      ? reconcileCategoryGrammarsWithTokens(next, editingTokens)
+      : next;
+    dicts.setSessionCategories(projectDictId, synced);
+  }, [dicts, editingCategories, editingTokens, projectDictId]);
 
   const descriptionsRef = useRef(descriptions);
   descriptionsRef.current = descriptions;
@@ -404,6 +418,8 @@ export const DictionaryPanel = memo(function DictionaryPanel({
             corpusTexts={descriptions}
             liveLoadedRefs={liveLoadedRefs}
             categories={editingCategories}
+            segmentExclusions={corpusSegmentExclusions}
+            onRemoveSegment={onRemoveCorpusSegment}
             enabled={segmentationCacheEnabled}
           >
             <CorpusTokenEditor
@@ -415,6 +431,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
               onTokensChange={handleTokensChange}
               onCategoriesChange={handleCategoriesChange}
               onRowFilterStatsChange={setDescriptionFilterStats}
+              ontologyItemCount={ontologyItemCount}
             />
           </OntologyCorpusSegmentationProvider>
         </div>

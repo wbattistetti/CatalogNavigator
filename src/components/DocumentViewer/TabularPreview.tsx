@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, EyeOff, Loader2, Trash2 } from 'lucide-react';
+import { Check, Eye, EyeOff, Loader2, Pencil, Trash2, X } from 'lucide-react';
 import type { ColumnRole, KbDocument } from '../../lib/supabase';
 import { persistDocumentColumnRoles } from '../../lib/columnRoles';
 import { persistTabularDocument } from '../../lib/persistTabularDocument';
@@ -180,6 +180,110 @@ function isDescriptionLikeColumn(header: string, role: ColumnRole | undefined): 
   return /descri|nome\s*visita/i.test(header);
 }
 
+interface TabularCellProps {
+  cell: string;
+  isFlexColumn: boolean;
+  width: number;
+  role: ColumnRole | undefined;
+  cfg: (typeof ROLE_CONFIG)[ColumnRole] | null;
+  isEditing: boolean;
+  draftValue: string;
+  isSaving: boolean;
+  onDraftChange: (value: string) => void;
+  onStartEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+}
+
+function TabularCell({
+  cell,
+  isFlexColumn,
+  width,
+  role,
+  cfg,
+  isEditing,
+  draftValue,
+  isSaving,
+  onDraftChange,
+  onStartEdit,
+  onSave,
+  onCancel,
+}: TabularCellProps) {
+  if (isEditing) {
+    return (
+      <td
+        className={`px-2 py-1.5 font-mono text-xs border-r border-[#111] last:border-r-0 align-top ${cfg ? cfg.tdBg : ''}`}
+        style={isFlexColumn ? { minWidth: width } : { width, maxWidth: width }}
+      >
+        <textarea
+          autoFocus
+          value={draftValue}
+          onChange={(e) => onDraftChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              onSave();
+            }
+            if (e.key === 'Escape') onCancel();
+          }}
+          rows={Math.min(8, Math.max(2, draftValue.split('\n').length))}
+          disabled={isSaving}
+          className="w-full bg-[#080e0a] border border-amber-400/40 rounded px-2 py-1 font-mono text-xs text-emerald-100 resize-y focus:outline-none focus:border-amber-400/70 disabled:opacity-60"
+        />
+        <div className="flex items-center gap-1 mt-1">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={isSaving}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-emerald-400/40 bg-emerald-400/15 text-emerald-200 font-mono text-[10px] hover:bg-emerald-400/25 disabled:opacity-50"
+          >
+            {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            Salva
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSaving}
+            className="p-0.5 text-emerald-400/40 hover:text-emerald-300/80 disabled:opacity-50"
+            title="Annulla"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      </td>
+    );
+  }
+
+  return (
+    <td
+      title={isFlexColumn ? 'Doppio click per modificare' : cell || 'Doppio click per modificare'}
+      onDoubleClick={onStartEdit}
+      className={`group/cell relative px-3 py-1.5 font-mono text-xs border-r border-[#111] last:border-r-0 transition-colors cursor-text ${
+        isFlexColumn
+          ? 'whitespace-normal break-words'
+          : 'whitespace-nowrap overflow-hidden text-ellipsis'
+      } ${cfg ? cfg.tdBg : ''} ${
+        role === 'ignore' ? 'text-gray-400/35' : 'text-emerald-300/80'
+      }`}
+      style={
+        isFlexColumn
+          ? { minWidth: width }
+          : { width, maxWidth: width }
+      }
+    >
+      {cell}
+      <button
+        type="button"
+        onClick={onStartEdit}
+        className="absolute top-1 right-1 p-0.5 rounded opacity-0 group-hover/cell:opacity-100 text-amber-300/70 hover:text-amber-200 hover:bg-amber-400/10 transition-opacity"
+        title="Modifica cella"
+      >
+        <Pencil className="w-3 h-3" />
+      </button>
+    </td>
+  );
+}
+
 export function TabularPreview({
   doc,
   tabular,
@@ -196,10 +300,16 @@ export function TabularPreview({
   const [openToolbarCol, setOpenToolbarCol] = useState<string | null>(null);
   const [deletingSourceIndex, setDeletingSourceIndex] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editingCell, setEditingCell] = useState<{ sourceIndex: number; colIndex: number } | null>(null);
+  const [cellDraft, setCellDraft] = useState('');
+  const [savingCell, setSavingCell] = useState<{ sourceIndex: number; colIndex: number } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const hideToolbarTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setLocalTabular(tabular);
+    setEditingCell(null);
+    setCellDraft('');
   }, [tabular, doc.id]);
 
   const openToolbar = useCallback((col: string) => {
@@ -344,6 +454,65 @@ export function TabularPreview({
     }
   }, [csvSeparator, doc, localTabular.headers, localTabular.rows, onDocUpdated, onTabularChange, rows, sortColIdx]);
 
+  const startCellEdit = useCallback((sourceIndex: number, colIndex: number) => {
+    const value = rows[sourceIndex]?.[colIndex] ?? '';
+    setSaveError(null);
+    setEditingCell({ sourceIndex, colIndex });
+    setCellDraft(value);
+  }, [rows]);
+
+  const cancelCellEdit = useCallback(() => {
+    setEditingCell(null);
+    setCellDraft('');
+  }, []);
+
+  const handleSaveCell = useCallback(async () => {
+    if (!editingCell) return;
+    const { sourceIndex, colIndex } = editingCell;
+    const previousValue = rows[sourceIndex]?.[colIndex] ?? '';
+    if (cellDraft === previousValue) {
+      cancelCellEdit();
+      return;
+    }
+
+    const nextRows = localTabular.rows.map((row, rowIdx) =>
+      rowIdx === sourceIndex
+        ? row.map((cell, cellIdx) => (cellIdx === colIndex ? cellDraft : cell))
+        : row,
+    );
+    const nextTabular: ParsedTabular = {
+      headers: localTabular.headers,
+      rows: nextRows,
+    };
+
+    setSaveError(null);
+    setSavingCell({ sourceIndex, colIndex });
+    try {
+      const freshDoc = await persistTabularDocument(doc, nextTabular, {
+        csvSeparator: csvSeparator ?? undefined,
+      });
+      setLocalTabular(nextTabular);
+      onTabularChange?.(nextTabular);
+      onDocUpdated?.(freshDoc);
+      cancelCellEdit();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Salvataggio fallito');
+    } finally {
+      setSavingCell(null);
+    }
+  }, [
+    cancelCellEdit,
+    cellDraft,
+    csvSeparator,
+    doc,
+    editingCell,
+    localTabular.headers,
+    localTabular.rows,
+    onDocUpdated,
+    onTabularChange,
+    rows,
+  ]);
+
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
       {/* Filter bar */}
@@ -371,6 +540,12 @@ export function TabularPreview({
         {deleteError && (
           <span className="flex-shrink-0 font-mono text-[10px] text-red-400">{deleteError}</span>
         )}
+        {saveError && (
+          <span className="flex-shrink-0 font-mono text-[10px] text-red-400">{saveError}</span>
+        )}
+        <span className="flex-shrink-0 font-mono text-[10px] text-emerald-400/45 hidden sm:inline">
+          Doppio click su una cella per modificare
+        </span>
       </div>
 
       {/* Table — h-0 + flex-1 forces scroll inside viewport instead of expanding the page */}
@@ -445,25 +620,24 @@ export function TabularPreview({
                   const cfg = role ? ROLE_CONFIG[role] : null;
                   const cell = row[ci] ?? '';
                   const isFlexColumn = vi === flexColumnVi;
+                  const isEditing = editingCell?.sourceIndex === sourceIndex && editingCell.colIndex === ci;
+                  const isSaving = savingCell?.sourceIndex === sourceIndex && savingCell.colIndex === ci;
                   return (
-                    <td
+                    <TabularCell
                       key={ci}
-                      title={isFlexColumn ? undefined : cell}
-                      className={`px-3 py-1.5 font-mono text-xs border-r border-[#111] last:border-r-0 transition-colors ${
-                        isFlexColumn
-                          ? 'whitespace-normal break-words'
-                          : 'whitespace-nowrap overflow-hidden text-ellipsis'
-                      } ${cfg ? cfg.tdBg : ''} ${
-                        role === 'ignore' ? 'text-gray-400/35' : 'text-emerald-300/80'
-                      }`}
-                      style={
-                        isFlexColumn
-                          ? { minWidth: columnWidths[vi] }
-                          : { width: columnWidths[vi], maxWidth: columnWidths[vi] }
-                      }
-                    >
-                      {cell}
-                    </td>
+                      cell={cell}
+                      isFlexColumn={isFlexColumn}
+                      width={columnWidths[vi]!}
+                      role={role}
+                      cfg={cfg}
+                      isEditing={isEditing}
+                      draftValue={isEditing ? cellDraft : cell}
+                      isSaving={isSaving}
+                      onDraftChange={setCellDraft}
+                      onStartEdit={() => startCellEdit(sourceIndex, ci)}
+                      onSave={() => void handleSaveCell()}
+                      onCancel={cancelCellEdit}
+                    />
                   );
                 })}
               </tr>
