@@ -183,6 +183,15 @@ export function DocumentEditorWorkspace() {
             </WorkspacePanel>
           )}
 
+          {showOntologyTab && (
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.testPlan}>
+              <EditorWorkspacePanel
+                tabId={EDITOR_TAB_IDS.testPlan}
+                mounted={mountedTabs.has(EDITOR_TAB_IDS.testPlan) || activeTab === EDITOR_TAB_IDS.testPlan}
+              />
+            </WorkspacePanel>
+          )}
+
           {showOntologyTab && catalogSanityHasIssues && (
             <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.report}>
               <EditorWorkspacePanel

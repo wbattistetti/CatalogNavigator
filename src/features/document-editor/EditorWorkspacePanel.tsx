@@ -9,6 +9,7 @@ import { useDocumentEditorController } from './DocumentEditorContext';
 import { DocumentWorkspace } from './DocumentWorkspace';
 import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
 import { CatalogReportWorkspace } from '../ontology/CatalogReportWorkspace';
+import { TestPlanWorkspace } from '../ontology/TestPlanWorkspace';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 
 const MountedDocumentWorkspace = memo(function MountedDocumentWorkspace() {
@@ -29,6 +30,10 @@ const MountedDisambiguationWorkspace = memo(function MountedDisambiguationWorksp
 
 const MountedCatalogReportWorkspace = memo(function MountedCatalogReportWorkspace() {
   return <CatalogReportWorkspace />;
+});
+
+const MountedTestPlanWorkspace = memo(function MountedTestPlanWorkspace() {
+  return <TestPlanWorkspace />;
 });
 
 function LoadingPlaceholder({ label }: { label: string }) {
@@ -104,6 +109,12 @@ export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
       return (
         <WorkspaceBody>
           <MountedCatalogReportWorkspace />
+        </WorkspaceBody>
+      );
+    case EDITOR_TAB_IDS.testPlan:
+      return (
+        <WorkspaceBody>
+          <MountedTestPlanWorkspace />
         </WorkspaceBody>
       );
     default:

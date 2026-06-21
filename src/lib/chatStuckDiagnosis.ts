@@ -16,17 +16,21 @@ function canonicalInOptions(canonical: string | undefined, options: readonly str
   return options.some((o) => o.trim().toLowerCase() === key);
 }
 
-/** Builds human-readable reasons when grammar matches but the dialog does not advance. */
+/** Builds human-readable reasons when the VB engine returns no_match. */
 export function buildChatStuckDiagnosis(params: {
   recognition: UserTurnRecognition;
   priorSession: AgentSessionState | null;
   vbResult: VbTextTurnResponse;
   planOptions?: readonly string[];
 }): ChatStuckDiagnosis {
+  const action = params.vbResult.instruction?.action;
+  if (action !== 'no_match') {
+    return { reasons: [] };
+  }
+
   const reasons: string[] = [];
   const { recognition, priorSession, vbResult, planOptions } = params;
   const grammarHit = recognition.grammarMatch?.selectedOption;
-  const action = vbResult.instruction?.action;
   const vbCategoryHit = recognition.vbParsed.find(
     (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
   );
@@ -62,15 +66,14 @@ export function buildChatStuckDiagnosis(params: {
   }
 
   if (vbCategoryHit && recognition.categoryName
-    && !exactAfter.some((c) => c.trim() === recognition.categoryName?.trim())
-    && action === 'no_match') {
+    && !exactAfter.some((c) => c.trim() === recognition.categoryName?.trim())) {
     reasons.push(
       `Il motore ha parsato ${vbCategoryHit.category}: ${vbCategoryHit.value} ma senza «commit esplicito» `
       + '(exactAttributoCategories): il filtro può lasciare più candidati → STUCK.',
     );
   }
 
-  if (grammarHit && vbCategoryHit && action === 'no_match' && (vbResult.candidateCount ?? 0) > 1) {
+  if (grammarHit && vbCategoryHit && (vbResult.candidateCount ?? 0) > 1) {
     const acquired = vbResult.nextState?.acquiredConcepts?.find(
       (c) => c.category?.trim().toLowerCase() === recognition.categoryName?.trim().toLowerCase(),
     );
@@ -82,7 +85,7 @@ export function buildChatStuckDiagnosis(params: {
     }
   }
 
-  if (reasons.length === 0 && grammarHit && !vbCategoryHit && action === 'no_match') {
+  if (reasons.length === 0 && grammarHit && !vbCategoryHit) {
     reasons.push(
       'Grammar client ok ma il motore non ha parsato la risposta: verifica bundle pubblicato e pending del turno precedente.',
     );

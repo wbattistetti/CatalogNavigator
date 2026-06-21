@@ -55,10 +55,34 @@ function tokenizeToWords(text: string): string[] {
   return text.match(/\+[\p{L}\p{N}]+|[\p{L}\p{N}]+/gu) ?? [];
 }
 
-function wordsMatchAt(words: string[], start: number, phrase: string): boolean {
+/** Removes a leading + attached to the first corpus word (+test → test). */
+export function stripAttachedPlusPrefix(word: string): string {
+  return word.startsWith('+') ? word.slice(1) : word;
+}
+
+/**
+ * True when corpus and phrase words align at one position.
+ * On the first word only, an attached + prefix is optional on either side.
+ */
+export function corpusWordMatchesPhraseWord(
+  corpusWord: string,
+  phraseWord: string,
+  phraseWordIndex: number,
+): boolean {
+  if (corpusWord === phraseWord) return true;
+  if (phraseWordIndex !== 0) return false;
+  return stripAttachedPlusPrefix(corpusWord) === stripAttachedPlusPrefix(phraseWord);
+}
+
+/** Matches a dictionary phrase against consecutive tokenized corpus words. */
+export function wordsMatchAtPhrase(words: readonly string[], start: number, phrase: string): boolean {
   const parts = tokenizeToWords(phrase);
   if (parts.length === 0 || start + parts.length > words.length) return false;
-  return parts.every((w, i) => words[start + i] === w);
+  return parts.every((w, i) => corpusWordMatchesPhraseWord(words[start + i]!, w, i));
+}
+
+function wordsMatchAt(words: string[], start: number, phrase: string): boolean {
+  return wordsMatchAtPhrase(words, start, phrase);
 }
 
 /** Finds every whole-word phrase occurrence without consuming input. */

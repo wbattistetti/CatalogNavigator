@@ -1,7 +1,7 @@
 /**
  * Main navigation tabs — instant click switch; drag tab onto workspace to split side-by-side.
  */
-import { AlertTriangle, BookOpen, FileText, Library, MessageSquare } from 'lucide-react';
+import { AlertTriangle, BookOpen, FileText, Library, MessageSquare, TestTube2 } from 'lucide-react';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_DRAG_MIME } from './documentEditorSplitLayout';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
@@ -14,11 +14,14 @@ const TABS: Array<{
   dictionaryOnly?: boolean;
   /** Shown only when catalog sanity report has issues */
   reportTab?: boolean;
+  /** Shown when ontology tab is available */
+  ontologyTab?: boolean;
 }> = [
   { id: EDITOR_TAB_IDS.document, label: 'Documento originale', icon: FileText },
   { id: EDITOR_TAB_IDS.dictionaries, label: 'Dizionari', icon: Library, dictionaryOnly: true },
   { id: EDITOR_TAB_IDS.ontology, label: 'Ontologia', icon: BookOpen, dictionaryOnly: true },
   { id: EDITOR_TAB_IDS.report, label: 'Report', icon: AlertTriangle, dictionaryOnly: true, reportTab: true },
+  { id: EDITOR_TAB_IDS.testPlan, label: 'Test Plan', icon: TestTube2, dictionaryOnly: true, ontologyTab: true },
   { id: EDITOR_TAB_IDS.disambiguation, label: 'Messaggi di disambiguazione', icon: MessageSquare, dictionaryOnly: true },
 ];
 
@@ -30,7 +33,9 @@ export function DocumentEditorTabStrip() {
 
   const visible = TABS.filter((t) => {
     if (t.reportTab) return showReportTab;
-    if (t.id === EDITOR_TAB_IDS.ontology || t.id === EDITOR_TAB_IDS.disambiguation) return showOntologyTab;
+    if (t.ontologyTab || t.id === EDITOR_TAB_IDS.ontology || t.id === EDITOR_TAB_IDS.disambiguation) {
+      return showOntologyTab;
+    }
     if (t.dictionaryOnly) return dictionaryMode;
     return true;
   });

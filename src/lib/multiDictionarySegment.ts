@@ -12,7 +12,7 @@ import {
   getPathOrderingCategories,
   getPrimaryLoadedDictionaryRef,
 } from './pathCanonicalize';
-import { collectWordSpanMatchesAfterShadow, type WordSpanMatch } from './phraseMatchEngine';
+import { collectWordSpanMatchesAfterShadow, type WordSpanMatch, wordsMatchAtPhrase } from './phraseMatchEngine';
 import { dropPreliminaryNegatedMatches } from './preliminaryNegation';
 import {
   applySuppressionCascade,
@@ -64,9 +64,7 @@ type ScoredTaggedSpan = WordSpanMatch & {
 };
 
 function wordsMatch(tokenWords: string[], start: number, phrase: string): boolean {
-  const parts = tokenizeToWords(phrase);
-  if (parts.length === 0 || start + parts.length > tokenWords.length) return false;
-  return parts.every((w, i) => tokenWords[start + i] === w);
+  return wordsMatchAtPhrase(tokenWords, start, phrase);
 }
 
 function segmentWordsMulti(

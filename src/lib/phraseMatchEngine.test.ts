@@ -4,17 +4,21 @@
 import assert from 'node:assert/strict';
 import {
   collectWordSpanMatchesAfterShadow,
+  corpusWordMatchesPhraseWord,
   findAllWordSpanMatches,
   shadowContainedWordSpans,
   wordSpanContains,
+  wordsMatchAtPhrase,
 } from './phraseMatchEngine';
 import {
   addToken,
   applySuppressionCascade,
   findHighlightSpans,
   getActiveMatchPhrases,
+  normalizeDescriptionText,
   normalizeTokenEntries,
   segmentWordsWithPositions,
+  tokenizeToWords,
 } from './tokenDictionary';
 
 function test(name: string, fn: () => void) {
@@ -105,6 +109,36 @@ test('findHighlightSpans shadows contained shorter phrase', () => {
   ];
   const spans = findHighlightSpans('a b c', tokens);
   assert.equal(spans.length, 1);
+});
+
+test('corpusWordMatchesPhraseWord allows optional + on first word', () => {
+  assert.ok(corpusWordMatchesPhraseWord('+test', 'test', 0));
+  assert.ok(corpusWordMatchesPhraseWord('test', '+test', 0));
+  assert.ok(!corpusWordMatchesPhraseWord('+test', 'test', 1));
+  assert.ok(wordsMatchAtPhrase(['+test', 'da', 'sforzo'], 0, 'test da sforzo'));
+});
+
+test('segmentWordsWithPositions matches test token after + prefix in corpus', () => {
+  const tokens = normalizeTokenEntries([
+    { text: 'certificato idoneita', enabled: true },
+    { text: 'pratica sportiva', enabled: true },
+    { text: 'non agonistica', enabled: true },
+    { text: 'test da sforzo massimale', enabled: true },
+    { text: 'step test', enabled: true },
+  ]);
+  const phrases = getActiveMatchPhrases(tokens);
+  const row =
+    'certificato idoneita alla pratica sportiva non agonistica + test da sforzo massimale';
+  const words = tokenizeToWords(normalizeDescriptionText(row));
+  const { matches, unmatched } = segmentWordsWithPositions(words, phrases);
+  assert.ok(matches.some((m) => m.text === 'test da sforzo massimale'));
+  assert.ok(!unmatched.includes('+test'));
+
+  const stepRow = 'certificato idoneita alla pratica sportiva agonistica + step test';
+  const stepWords = tokenizeToWords(normalizeDescriptionText(stepRow));
+  const stepSeg = segmentWordsWithPositions(stepWords, phrases);
+  assert.ok(stepSeg.matches.some((m) => m.text === 'step test'));
+  assert.ok(!stepSeg.unmatched.includes('+step'));
 });
 
 console.log('all phrase match engine tests passed');

@@ -2,10 +2,9 @@
  * Client-side recognition debug for user turns during VB chat test.
  */
 import type { AgentBundle, AgentSessionState } from './agentBundleTypes';
-import { buildChatStuckDiagnosis } from './chatStuckDiagnosis';
 import type { DisambiguationPlanStorage } from './disambiguationPlanTypes';
 import { isNoneOption, matchTurnAnswerGrammar, type TurnAnswerMatch } from './turnAnswerGrammar';
-import type { VbTextTurnResponse } from './vbTestEngineClient';
+import type { NormalizedVbParsedConcept } from './vbParsedNormalize';
 
 export interface PendingDisambiguationContext {
   signature?: string;
@@ -18,13 +17,12 @@ export interface UserTurnRecognition {
   categoryName?: string;
   options: string[];
   planOptions?: string[];
-  vbParsed: { category: string; value: string }[];
+  vbParsed: NormalizedVbParsedConcept[];
   grammarMatch: TurnAnswerMatch | null;
   grammarSource: 'plan' | 'none';
   grammarMapsToRuntimeToken: boolean;
   pendingWasActive: boolean;
   aligned: boolean;
-  stuckReasons: string[];
 }
 
 export function resolvePendingDisambiguationContext(
@@ -88,10 +86,9 @@ function planOptionsForSignature(
 export function buildUserTurnRecognition(params: {
   userText: string;
   bundle: AgentBundle;
-  vbParsed?: { category: string; value: string }[];
+  vbParsed?: NormalizedVbParsedConcept[];
   pending: PendingDisambiguationContext | null;
   priorSession?: AgentSessionState | null;
-  vbResult?: VbTextTurnResponse;
 }): UserTurnRecognition | undefined {
   const pending = params.pending;
   if (!pending?.categoryName || pending.options.length === 0) return undefined;
@@ -111,9 +108,9 @@ export function buildUserTurnRecognition(params: {
 
   const categoryKey = pending.categoryName.toLowerCase();
   const vbForCategory = vbParsed.find((p) => p.category.toLowerCase() === categoryKey);
-  const aligned = !!grammarMatch?.selectedOption
-    && !!vbForCategory
-    && vbForCategory.value.toLowerCase() === grammarMatch.selectedOption.toLowerCase();
+  const aligned = !grammarMatch?.selectedOption || !vbForCategory
+    || vbForCategory.value.toLowerCase() === grammarMatch.selectedOption.toLowerCase()
+    || pending.options.some((o) => o.toLowerCase() === vbForCategory.value.toLowerCase());
 
   const planOptions = planOptionsForSignature(
     params.bundle.analysis.disambiguation_plan,
@@ -129,7 +126,7 @@ export function buildUserTurnRecognition(params: {
   const pendingWasActive = pendingSlot?.valueKind === 'canonical_token'
     && pendingSlot.categoryName?.trim().toLowerCase() === pending.categoryName.toLowerCase();
 
-  const base: UserTurnRecognition = {
+  return {
     signature: pending.signature,
     categoryName: pending.categoryName,
     options: pending.options,
@@ -140,46 +137,38 @@ export function buildUserTurnRecognition(params: {
     grammarMapsToRuntimeToken,
     pendingWasActive,
     aligned: grammarMatch == null ? vbForCategory == null : aligned,
-    stuckReasons: [],
   };
-
-  if (params.vbResult) {
-    base.stuckReasons = buildChatStuckDiagnosis({
-      recognition: base,
-      priorSession: params.priorSession ?? null,
-      vbResult: params.vbResult,
-      planOptions,
-    }).reasons;
-  }
-
-  return base;
 }
 
 export function formatUserTurnRecognitionSummary(recognition: UserTurnRecognition): string {
+  const parts: string[] = [];
   if (recognition.grammarMatch?.selectedOption) {
-    return `Grammar → ${formatOptionLabel(recognition.grammarMatch.selectedOption)}`;
+    parts.push(`Grammar → ${formatOptionLabel(recognition.grammarMatch.selectedOption)}`);
   }
   const vbHit = recognition.vbParsed.find(
     (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
   );
   if (vbHit) {
-    return `Motore VB → ${vbHit.category}: ${vbHit.value}`;
+    parts.push(`Motore VB → ${vbHit.category}: ${vbHit.value}`);
+  } else if (recognition.vbParsed.length > 0) {
+    parts.push(
+      recognition.vbParsed.map((p) => `Motore VB → ${p.category}: ${p.value}`).join(' · '),
+    );
   }
-  if (recognition.vbParsed.length > 0) {
-    return `Motore VB → ${recognition.vbParsed.map((p) => `${p.category}: ${p.value}`).join(' · ')}`;
-  }
-  return 'Nessun riconoscimento';
+  if (parts.length === 0) return 'Nessun riconoscimento';
+  return parts.join(' · ');
 }
 
 export function shouldAutoExpandUserTurnRecognition(
   recognition: UserTurnRecognition | undefined,
 ): boolean {
   if (!recognition) return false;
-  if (recognition.stuckReasons.length > 0) return true;
   if (recognition.grammarMatch?.selectedOption && !recognition.grammarMapsToRuntimeToken) return true;
-  if (recognition.grammarMatch?.selectedOption) return false;
+  if (!recognition.pendingWasActive) return true;
   const vbHit = recognition.vbParsed.find(
     (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
   );
-  return !vbHit;
+  if (!recognition.grammarMatch?.selectedOption && !vbHit) return true;
+  if (recognition.grammarMatch?.selectedOption && vbHit && !recognition.aligned) return true;
+  return false;
 }

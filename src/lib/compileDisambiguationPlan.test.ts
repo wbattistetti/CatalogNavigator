@@ -6,6 +6,7 @@ import type { TokenCategory } from './dictionaryTree';
 import type { BundleCorpusItem } from './agentBundleTypes';
 import {
   buildDisambiguationSignature,
+  buildGuidedPathToTarget,
   compileDisambiguationPlan,
   inferQuestionStyle,
 } from './compileDisambiguationPlan';
@@ -168,6 +169,25 @@ describe('compileDisambiguationPlan — age expansion', () => {
     expect(result.stats.totalStates).toBeGreaterThan(1);
     expect(result.stats.uniqueAgePatterns).toBe(1);
     expect(result.stats.disambiguateNodes).toBeGreaterThan(0);
+  });
+});
+
+describe('buildGuidedPathToTarget', () => {
+  it('walks to a cardio leaf with minimal token picks', () => {
+    const corpus = buildCorpusItemsFromPaths(cardioPaths, baseCategories);
+    const target = 'cardiologica.prima visita.adulti';
+    const result = buildGuidedPathToTarget(corpus, baseCategories, target);
+
+    expect(result.reachable).toBe(true);
+    expect(result.steps.length).toBeGreaterThan(0);
+    expect(result.steps.every((s) => s.userText.trim().length > 0)).toBe(true);
+  });
+
+  it('reports unreachable for unknown path', () => {
+    const corpus = buildCorpusItemsFromPaths(cardioPaths, baseCategories);
+    const result = buildGuidedPathToTarget(corpus, baseCategories, 'missing.path.here');
+    expect(result.reachable).toBe(false);
+    expect(result.reason).toMatch(/non trovato/i);
   });
 });
 

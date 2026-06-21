@@ -10,6 +10,7 @@ import {
 } from './dictionaryTree';
 import { normalizeCompactPath } from './analysisTree';
 import { matchAllCategoryGrammarValues } from './categoryGrammar';
+import { wordSpanContains, type WordSpanMatch, corpusWordMatchesPhraseWord } from './phraseMatchEngine';
 import {
   getActiveMatchPhrases,
   isCanonicalToken,
@@ -50,13 +51,40 @@ function segmentMatchKey(match: SegmentMatch): string {
   return `${match.text}\u001f${match.wordStartIndex}`;
 }
 
-function findWordStartIndex(words: string[], tokenText: string): number {
-  const parts = tokenizeToWords(tokenText);
-  if (parts.length === 0) return 0;
+function phraseKeptToWordSpans(phraseKept: SegmentMatch[]): WordSpanMatch[] {
+  return phraseKept.map((p) => ({
+    wordStart: p.wordStartIndex,
+    wordEnd: p.wordStartIndex + tokenizeToWords(p.text).length,
+    phrase: p.text,
+    canonical: p.text,
+    isAlias: false,
+  }));
+}
+
+/** Word-start indices where canonical appears and is not contained in a longer phrase match. */
+function findUnshadowedWordStartIndices(
+  words: string[],
+  canonical: string,
+  phraseSpans: WordSpanMatch[],
+): number[] {
+  const parts = tokenizeToWords(canonical);
+  if (parts.length === 0) return [];
+
+  const starts: number[] = [];
   for (let i = 0; i <= words.length - parts.length; i++) {
-    if (parts.every((w, j) => words[i + j] === w)) return i;
+    if (!parts.every((w, j) => corpusWordMatchesPhraseWord(words[i + j]!, w, j))) continue;
+    const inner: WordSpanMatch = {
+      wordStart: i,
+      wordEnd: i + parts.length,
+      phrase: canonical,
+      canonical,
+      isAlias: false,
+    };
+    if (!phraseSpans.some((outer) => wordSpanContains(outer, inner))) {
+      starts.push(i);
+    }
   }
-  return 0;
+  return starts;
 }
 
 /** Grammar-only matches for canonical tokens not already found by phrase matching. */
@@ -73,6 +101,7 @@ function grammarSupplementMatches(
   const lower = normalized.toLowerCase();
   const words = tokenizeToWords(normalized);
   const phraseTexts = new Set(phraseKept.map((m) => m.text));
+  const phraseSpans = phraseKeptToWordSpans(phraseKept);
   const seen = new Set(phraseKept.map(segmentMatchKey));
   const supplements: SegmentMatch[] = [];
 
@@ -81,9 +110,11 @@ function grammarSupplementMatches(
 
     for (const canonical of matchAllCategoryGrammarValues(lower, category, tokens)) {
       if (!canonicalTexts.has(canonical) || phraseTexts.has(canonical)) continue;
+      const unshadowedStarts = findUnshadowedWordStartIndices(words, canonical, phraseSpans);
+      if (unshadowedStarts.length === 0) continue;
       const match: SegmentMatch = {
         text: canonical,
-        wordStartIndex: findWordStartIndex(words, canonical),
+        wordStartIndex: unshadowedStarts[0]!,
       };
       const key = segmentMatchKey(match);
       if (seen.has(key)) continue;

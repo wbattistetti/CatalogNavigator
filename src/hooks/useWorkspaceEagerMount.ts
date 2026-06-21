@@ -9,6 +9,7 @@ const DICTIONARY_WORKSPACES: EditorTabId[] = [
   EDITOR_TAB_IDS.dictionaries,
   EDITOR_TAB_IDS.ontology,
   EDITOR_TAB_IDS.disambiguation,
+  EDITOR_TAB_IDS.testPlan,
 ];
 
 export function useWorkspaceEagerMount(

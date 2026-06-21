@@ -24,6 +24,7 @@ import {
   shouldAutoExpandUserTurnRecognition,
   type UserTurnRecognition,
 } from '../../lib/chatUserTurnRecognition';
+import { buildChatStuckDiagnosis } from '../../lib/chatStuckDiagnosis';
 import { formatTechnicalOptions, isVincoloAskSignature } from '../../lib/disambiguationPlanMessages';
 import { deriveDisambiguationParents, type DisambiguationParentInfo } from '../../lib/disambiguationParents';
 import { DisambiguationContextSummary } from '../../features/agent/DisambiguationContextSummary';
@@ -63,6 +64,7 @@ interface ChatMessage {
   disambiguationCandidatePaths?: string[];
   editablePlanField?: PlanCopyField;
   turnDebug?: ChatTurnDebug;
+  turnStuckReasons?: string[];
   turnRecognition?: UserTurnRecognition;
 }
 
@@ -130,7 +132,13 @@ function DisambiguationMetaPanel({
   );
 }
 
-function TurnDebugPanel({ debug }: { debug: ChatTurnDebug }) {
+function TurnDebugPanel({
+  debug,
+  stuckReasons,
+}: {
+  debug: ChatTurnDebug;
+  stuckReasons?: string[];
+}) {
   const acquired = debug.acquiredConcepts
     .map((c) => `${c.category}: ${(c.values ?? []).join('+')}`)
     .filter(Boolean);
@@ -138,6 +146,20 @@ function TurnDebugPanel({ debug }: { debug: ChatTurnDebug }) {
   return (
     <div className="space-y-2">
       <p className={`font-mono ${CHAT_TEXT} text-amber-300/80`}>{debug.label}</p>
+
+      {stuckReasons && stuckReasons.length > 0 && (
+        <div className="rounded border border-amber-400/30 bg-amber-400/8 px-2 py-1.5 space-y-1">
+          <p className={`font-mono ${CHAT_TEXT} text-amber-200/90 font-semibold`}>
+            Motore in STUCK
+          </p>
+          <ul className={`font-mono ${CHAT_TEXT} text-amber-100/85 list-disc pl-4 space-y-0.5`}>
+            {stuckReasons.map((reason) => (
+              <li key={reason} className="break-words">{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>
         Candidati: <span className="text-emerald-200/75">{debug.candidateCount}</span>
       </p>
@@ -242,10 +264,12 @@ function UserTurnRecognitionPanel({
   onEditGrammar?: () => void;
 }) {
   const summary = formatUserTurnRecognitionSummary(recognition);
-  const grammarHit = recognition.grammarMatch?.selectedOption;
   const vbCategoryHit = recognition.vbParsed.find(
     (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
   );
+  const showPlanRuntimeMismatch = recognition.planOptions
+    && recognition.planOptions.length > 0
+    && recognition.planOptions.join('\0') !== recognition.options.join('\0');
 
   return (
     <div className="space-y-2">
@@ -265,54 +289,31 @@ function UserTurnRecognitionPanel({
         </p>
       )}
 
-      <div className={`font-mono ${CHAT_TEXT} space-y-1`}>
-        <p className="text-emerald-400/50">Dettaglio:</p>
-        <ul className="list-disc pl-4 text-emerald-200/75 space-y-0.5">
-          <li>
-            Grammar ({recognition.grammarSource}):{' '}
-            {grammarHit ?? 'nessun match'}
-            {grammarHit && !recognition.grammarMapsToRuntimeToken && (
-              <span className="text-amber-300/85"> · non è un token runtime ammesso</span>
-            )}
-          </li>
-          <li>
-            Pending inviato al motore:{' '}
-            {recognition.pendingWasActive ? 'sì (canonical_token)' : 'no'}
-          </li>
-          <li>
-            Motore VB:{' '}
-            {vbCategoryHit
-              ? `${vbCategoryHit.category}: ${vbCategoryHit.value}`
-              : recognition.vbParsed.length > 0
-                ? recognition.vbParsed.map((p) => `${p.category}: ${p.value}`).join(' · ')
-                : 'nessun match'}
-          </li>
-          {!recognition.aligned && grammarHit && vbCategoryHit && (
-            <li className="text-amber-300/80">Grammar e VB non allineati</li>
-          )}
-        </ul>
-      </div>
-
-      {recognition.planOptions && recognition.planOptions.length > 0
-        && recognition.planOptions.join('\0') !== recognition.options.join('\0') && (
-        <p className={`font-mono ${CHAT_TEXT} text-amber-300/80 break-words`}>
-          Piano messaggi: {formatTechnicalOptions(recognition.planOptions)}
-          {' · '}
-          Runtime VB: {formatTechnicalOptions(recognition.options)}
+      {recognition.grammarMatch?.selectedOption && !recognition.grammarMapsToRuntimeToken && (
+        <p className={`font-mono ${CHAT_TEXT} text-amber-300/85`}>
+          La grammar mappa a «{recognition.grammarMatch.selectedOption}» ma non è un token runtime ammesso.
         </p>
       )}
 
-      {recognition.stuckReasons.length > 0 && (
-        <div className={`rounded border border-amber-400/30 bg-amber-400/8 px-2 py-1.5 space-y-1`}>
-          <p className={`font-mono ${CHAT_TEXT} text-amber-200/90 font-semibold`}>
-            Perché può andare in STUCK
-          </p>
-          <ul className={`font-mono ${CHAT_TEXT} text-amber-100/85 list-disc pl-4 space-y-0.5`}>
-            {recognition.stuckReasons.map((reason) => (
-              <li key={reason} className="break-words">{reason}</li>
-            ))}
-          </ul>
-        </div>
+      {recognition.grammarMatch?.selectedOption && vbCategoryHit && !recognition.aligned && (
+        <p className={`font-mono ${CHAT_TEXT} text-amber-300/85`}>
+          Grammar client e motore VB hanno scelto opzioni diverse (
+          {recognition.grammarMatch.selectedOption} vs {vbCategoryHit.value}).
+        </p>
+      )}
+
+      {!recognition.pendingWasActive && (
+        <p className={`font-mono ${CHAT_TEXT} text-amber-300/85`}>
+          Pending disambiguazione assente nello stato inviato al motore.
+        </p>
+      )}
+
+      {showPlanRuntimeMismatch && (
+        <p className={`font-mono ${CHAT_TEXT} text-amber-300/80 break-words`}>
+          Piano messaggi: {formatTechnicalOptions(recognition.planOptions!)}
+          {' · '}
+          Runtime VB: {formatTechnicalOptions(recognition.options)}
+        </p>
       )}
 
       {recognition.signature && onEditGrammar && (
@@ -361,7 +362,12 @@ function UserMessageBubble({
         <ChevronDown
           className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
         />
-        {!recognition?.grammarMapsToRuntimeToken || recognition.stuckReasons.length > 0 ? (
+        {(recognition.grammarMatch?.selectedOption && !recognition.grammarMapsToRuntimeToken)
+          || !recognition.pendingWasActive
+          || (!recognition.grammarMatch?.selectedOption && !recognition.vbParsed.some(
+            (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
+          ))
+          || (recognition.grammarMatch?.selectedOption && !recognition.aligned) ? (
           <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-amber-400/80" aria-hidden />
         ) : null}
         <span className={`font-sans ${CHAT_TEXT} flex-1 min-w-0`}>{msg.text}</span>
@@ -470,7 +476,7 @@ function AgentMessageBubble({
             )}
             {hasTurnDebug && msg.turnDebug && (
               <div className={hasDisambiguationMeta ? 'mt-2 pt-2 border-t border-[#1a3a2a]/60' : ''}>
-                <TurnDebugPanel debug={msg.turnDebug} />
+                <TurnDebugPanel debug={msg.turnDebug} stuckReasons={msg.turnStuckReasons} />
               </div>
             )}
           </div>
@@ -519,7 +525,7 @@ function AgentMessageBubble({
             )}
             {hasTurnDebug && msg.turnDebug && (
               <div className={hasDisambiguationMeta ? 'mt-2 pt-2 border-t border-[#1a3a2a]/60' : ''}>
-                <TurnDebugPanel debug={msg.turnDebug} />
+                <TurnDebugPanel debug={msg.turnDebug} stuckReasons={msg.turnStuckReasons} />
               </div>
             )}
           </div>
@@ -660,13 +666,19 @@ export function ChatPanel({
         vbParsed: result.parsed,
         pending: pendingContext,
         priorSession: vbSession,
-        vbResult: result,
       });
-      if (sessionPendingMismatch && turnRecognition) {
-        turnRecognition.stuckReasons = [
-          sessionPendingMismatch,
-          ...turnRecognition.stuckReasons,
-        ];
+
+      let turnStuckReasons: string[] | undefined;
+      if (result.instruction?.action === 'no_match' && turnRecognition) {
+        turnStuckReasons = buildChatStuckDiagnosis({
+          recognition: turnRecognition,
+          priorSession: vbSession,
+          vbResult: result,
+          planOptions: turnRecognition.planOptions,
+        }).reasons;
+        if (sessionPendingMismatch) {
+          turnStuckReasons = [sessionPendingMismatch, ...turnStuckReasons];
+        }
       }
 
       setState((prev) => {
@@ -694,6 +706,7 @@ export function ChatPanel({
               : undefined,
             editablePlanField,
             turnDebug,
+            turnStuckReasons: turnStuckReasons?.length ? turnStuckReasons : undefined,
           });
         }
         return {

@@ -602,3 +602,112 @@ export function compileDisambiguationPlan(
     warnings,
   };
 }
+
+/** One simulated user utterance while walking the disambiguation plan toward a target path. */
+export type GuidedPathStep =
+  | { kind: 'token'; categoryName: string; userText: string }
+  | { kind: 'age'; userText: string };
+
+export interface GuidedPathResult {
+  reachable: boolean;
+  steps: GuidedPathStep[];
+  reason?: string;
+}
+
+function tokenKeyToUserText(key: string): string {
+  return key.split('+').join(' ');
+}
+
+/**
+ * Simulates the dialog engine toward a single catalog item, picking the target's token at each fork.
+ * Used by dialog test plan script generation.
+ */
+export function buildGuidedPathToTarget(
+  corpusItems: readonly BundleCorpusItem[],
+  categories: readonly TokenCategory[],
+  targetPath: string,
+): GuidedPathResult {
+  const target = corpusItems.find((i) => i.path === targetPath);
+  if (!target) {
+    return { reachable: false, steps: [], reason: 'Path non trovato nel catalogo.' };
+  }
+
+  const allItems = [...corpusItems];
+  const cats = [...categories];
+  const state: PlanState = { acquired: {}, ageYears: null, exactAttributoCategories: [] };
+  const steps: GuidedPathStep[] = [];
+  const MAX = 40;
+
+  for (let i = 0; i < MAX; i += 1) {
+    const candidates = filterCandidates(allItems, state, cats);
+    if (!candidates.some((c) => c.path === targetPath)) {
+      return { reachable: false, steps, reason: 'Target escluso dai candidati correnti.' };
+    }
+
+    const step = decideNextStep(state, candidates, cats);
+
+    if (step.action === 'confirm') {
+      const sole = candidates.length === 1 ? candidates[0] : null;
+      if (sole?.path === targetPath) {
+        return { reachable: true, steps };
+      }
+      return {
+        reachable: false,
+        steps,
+        reason: sole
+          ? `Confirm su «${sole.path}», atteso «${targetPath}».`
+          : 'Confirm con candidati multipli.',
+      };
+    }
+    if (step.action === 'dead') {
+      return { reachable: false, steps, reason: 'Nessun candidato (dead).' };
+    }
+    if (step.action === 'stuck') {
+      return { reachable: false, steps, reason: 'Stato stuck nel piano disambiguazione.' };
+    }
+    if (step.action === 'ask_age') {
+      const probeAges = collectAgeProbeYears(candidates);
+      const agesToTry = probeAges.length > 0 ? probeAges : [30, 45, 17];
+      let picked: number | null = null;
+      for (const age of agesToTry) {
+        const filtered = candidates.filter((item) =>
+          pathSatisfiesAgeConstraints(age, item.constraints as CompiledAgeConstraint[]),
+        );
+        if (filtered.some((c) => c.path === targetPath)) {
+          picked = age;
+          break;
+        }
+      }
+      if (picked == null) {
+        return { reachable: false, steps, reason: 'Età probe non mantiene il target nei candidati.' };
+      }
+      state.ageYears = picked;
+      steps.push({ kind: 'age', userText: `${picked} anni` });
+      continue;
+    }
+    if (step.action === 'disambiguate' && step.categoryName && step.options) {
+      const option = getItemAttributoValueSetKey(target, step.categoryName);
+      const pick = step.options.includes(option)
+        ? option
+        : step.options.find((o) => o !== MISSING_VALUE);
+      if (!pick || !step.options.includes(pick)) {
+        return {
+          reachable: false,
+          steps,
+          reason: `Opzione target «${option}» non tra [${step.options.join(', ')}].`,
+        };
+      }
+      const catKey = normalizeSlotCategoryKey(step.categoryName);
+      state.acquired[catKey] = pick;
+      state.exactAttributoCategories = [...state.exactAttributoCategories, step.categoryName];
+      steps.push({
+        kind: 'token',
+        categoryName: step.categoryName,
+        userText: tokenKeyToUserText(pick),
+      });
+      continue;
+    }
+  }
+
+  return { reachable: false, steps, reason: 'Troppe iterazioni nel percorso guidato.' };
+}

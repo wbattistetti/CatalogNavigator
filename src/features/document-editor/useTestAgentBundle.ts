@@ -4,9 +4,14 @@
 import { useMemo } from 'react';
 import { compileAgentBundle } from '../../lib/compileAgentBundle';
 import type { AgentBundle } from '../../lib/agentBundleTypes';
+import {
+  buildCorpusSegmentationInputFromLoadedRefs,
+  resolveCorpusSegmentationRows,
+} from '../../lib/corpusItemPaths';
+import type { RowSegmentation } from '../../lib/tokenDictionary';
 import { useDocumentEditorController } from './DocumentEditorContext';
 
-export function useTestAgentBundle(): AgentBundle | null {
+function useTestAgentCompileInput() {
   const {
     doc,
     dictState,
@@ -27,25 +32,21 @@ export function useTestAgentBundle(): AgentBundle | null {
       ?? agentDictionaryContext?.descriptions
       ?? [];
     if (!dictionary || !analysis?.rows?.length) return null;
-    try {
-      return compileAgentBundle({
-        documentName: doc.name,
-        documentId: doc.id,
-        mode: 'preview',
-        dictionary,
-        descriptions,
-        analysis,
-        leafDescriptionMap: leafDescriptionMap ?? undefined,
-        loadedRefs: liveLoadedRefs,
-        dictionaryDirty: dictState?.dirty ?? false,
-        analysisDirty,
-        pathsOutOfSync: agentNeedsUpdate,
-        segmentExclusions: corpusSegmentExclusions,
-        itemExclusions: corpusItemExclusions,
-      });
-    } catch {
-      return null;
-    }
+
+    return {
+      documentName: doc.name,
+      documentId: doc.id,
+      dictionary,
+      descriptions,
+      analysis,
+      leafDescriptionMap: leafDescriptionMap ?? undefined,
+      loadedRefs: liveLoadedRefs,
+      dictionaryDirty: dictState?.dirty ?? false,
+      analysisDirty,
+      pathsOutOfSync: agentNeedsUpdate,
+      segmentExclusions: corpusSegmentExclusions,
+      itemExclusions: corpusItemExclusions,
+    };
   }, [
     agentDictionaryContext,
     agentNeedsUpdate,
@@ -59,4 +60,40 @@ export function useTestAgentBundle(): AgentBundle | null {
     corpusSegmentExclusions,
     corpusItemExclusions,
   ]);
+}
+
+export function useTestAgentBundle(): AgentBundle | null {
+  const input = useTestAgentCompileInput();
+
+  return useMemo(() => {
+    if (!input) return null;
+    try {
+      return compileAgentBundle({ ...input, mode: 'preview' });
+    } catch {
+      return null;
+    }
+  }, [input]);
+}
+
+/** One row per document description line (for Test Plan accordion). */
+export function useTestPlanSegmentationRows(): RowSegmentation[] {
+  const input = useTestAgentCompileInput();
+
+  return useMemo(() => {
+    if (!input) return [];
+    const segInput = input.loadedRefs?.length
+      ? buildCorpusSegmentationInputFromLoadedRefs(
+        input.descriptions,
+        input.loadedRefs,
+        input.segmentExclusions,
+        input.itemExclusions,
+      )
+      : {
+        descriptions: input.descriptions,
+        dictionary: input.dictionary,
+        segmentExclusions: input.segmentExclusions,
+        itemExclusions: input.itemExclusions,
+      };
+    return resolveCorpusSegmentationRows(segInput);
+  }, [input]);
 }

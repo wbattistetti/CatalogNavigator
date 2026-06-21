@@ -7,8 +7,10 @@ import { type SegmentMatch } from './dictionaryTree';
 import { segmentDescriptionGrammarAware } from './grammarAwareSegment';
 import {
   collectWordSpanMatchesAfterShadow,
+  corpusWordMatchesPhraseWord,
   findAllWordSpanMatches,
   collectHighlightSpansAfterShadow,
+  wordsMatchAtPhrase,
 } from './phraseMatchEngine';
 import { dropPreliminaryNegatedMatches, isPreliminaryNegationBeforeMatch } from './preliminaryNegation';
 
@@ -411,9 +413,7 @@ export function removeCanonicalToken(tokens: TokenEntry[], text: string): TokenE
 
 /** Matches a dictionary token only against consecutive whole words (exact equality per word). */
 export function wordsMatch(tokenWords: string[], start: number, phrase: string): boolean {
-  const parts = tokenizeToWords(phrase);
-  if (parts.length === 0 || start + parts.length > tokenWords.length) return false;
-  return parts.every((w, i) => tokenWords[start + i] === w);
+  return wordsMatchAtPhrase(tokenWords, start, phrase);
 }
 
 /** Segments words: all matches after containment shadow; partial overlaps are kept. */
@@ -686,7 +686,9 @@ function charSpanForWordMatch(
 ): { start: number; end: number } | null {
   const parts = tokenizeToWords(phrase);
   if (parts.length === 0 || wordStartIndex + parts.length > words.length) return null;
-  if (!parts.every((w, i) => words[wordStartIndex + i]!.word === w)) return null;
+  if (!parts.every((w, i) => corpusWordMatchesPhraseWord(words[wordStartIndex + i]!.word, w, i))) {
+    return null;
+  }
 
   let start = words[wordStartIndex]!.start;
   const end = words[wordStartIndex + parts.length - 1]!.end;

@@ -1,5 +1,5 @@
 /**
- * Segmentation chips and design-time path for one corpus row.
+ * Segmentation chips for one corpus row.
  */
 import { memo } from 'react';
 import type { TokenCategory } from '../../../lib/dictionaryTree';
@@ -97,15 +97,6 @@ function CorpusSegmentationChips({
             </span>
           ))}
         </div>
-      ) : null}
-      {segmentation?.path ? (
-        <p
-          className="font-mono text-[9px] text-sky-300/75 leading-snug break-all"
-          title={segmentation.path}
-        >
-          <span className="text-sky-400/45 mr-1">path</span>
-          {segmentation.path}
-        </p>
       ) : null}
     </div>
   );

@@ -15,10 +15,22 @@ const baseRecognition: UserTurnRecognition = {
   grammarMapsToRuntimeToken: false,
   pendingWasActive: true,
   aligned: false,
-  stuckReasons: [],
 };
 
 describe('buildChatStuckDiagnosis', () => {
+  it('returns no reasons when turn did not no_match', () => {
+    const { reasons } = buildChatStuckDiagnosis({
+      recognition: baseRecognition,
+      priorSession: null,
+      vbResult: {
+        ok: true,
+        instruction: { action: 'confirm' },
+        parsed: [{ category: 'esame', value: 'ecografia+mammografia' }],
+      },
+    });
+    expect(reasons).toEqual([]);
+  });
+
   it('flags plan vs runtime token mismatch', () => {
     const { reasons } = buildChatStuckDiagnosis({
       recognition: baseRecognition,

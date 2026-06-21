@@ -13,6 +13,7 @@ import {
   convertSessionStateFromVb,
   convertSessionStateToVb,
 } from './convertAgentBundleToVb';
+import { normalizeVbParsedList, type NormalizedVbParsedConcept } from './vbParsedNormalize';
 
 const VB_ENGINE_BASE = import.meta.env.VITE_VB_ENGINE_URL ?? '/vb-engine';
 
@@ -26,7 +27,7 @@ export interface VbTextTurnResponse {
   selectedPath?: string | null;
   nextState?: AgentSessionState;
   instruction?: AgentTurnInstruction;
-  parsed?: { category: string; value: string; kind?: string }[];
+  parsed?: NormalizedVbParsedConcept[];
   candidateCount?: number;
   candidatePaths?: string[];
   debug?: {
@@ -72,12 +73,8 @@ export async function postVbTextTurn(params: {
       if (body.nextState) {
         body.nextState = convertSessionStateFromVb(body.nextState) ?? initAgentSession();
       }
-      if (Array.isArray(body.parsed)) {
-        body.parsed = body.parsed.map((p) => ({
-          category: String((p as { category?: string; categoryName?: string }).category
-            ?? (p as { categoryName?: string }).categoryName ?? ''),
-          value: String((p as { value?: string }).value ?? ''),
-        }));
+      if (body.parsed != null) {
+        body.parsed = normalizeVbParsedList(body.parsed);
       }
 
   return body;

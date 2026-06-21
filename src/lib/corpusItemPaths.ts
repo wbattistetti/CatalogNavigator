@@ -118,6 +118,12 @@ export function resolveCorpusItemPaths(input: CorpusSegmentationInput): string[]
   return resolveCorpusItemPathsFromRows(rows, input);
 }
 
+/** Segmented corpus rows after item/segment exclusions (one row per document line). */
+export function resolveCorpusSegmentationRows(input: CorpusSegmentationInput): RowSegmentation[] {
+  const { rows } = segmentCorpusDescriptions(input);
+  return applyExclusionsToRows(rows, input.segmentExclusions, input.itemExclusions);
+}
+
 /** Path → source description(s) from the latest segmentation pass. */
 export function buildCorpusLeafDescriptionMap(
   input: CorpusSegmentationInput,
