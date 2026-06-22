@@ -23,15 +23,10 @@ import { getPathOrderingCategories } from '../../lib/pathCanonicalize';
 import {
   buildCorpusDescriptionsFromColumns,
   hasSelectorColumn,
-  primaryOntologyColumn,
 } from '../../lib/columnRoles';
 import type { UseProjectDictionariesResult } from '../../hooks/useProjectDictionaries';
 import { DictionaryIcon } from './DictionaryIcon';
 import { CorpusTokenEditor } from './CorpusTokenEditor';
-import { OntologyCorpusSegmentationProvider } from '../../features/ontology-corpus/OntologyCorpusSegmentationContext';
-import type { CorpusSegmentExclusions } from '../../lib/corpusItemPaths';
-import { useDocumentEditorTab } from '../../features/document-editor/DocumentEditorContext';
-import { EDITOR_TAB_IDS } from '../../features/document-editor/editorTabIds';
 import { dictionaryTabDisplayName } from '../../lib/dictionaryTabOrder';
 
 export type DictionaryAfterSaveHandler = (
@@ -64,6 +59,8 @@ interface DictionaryPanelProps {
   tabular: ParsedTabular;
   dicts: UseProjectDictionariesResult;
   ontologyColumns: string[];
+  descriptionColumns?: string[];
+  corpusFromSelectorFallback?: boolean;
   descriptionColumn: string | null;
   onDocUpdated: (doc: KbDocument) => void;
   onStateChange: (state: DictionaryPanelState) => void;
@@ -74,8 +71,6 @@ interface DictionaryPanelProps {
   error: string | null;
   /** Saved ontology leaf paths (`analysis.item_paths`). */
   ontologyItemCount?: number;
-  corpusSegmentExclusions: CorpusSegmentExclusions;
-  onRemoveCorpusSegment: (sourceText: string, segmentText: string) => void;
 }
 
 type SaveStatus = 'idle' | 'saved' | 'error';
@@ -96,12 +91,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   syncNotice = null,
   error,
   ontologyItemCount = 0,
-  corpusSegmentExclusions,
-  onRemoveCorpusSegment,
 }: DictionaryPanelProps) {
-  const { activeTab } = useDocumentEditorTab();
-  const segmentationCacheEnabled = activeTab === EDITOR_TAB_IDS.ontology;
-
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -414,26 +404,17 @@ export const DictionaryPanel = memo(function DictionaryPanel({
         </div>
       ) : (
         <div className="flex-1 min-h-0 min-w-0 flex flex-col p-4 overflow-hidden">
-          <OntologyCorpusSegmentationProvider
-            corpusTexts={descriptions}
+          <CorpusTokenEditor
+            descriptions={descriptions}
             liveLoadedRefs={liveLoadedRefs}
+            tokens={editingTokens}
             categories={editingCategories}
-            segmentExclusions={corpusSegmentExclusions}
-            onRemoveSegment={onRemoveCorpusSegment}
-            enabled={segmentationCacheEnabled}
-          >
-            <CorpusTokenEditor
-              descriptions={descriptions}
-              liveLoadedRefs={liveLoadedRefs}
-              tokens={editingTokens}
-              categories={editingCategories}
-              editingDictionaryId={projectDictId}
-              onTokensChange={handleTokensChange}
-              onCategoriesChange={handleCategoriesChange}
-              onRowFilterStatsChange={setDescriptionFilterStats}
-              ontologyItemCount={ontologyItemCount}
-            />
-          </OntologyCorpusSegmentationProvider>
+            editingDictionaryId={projectDictId}
+            onTokensChange={handleTokensChange}
+            onCategoriesChange={handleCategoriesChange}
+            onRowFilterStatsChange={setDescriptionFilterStats}
+            ontologyItemCount={ontologyItemCount}
+          />
         </div>
       )}
     </div>

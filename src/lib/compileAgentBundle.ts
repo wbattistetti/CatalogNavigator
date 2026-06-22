@@ -75,8 +75,12 @@ function buildMetaWarnings(input: AgentBundleCompileInput): string[] {
 }
 
 function requireOntology(input: AgentBundleCompileInput): Analysis {
-  if (!input.analysis?.rows?.length) {
-    throw new Error('Ontologia mancante: genera l\'albero prima di compilare l\'agente.');
+  if (!input.analysis) {
+    throw new Error('Ontologia mancante: segmenta il corpus prima di compilare l\'agente.');
+  }
+  const hasPaths = (input.analysis.item_paths?.length ?? 0) > 0;
+  if (!hasPaths && !input.descriptions.some((d) => d.trim().length > 0)) {
+    throw new Error('Ontologia mancante: segmenta il corpus prima di compilare l\'agente.');
   }
   return input.analysis;
 }

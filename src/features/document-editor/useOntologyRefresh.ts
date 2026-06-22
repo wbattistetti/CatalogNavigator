@@ -1,8 +1,7 @@
 /**
- * Detects ontology path drift from live dictionary layout and rebuilds the tree on demand.
+ * Detects ontology path drift from live dictionary layout and rebuilds segmentation on demand.
  * Full corpus segmentation runs asynchronously (never in render) so large dictionaries do not freeze the UI.
- */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ */import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mergeAllDictionarySessionsIntoLoadedRefs,
   mergeLoadedTokens,
@@ -14,6 +13,7 @@ import {
   type CorpusSegmentExclusions,
   type CorpusItemExclusions,
 } from '../../lib/corpusItemPaths';
+import { yieldToMainThread } from '../../lib/corpusSegmentationCache';
 import {
   canonicalizedPathSetsEqual,
   getPathOrderingCategories,
@@ -58,16 +58,20 @@ export interface UseOntologyRefreshParams {
   itemPaths: string[] | null | undefined;
   segmentExclusions?: CorpusSegmentExclusions;
   itemExclusions?: CorpusItemExclusions;
-  syncTaxonomyFromLoadedRefsAsync: (
+  partialSegmentationAvailable: boolean;
+  partialSegmentationProcessed: number;
+  partialSegmentationTotal: number;
+  runOntologyRefresh: (
     descriptions: string[],
     loadedRefs: LoadedDictionaryRef[],
     options?: {
+      mode?: 'resume' | 'fresh';
       onProgress?: (current: number, total: number) => void;
-      onPhase?: (phase: OntologySyncPhase) => void;
       shouldCancel?: () => boolean;
     },
-  ) => Promise<{ result: unknown; cancelled: boolean }>;
-  onRefreshComplete?: (result: { cancelled: boolean }) => void;
+  ) => Promise<{ cancelled: boolean; savedEntryCount?: number }>;
+  onCancelSegmentation?: () => void;
+  onRefreshComplete?: (result: { cancelled: boolean; partialSaved?: boolean }) => void;
 }
 
 function resolveRefreshDescriptions(
@@ -102,12 +106,19 @@ export function useOntologyRefresh({
   itemPaths,
   segmentExclusions,
   itemExclusions,
-  syncTaxonomyFromLoadedRefsAsync,
+  partialSegmentationAvailable,
+  partialSegmentationProcessed,
+  partialSegmentationTotal,
+  runOntologyRefresh,
+  onCancelSegmentation,
   onRefreshComplete,
 }: UseOntologyRefreshParams) {
   const [refreshingOntology, setRefreshingOntology] = useState(false);
   const [ontologyRefreshProgress, setOntologyRefreshProgress] = useState<OntologyRefreshProgress | null>(null);
+  const [ontologyRefreshError, setOntologyRefreshError] = useState<string | null>(null);
   const [agentNeedsUpdate, setAgentNeedsUpdate] = useState(false);
+  const [segmentationResumePromptOpen, setSegmentationResumePromptOpen] = useState(false);
+  const [partialSaveNotice, setPartialSaveNotice] = useState<string | null>(null);
   const cancelRefreshRef = useRef(false);
 
   const buildLiveLoadedRefs = useCallback(
@@ -226,34 +237,35 @@ export function useOntologyRefresh({
 
   const cancelOntologyRefresh = useCallback(() => {
     cancelRefreshRef.current = true;
-  }, []);
+    onCancelSegmentation?.();
+  }, [onCancelSegmentation]);
 
-  const refreshOntology = useCallback(async () => {
+  const executeOntologyRefresh = useCallback(async (mode: 'resume' | 'fresh') => {
     if (refreshDescriptions.length === 0) return;
 
     const liveRefs = buildLiveLoadedRefs();
     if (liveRefs.length === 0) return;
 
     cancelRefreshRef.current = false;
+    setOntologyRefreshError(null);
+    setPartialSaveNotice(null);
     setRefreshingOntology(true);
     setOntologyRefreshProgress({
-      current: 0,
-      total: refreshDescriptions.length,
+      current: mode === 'resume' ? partialSegmentationProcessed : 0,
+      total: partialSegmentationTotal > 0 ? partialSegmentationTotal : refreshDescriptions.length,
       phase: 'segmentation',
     });
+    await yieldToMainThread();
+    await yieldToMainThread();
 
     try {
-      const { cancelled } = await syncTaxonomyFromLoadedRefsAsync(
+      const { cancelled, savedEntryCount } = await runOntologyRefresh(
         refreshDescriptions,
         liveRefs,
         {
+          mode,
           onProgress: (current, total) => {
             setOntologyRefreshProgress({ current, total, phase: 'segmentation' });
-          },
-          onPhase: (phase) => {
-            setOntologyRefreshProgress((prev) => (
-              prev ? { ...prev, phase } : { current: 0, total: refreshDescriptions.length, phase }
-            ));
           },
           shouldCancel: () => cancelRefreshRef.current,
         },
@@ -261,10 +273,20 @@ export function useOntologyRefresh({
 
       if (!cancelled) {
         setAgentNeedsUpdate(false);
+        onRefreshComplete?.({ cancelled: false });
+      } else {
+        const savedCount = savedEntryCount ?? 0;
+        const total = partialSegmentationTotal;
+        if (savedCount > 0 && total > savedCount) {
+          setPartialSaveNotice(
+            `Progresso salvato (${savedCount.toLocaleString('it-IT')} / ${total.toLocaleString('it-IT')} testi unici).`,
+          );
+        }
+        onRefreshComplete?.({ cancelled: true, partialSaved: savedCount > 0 });
       }
-      onRefreshComplete?.({ cancelled });
-    } catch {
-      /* error surfaced via analysisApi.error */
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Ricrea ontologia fallita';
+      setOntologyRefreshError(message);
       onRefreshComplete?.({ cancelled: true });
     } finally {
       setRefreshingOntology(false);
@@ -273,9 +295,31 @@ export function useOntologyRefresh({
   }, [
     buildLiveLoadedRefs,
     refreshDescriptions,
-    syncTaxonomyFromLoadedRefsAsync,
+    runOntologyRefresh,
     onRefreshComplete,
+    partialSegmentationTotal,
   ]);
+
+  const refreshOntology = useCallback(() => {
+    if (partialSegmentationAvailable) {
+      setSegmentationResumePromptOpen(true);
+      return;
+    }
+    void executeOntologyRefresh('fresh');
+  }, [partialSegmentationAvailable, executeOntologyRefresh]);
+
+  const confirmSegmentationResume = useCallback((resume: boolean) => {
+    setSegmentationResumePromptOpen(false);
+    void executeOntologyRefresh(resume ? 'resume' : 'fresh');
+  }, [executeOntologyRefresh]);
+
+  const dismissSegmentationResumePrompt = useCallback(() => {
+    setSegmentationResumePromptOpen(false);
+  }, []);
+
+  const dismissPartialSaveNotice = useCallback(() => {
+    setPartialSaveNotice(null);
+  }, []);
 
   const pathOrderingCategories = useMemo(
     () => (liveLoadedRefs.length > 0 ? getPathOrderingCategories(liveLoadedRefs) : []),
@@ -289,6 +333,13 @@ export function useOntologyRefresh({
     ontologyRefreshDisabledReason,
     refreshingOntology,
     ontologyRefreshProgress,
+    ontologyRefreshError,
+    dismissOntologyRefreshError: () => setOntologyRefreshError(null),
+    partialSaveNotice,
+    dismissPartialSaveNotice,
+    segmentationResumePromptOpen,
+    confirmSegmentationResume,
+    dismissSegmentationResumePrompt,
     cancelOntologyRefresh,
     refreshOntology,
     buildLiveLoadedRefs,

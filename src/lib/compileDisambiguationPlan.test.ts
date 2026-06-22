@@ -6,8 +6,10 @@ import type { TokenCategory } from './dictionaryTree';
 import type { BundleCorpusItem } from './agentBundleTypes';
 import {
   buildDisambiguationSignature,
+  buildExplorationStateKey,
   buildGuidedPathToTarget,
   compileDisambiguationPlan,
+  fingerprintCandidatePathSet,
   inferQuestionStyle,
 } from './compileDisambiguationPlan';
 import { buildCorpusItemsFromPaths } from './slotExtract';
@@ -52,6 +54,28 @@ describe('buildDisambiguationSignature', () => {
     expect(buildDisambiguationSignature('specialità', specialties)).toBe(
       'specialità||__multi__||choice',
     );
+  });
+});
+
+describe('fingerprintCandidatePathSet', () => {
+  it('is order-independent for the same path set', () => {
+    const a = fingerprintCandidatePathSet(['b.path', 'a.path']);
+    const b = fingerprintCandidatePathSet(['a.path', 'b.path']);
+    expect(a).toBe(b);
+  });
+
+  it('differs for different path sets', () => {
+    const a = fingerprintCandidatePathSet(['a.path']);
+    const b = fingerprintCandidatePathSet(['b.path']);
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('buildExplorationStateKey', () => {
+  it('uses compact fingerprints instead of full path joins', () => {
+    const key = buildExplorationStateKey({}, ['a', 'b'], null);
+    expect(key).not.toContain('a|b');
+    expect(key).toContain('2:');
   });
 });
 

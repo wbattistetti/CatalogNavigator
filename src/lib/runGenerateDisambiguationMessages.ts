@@ -14,6 +14,17 @@ import { invokeFunction } from './invokeFunction';
 
 const CHUNK_SIZE = 12;
 
+export interface GenerateDisambiguationMessagesProgress {
+  processedMessages: number;
+  totalMessages: number;
+  processedChunks: number;
+  totalChunks: number;
+}
+
+export interface RunGenerateDisambiguationMessagesOptions {
+  onProgress?: (progress: GenerateDisambiguationMessagesProgress) => void;
+}
+
 interface OpenAiProxyResponse {
   content?: string;
 }
@@ -39,14 +50,29 @@ export async function runGenerateDisambiguationMessages(
   documentName: string,
   documentText?: string,
   signal?: AbortSignal,
+  options?: RunGenerateDisambiguationMessagesOptions,
 ): Promise<DisambiguationMessageRecord[]> {
   if (rows.length === 0) return [];
 
   const allResults: DisambiguationMessageRecord[] = [];
+  const totalMessages = rows.length;
+  const totalChunks = Math.ceil(totalMessages / CHUNK_SIZE);
+
+  const reportProgress = (processedMessages: number, processedChunks: number) => {
+    options?.onProgress?.({
+      processedMessages,
+      totalMessages,
+      processedChunks,
+      totalChunks,
+    });
+  };
+
+  reportProgress(0, 0);
 
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
     if (signal?.aborted) throw new DOMException('Generazione annullata', 'AbortError');
     const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
     let lastError = '';
 
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -66,6 +92,8 @@ export async function runGenerateDisambiguationMessages(
         if (attempt === 1) throw err;
       }
     }
+
+    reportProgress(Math.min(i + chunk.length, totalMessages), chunkIndex);
   }
 
   return allResults;

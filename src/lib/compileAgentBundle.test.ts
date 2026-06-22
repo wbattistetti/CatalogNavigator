@@ -31,40 +31,17 @@ const descriptions = [
   'prima visita cardiologica pediatrica da 6 anni a 15 anni',
 ];
 
-const { leafPaths } = segmentAllDescriptions(
-  descriptions,
-  dictionary.tokens,
-  dictionary.categories,
-);
-
 function buildAnalysis(): Analysis {
-  const slots = new Set<string>();
-  for (const path of leafPaths) {
-    const parts = path.split('.');
-    for (let i = 1; i <= parts.length; i++) {
-      slots.add(parts.slice(0, i).join('.'));
-    }
-  }
-
-  const rows = [...slots].sort().map((slot) => ({
-    slot_filling: slot,
-    question: null,
-    grammar: null,
-    answer_grammar: null,
-    no_match_1: null,
-    no_match_2: null,
-    no_match_3: null,
-    confirmation_text: slot.endsWith('adulto')
-      ? 'Visita cardiologica adulta'
-      : slot.endsWith('pediatrica')
-        ? 'Visita cardiologica pediatrica'
-        : null,
-  }));
+  const { leafPaths } = segmentAllDescriptions(
+    descriptions,
+    dictionary.tokens,
+    dictionary.categories,
+  );
 
   return {
     id: 'a1',
     document_id: 'd1',
-    rows,
+    rows: [],
     item_paths: leafPaths,
     start_question: 'Come posso aiutarla?',
     confirmation_preamble: 'Confermo:',

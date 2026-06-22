@@ -157,6 +157,7 @@ function buildEditorRowFromGroup(
   },
   savedBySig: Map<string, DisambiguationMessageRecord>,
   categories: TokenCategory[],
+  deferGrammarCompile = false,
 ): DisambiguationEditorRow {
   const savedRow = savedBySig.get(signature)
     ?? savedBySig.get('ask_age');
@@ -185,7 +186,8 @@ function buildEditorRowFromGroup(
     ...noMatch,
     answer_grammar: style === 'ask_age'
       ? null
-      : (savedRow?.answer_grammar ?? compileDisambiguationAnswerGrammar(options)),
+      : (savedRow?.answer_grammar
+        ?? (deferGrammarCompile ? null : compileDisambiguationAnswerGrammar(options))),
     source: savedRow?.source,
     status: savedRow?.status ?? null,
     contextCount: nodeKeys.length,
@@ -208,7 +210,9 @@ export function buildDisambiguationEditorRows(
   plan: DisambiguationPlanResult,
   saved?: DisambiguationPlanStorage | null,
   categories: TokenCategory[] = [],
+  options?: { deferGrammarCompile?: boolean },
 ): DisambiguationEditorRow[] {
+  const deferGrammarCompile = options?.deferGrammarCompile ?? false;
   const vincoloCategories = categories.filter((c) => c.type === 'vincolo');
   const savedBySig = new Map<string, DisambiguationMessageRecord>();
   for (const message of saved?.messages ?? []) {
@@ -318,7 +322,13 @@ export function buildDisambiguationEditorRows(
 
   return [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b, 'it'))
-    .map(([signature, group]) => buildEditorRowFromGroup(signature, group, savedBySig, categories));
+    .map(([signature, group]) => buildEditorRowFromGroup(
+      signature,
+      group,
+      savedBySig,
+      categories,
+      deferGrammarCompile,
+    ));
 }
 
 /** Default question copy for vincolo ask rows when none is saved. */
@@ -330,7 +340,9 @@ export function defaultVincoloAskQuestion(categoryName: string, valueKind?: stri
 export function editorRowsToStorage(
   rows: DisambiguationEditorRow[],
   computedAt: string | null,
+  options?: { deferGrammarCompile?: boolean },
 ): DisambiguationPlanStorage {
+  const deferGrammarCompile = options?.deferGrammarCompile ?? false;
   return {
     computedAt,
     messages: rows.map((row) => ({
@@ -344,7 +356,8 @@ export function editorRowsToStorage(
       no_match_3: row.no_match_3,
       answer_grammar: row.style === 'ask_age'
         ? null
-        : (row.answer_grammar ?? compileDisambiguationAnswerGrammar(row.options)),
+        : (row.answer_grammar
+          ?? (deferGrammarCompile ? null : compileDisambiguationAnswerGrammar(row.options))),
       source: row.source,
       status: row.status ?? null,
       contextCount: row.contextCount,
@@ -406,7 +419,7 @@ export function mergeDisambiguationPlanAfterCompute(
   previous?: DisambiguationPlanStorage | null,
 ): { storage: DisambiguationPlanStorage; stats: DisambiguationMergeStats } {
   return {
-    storage: editorRowsToStorage(rows, computedAt),
+    storage: editorRowsToStorage(rows, computedAt, { deferGrammarCompile: true }),
     stats: summarizeDisambiguationMerge(rows, previous),
   };
 }

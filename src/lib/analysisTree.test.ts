@@ -43,4 +43,19 @@ describe('orderSlotsDepthFirst', () => {
       'angiologica.epiaortici',
     ]);
   });
+
+  it('orders large flat forests without quadratic slowdown', () => {
+    const leaves = Array.from({ length: 8_000 }, (_, i) => `brand-${i}.forma.dose`);
+    const expanded = new Set<string>();
+    for (const leaf of leaves) {
+      const parts = leaf.split('.');
+      for (let depth = 1; depth <= parts.length; depth += 1) {
+        expanded.add(parts.slice(0, depth).join('.'));
+      }
+    }
+    const started = performance.now();
+    const ordered = orderSlotsDepthFirst([...expanded]);
+    expect(ordered.length).toBeGreaterThan(leaves.length);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
 });

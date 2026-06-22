@@ -1,6 +1,7 @@
 /**
  * Single virtualized corpus table row.
  */
+import { memo } from 'react';
 import type { TokenCategory } from '../../../lib/dictionaryTree';
 import type { CorpusSegmentationEntry } from '../../../lib/corpusSegmentationCache';
 import type { LoadedDictionaryRef } from '../../../lib/multiDictionarySegment';
@@ -10,7 +11,7 @@ import { CORPUS_ROW_GRID, CORPUS_ROW_HEIGHT_PX } from '../corpusLayout';
 import { MemoCorpusHighlightedDescription } from './CorpusHighlightedDescription';
 import { MemoCorpusSegmentationChips } from './CorpusSegmentationChips';
 
-export function CorpusTableRow({
+function CorpusTableRowInner({
   rowIndex,
   text,
   matchPhrases,
@@ -86,3 +87,23 @@ export function CorpusTableRow({
     </div>
   );
 }
+
+export const CorpusTableRow = memo(
+  CorpusTableRowInner,
+  (prev, next) =>
+    prev.rowIndex === next.rowIndex
+    && prev.text === next.text
+    && prev.matchPhrases === next.matchPhrases
+    && prev.liveLoadedRefs === next.liveLoadedRefs
+    && prev.editingDictionaryId === next.editingDictionaryId
+    && prev.categories === next.categories
+    && prev.segmentation === next.segmentation
+    && prev.segmentationPending === next.segmentationPending
+    && prev.editableCanonicalSet === next.editableCanonicalSet
+    && prev.onRemoveSpan === next.onRemoveSpan
+    && prev.onRemoveCanonical === next.onRemoveCanonical
+    && prev.onMouseDown === next.onMouseDown
+    && prev.onDoubleClick === next.onDoubleClick
+    && prev.onMouseUp === next.onMouseUp
+    && prev.onContextMenu === next.onContextMenu,
+);

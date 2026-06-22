@@ -19,12 +19,21 @@ export type RowStatus = 'approved' | 'rejected' | 'uncertain' | null;
 
 export type GeneratingPhase = 'taxonomy' | 'messages' | 'grammars' | 'disambiguation' | null;
 
-export type OntologySyncPhase = 'segmentation' | 'building';
+export type OntologySyncPhase = 'segmentation';
 
 export interface AgentGenProgress {
   current: number;
   total: number;
   rootSlot: string;
+}
+
+/** Progress while generating disambiguation copy via OpenAI (chunked). */
+export interface DisambiguationGenProgress {
+  processedMessages: number;
+  totalMessages: number;
+  processedChunks: number;
+  totalChunks: number;
+  startedAt: number;
 }
 
 export type MessageReviewField =

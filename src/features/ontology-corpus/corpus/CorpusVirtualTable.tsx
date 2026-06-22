@@ -1,7 +1,7 @@
 /**
  * Virtual-scrolled corpus table body.
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from 'react';
 import type { TokenCategory } from '../../../lib/dictionaryTree';
 import type { LoadedDictionaryRef } from '../../../lib/multiDictionarySegment';
 import type { HighlightSpan, MatchPhrase } from '../../../lib/tokenDictionary';
@@ -13,7 +13,6 @@ import { CorpusSelectionBanner } from './CorpusSelectionBanner';
 import { CorpusTableHeader } from './CorpusTableHeader';
 import { CorpusTableRow } from './CorpusTableRow';
 import type { CorpusDescriptionFilter } from '../useCorpusDescriptionFilter';
-import { useOntologyCorpusSegmentation } from '../OntologyCorpusSegmentationContext';
 
 export interface CorpusVirtualTableHandle {
   scrollToTop: () => void;
@@ -57,13 +56,13 @@ export const CorpusVirtualTable = forwardRef(function CorpusVirtualTable({
   onContextMenu: (e: React.MouseEvent, sourceText: string) => void;
   onClearSelectionClick: (e: React.MouseEvent) => void;
 }, ref: React.ForwardedRef<CorpusVirtualTableHandle>) {
-  const { containerRef, range } = useCorpusVirtualScroll(rows.length, CORPUS_ROW_HEIGHT_PX);
+  const { setContainerRef, range, totalHeight } = useCorpusVirtualScroll(rows.length, CORPUS_ROW_HEIGHT_PX);
   const scrollElRef = useRef<HTMLDivElement | null>(null);
 
   const setScrollRef = useCallback((el: HTMLDivElement | null) => {
     scrollElRef.current = el;
-    (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-  }, [containerRef]);
+    setContainerRef(el);
+  }, [setContainerRef]);
 
   const visibleRows = useMemo(
     () => rows.slice(range.start, range.end),
@@ -82,11 +81,7 @@ export const CorpusVirtualTable = forwardRef(function CorpusVirtualTable({
     visibleTexts,
   }), [visibleTexts]);
 
-  const { progress, lookup, setPriorityTexts } = segmentation;
-
-  useEffect(() => {
-    setPriorityTexts(visibleTexts);
-  }, [visibleTexts, setPriorityTexts]);
+  const { progress, lookup } = segmentation;
 
   return (
     <div
@@ -108,7 +103,7 @@ export const CorpusVirtualTable = forwardRef(function CorpusVirtualTable({
               : 'Nessuna descrizione.'}
           </div>
         ) : (
-          <div style={{ height: range.totalHeight, position: 'relative' }}>
+          <div style={{ height: totalHeight, position: 'relative' }}>
             <div
               style={{
                 transform: `translateY(${range.offsetY}px)`,

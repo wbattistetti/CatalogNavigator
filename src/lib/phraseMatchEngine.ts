@@ -2,6 +2,7 @@
  * Word-span phrase matching: enumerate all candidates, shadow contained spans,
  * keep partial overlaps (e.g. a b + b c) without greedy consume order bias.
  */
+import { getWordPhraseMatcher } from './wordPhraseMatcher';
 
 /** Phrase matched in corpus text and its canonical token for path segmentation. */
 export interface MatchPhraseLike {
@@ -87,22 +88,8 @@ function wordsMatchAt(words: string[], start: number, phrase: string): boolean {
 
 /** Finds every whole-word phrase occurrence without consuming input. */
 export function findAllWordSpanMatches(words: string[], phrases: MatchPhraseLike[]): WordSpanMatch[] {
-  const out: WordSpanMatch[] = [];
-  for (const rule of phrases) {
-    const partCount = tokenizeToWords(rule.phrase).length;
-    if (partCount === 0) continue;
-    for (let i = 0; i <= words.length - partCount; i++) {
-      if (!wordsMatchAt(words, i, rule.phrase)) continue;
-      out.push({
-        wordStart: i,
-        wordEnd: i + partCount,
-        phrase: rule.phrase,
-        canonical: rule.canonical,
-        isAlias: rule.phrase !== rule.canonical,
-      });
-    }
-  }
-  return out;
+  if (phrases.length === 0 || words.length === 0) return [];
+  return getWordPhraseMatcher(phrases).findAll(words);
 }
 
 function matchScore(match: ScoredWordSpanMatch): number {

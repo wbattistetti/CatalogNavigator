@@ -24,8 +24,53 @@ import {
   valueSetContainsAll,
   valueSetsEqual,
 } from './valueSet';
+import { yieldToMainThread } from './corpusSegmentationCache';
 
 const MISSING_VALUE = 'none';
+
+const DEFAULT_BFS_YIELD_EVERY = 8;
+const DEFAULT_BFS_YIELD_MS = 16;
+const FNV_OFFSET = 2166136261;
+const FNV_PRIME = 16777619;
+
+/** FNV-1a hash for compact set fingerprints (order-independent via xor/sum). */
+export function fnv32String(input: string): number {
+  let hash = FNV_OFFSET;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME);
+  }
+  return hash >>> 0;
+}
+
+/** Compact fingerprint for a candidate path set — avoids sorting/joining thousands of paths. */
+export function fingerprintCandidatePathSet(paths: readonly string[]): string {
+  if (paths.length === 0) return '0:0:0';
+  let xor = 0;
+  let sum = 0;
+  for (const path of paths) {
+    const h = fnv32String(path);
+    xor ^= h;
+    sum = (sum + h) >>> 0;
+  }
+  return `${paths.length}:${xor.toString(36)}:${sum.toString(36)}`;
+}
+
+/** Live stats while BFS explores the disambiguation graph. */
+export interface CompileDisambiguationPlanProgress {
+  visitedStates: number;
+  queueLength: number;
+  decisionNodes: number;
+  catalogItemCount: number;
+  elapsedMs: number;
+  statesPerSecond: number;
+}
+
+export interface CompileDisambiguationPlanAsyncOptions {
+  onProgress?: (progress: CompileDisambiguationPlanProgress) => void;
+  shouldCancel?: () => boolean;
+  yieldEvery?: number;
+}
 
 export interface CompileDisambiguationPlanInput {
   itemPaths: string[];
@@ -60,17 +105,24 @@ export function buildPlanStateKey(state: PlanState): string {
 
 /**
  * BFS dedup key: same acquired slots + same surviving candidates = same situation.
- * Merges ages that filter the catalog identically.
+ * Uses a compact path-set fingerprint instead of joining every catalog path.
  */
 export function buildExplorationStateKey(
   acquired: Record<string, string>,
-  candidatePaths: string[],
+  candidatePaths: readonly string[],
   ageYears: number | null = null,
 ): string {
   const acq = sortedAcquiredEntries(acquired).map(([k, v]) => `${k}=${v}`).join('|');
   const agePart = ageYears != null ? `||age=${ageYears}` : '';
-  const paths = [...candidatePaths].sort((a, b) => a.localeCompare(b, 'it')).join('|');
-  return `${acq}${agePart}||cands:${paths}`;
+  return `${acq}${agePart}||${fingerprintCandidatePathSet(candidatePaths)}`;
+}
+
+/** Dedup key for enqueued plan states (before expensive candidate filtering). */
+export function buildQueueStateKey(state: PlanState): string {
+  const exact = state.exactAttributoCategories.length === 0
+    ? ''
+    : `||exact:${[...state.exactAttributoCategories].sort((a, b) => a.localeCompare(b, 'it')).join(',')}`;
+  return `${buildPlanStateKey(state)}${exact}`;
 }
 
 /** Runtime lookup key for a disambiguation prompt at a given state. */
@@ -405,7 +457,7 @@ export function expandAgeSuccessorStates(
       pathSatisfiesAgeConstraints(age, item.constraints as CompiledAgeConstraint[]),
     );
     if (filtered.length === 0) continue;
-    const setKey = filtered.map((i) => i.path).sort((a, b) => a.localeCompare(b, 'it')).join('|');
+    const setKey = fingerprintCandidatePathSet(filtered.map((i) => i.path));
     if (seenCandidateSets.has(setKey)) continue;
     seenCandidateSets.add(setKey);
     successors.push({
@@ -458,13 +510,31 @@ function buildStats(
   };
 }
 
-/**
- * Explores all reachable conversation states via BFS and collects disambiguation nodes.
- */
-export function compileDisambiguationPlan(
+interface DisambiguationPlanBfsContext {
+  corpusItems: BundleCorpusItem[];
+  categories: TokenCategory[];
+  catalogItemCount: number;
+  itemPaths: string[];
+  visitedStates: Set<string>;
+  enqueuedQueueStates: Set<string>;
+  decisionNodes: DisambiguationPlanNode[];
+  seenDecisionKeys: Set<string>;
+  queue: PlanState[];
+  confirmStates: number;
+  deadStates: number;
+  stuckStates: number;
+}
+
+function tryEnqueueState(ctx: DisambiguationPlanBfsContext, state: PlanState): void {
+  const key = buildQueueStateKey(state);
+  if (ctx.enqueuedQueueStates.has(key)) return;
+  ctx.enqueuedQueueStates.add(key);
+  ctx.queue.push(state);
+}
+
+function initDisambiguationPlanBfs(
   input: CompileDisambiguationPlanInput,
-): DisambiguationPlanResult {
-  const warnings: string[] = [];
+): DisambiguationPlanBfsContext {
   const itemPaths = input.itemPaths.filter((p) => p.trim());
   const categories = normalizeCategoryOrders(input.categories ?? []);
 
@@ -477,130 +547,233 @@ export function compileDisambiguationPlan(
 
   const corpusItems = input.corpusItems ?? buildCorpusItemsFromPaths(itemPaths, categories);
 
-  const visitedStates = new Set<string>();
-  const decisionNodes: DisambiguationPlanNode[] = [];
-  const seenDecisionKeys = new Set<string>();
+  return {
+    corpusItems,
+    categories,
+    catalogItemCount: itemPaths.length,
+    itemPaths,
+    visitedStates: new Set<string>(),
+    enqueuedQueueStates: new Set<string>(),
+    decisionNodes: [],
+    seenDecisionKeys: new Set<string>(),
+    queue: [],
+    confirmStates: 0,
+    deadStates: 0,
+    stuckStates: 0,
+  };
+}
 
-  let confirmStates = 0;
-  let deadStates = 0;
-  let stuckStates = 0;
+function seedDisambiguationPlanQueue(ctx: DisambiguationPlanBfsContext): void {
+  tryEnqueueState(ctx, { acquired: {}, ageYears: null, exactAttributoCategories: [] });
+}
 
-  const queue: PlanState[] = [{ acquired: {}, ageYears: null, exactAttributoCategories: [] }];
+/** Processes one BFS step. Returns false when the queue is empty. */
+function stepDisambiguationPlanBfs(ctx: DisambiguationPlanBfsContext): boolean {
+  if (ctx.queue.length === 0) return false;
 
-  while (queue.length > 0) {
-    const state = queue.shift()!;
-    const candidates = filterCandidates(corpusItems, state, categories);
-    const paths = candidates.map((c) => c.path);
-    const explorationKey = buildExplorationStateKey(state.acquired, paths, state.ageYears);
+  const state = ctx.queue.shift()!;
+  const candidates = filterCandidates(ctx.corpusItems, state, ctx.categories);
+  const paths = candidates.map((c) => c.path);
+  const explorationKey = buildExplorationStateKey(state.acquired, paths, state.ageYears);
 
-    if (visitedStates.has(explorationKey)) continue;
-    visitedStates.add(explorationKey);
+  if (ctx.visitedStates.has(explorationKey)) return true;
+  ctx.visitedStates.add(explorationKey);
 
-    const step = decideNextStep(state, candidates, categories);
-    const stateKey = buildPlanStateKey(state);
+  const step = decideNextStep(state, candidates, ctx.categories);
+  const stateKey = buildPlanStateKey(state);
 
-    if (step.action === 'confirm') {
-      confirmStates += 1;
-      continue;
+  if (step.action === 'confirm') {
+    ctx.confirmStates += 1;
+    return true;
+  }
+  if (step.action === 'dead') {
+    ctx.deadStates += 1;
+    return true;
+  }
+  if (step.action === 'stuck') {
+    ctx.stuckStates += 1;
+    return true;
+  }
+
+  if (step.action === 'ask_age') {
+    const categoryName = step.categoryName ?? firstAgeVincoloCategory(ctx.categories)?.name ?? 'fascia di età';
+    const options = step.options ?? [];
+    const signature = buildVincoloAskSignature(categoryName);
+    const key = `${stateKey}||ask_age||${categoryName}`;
+    if (!ctx.seenDecisionKeys.has(key)) {
+      ctx.seenDecisionKeys.add(key);
+      ctx.decisionNodes.push({
+        key,
+        signature,
+        acquired: { ...state.acquired },
+        ageYears: state.ageYears,
+        action: 'ask_age',
+        categoryName,
+        options,
+        style: 'ask_age',
+        candidateCount: candidates.length,
+        candidatePathsSample: samplePaths(paths),
+      });
     }
-    if (step.action === 'dead') {
-      deadStates += 1;
-      continue;
+    for (const next of expandAgeSuccessorStates(state, candidates)) {
+      tryEnqueueState(ctx, next);
     }
-    if (step.action === 'stuck') {
-      stuckStates += 1;
-      continue;
-    }
+    return true;
+  }
 
-    if (step.action === 'ask_age') {
-      const categoryName = step.categoryName ?? firstAgeVincoloCategory(categories)?.name ?? 'fascia di età';
-      const options = step.options ?? [];
-      const signature = buildVincoloAskSignature(categoryName);
-      const key = `${stateKey}||ask_age||${categoryName}`;
-      if (!seenDecisionKeys.has(key)) {
-        seenDecisionKeys.add(key);
-        decisionNodes.push({
-          key,
-          signature,
-          acquired: { ...state.acquired },
-          ageYears: state.ageYears,
-          action: 'ask_age',
-          categoryName,
-          options,
-          style: 'ask_age',
-          candidateCount: candidates.length,
-          candidatePathsSample: samplePaths(paths),
-        });
-      }
-      for (const next of expandAgeSuccessorStates(state, candidates)) {
-        queue.push(next);
-      }
-      continue;
+  if (step.action === 'disambiguate' && step.categoryName && step.options) {
+    const nodeKey = buildDisambiguationNodeKey(state.acquired, step.categoryName, step.options);
+    if (!ctx.seenDecisionKeys.has(nodeKey)) {
+      ctx.seenDecisionKeys.add(nodeKey);
+      ctx.decisionNodes.push({
+        key: nodeKey,
+        signature: buildDisambiguationSignature(step.categoryName, step.options),
+        acquired: { ...state.acquired },
+        ageYears: state.ageYears,
+        action: 'disambiguate',
+        categoryName: step.categoryName,
+        options: step.options,
+        style: step.style,
+        candidateCount: candidates.length,
+        candidatePathsSample: samplePaths(paths),
+      });
     }
 
-    if (step.action === 'disambiguate' && step.categoryName && step.options) {
-      const nodeKey = buildDisambiguationNodeKey(state.acquired, step.categoryName, step.options);
-      if (!seenDecisionKeys.has(nodeKey)) {
-        seenDecisionKeys.add(nodeKey);
-        decisionNodes.push({
-          key: nodeKey,
-          signature: buildDisambiguationSignature(step.categoryName, step.options),
-          acquired: { ...state.acquired },
-          ageYears: state.ageYears,
-          action: 'disambiguate',
-          categoryName: step.categoryName,
-          options: step.options,
-          style: step.style,
-          candidateCount: candidates.length,
-          candidatePathsSample: samplePaths(paths),
-        });
-      }
-
-      for (const opt of step.options) {
-        const catKey = normalizeSlotCategoryKey(step.categoryName);
-        const exact = state.exactAttributoCategories.filter((c) => c !== step.categoryName);
-        exact.push(step.categoryName);
-        queue.push({
-          acquired: { ...state.acquired, [catKey]: opt },
-          ageYears: state.ageYears,
-          exactAttributoCategories: exact,
-        });
-      }
+    for (const opt of step.options) {
+      const catKey = normalizeSlotCategoryKey(step.categoryName);
+      const exact = state.exactAttributoCategories.filter((c) => c !== step.categoryName);
+      exact.push(step.categoryName);
+      tryEnqueueState(ctx, {
+        acquired: { ...state.acquired, [catKey]: opt },
+        ageYears: state.ageYears,
+        exactAttributoCategories: exact,
+      });
     }
   }
 
-  if (stuckStates > 0) {
+  return true;
+}
+
+function finalizeDisambiguationPlanBfs(ctx: DisambiguationPlanBfsContext): DisambiguationPlanResult {
+  const warnings: string[] = [];
+
+  if (ctx.stuckStates > 0) {
     warnings.push(
-      `${stuckStates} stati terminali ambigui (più candidati ma nessuna categoria attributo da chiedere).`,
+      `${ctx.stuckStates} stati terminali ambigui (più candidati ma nessuna categoria attributo da chiedere).`,
     );
   }
 
-  const segmentsWithCategory = corpusItems.some((item) =>
+  const segmentsWithCategory = ctx.corpusItems.some((item) =>
     item.segments.some((s) => s.categoryName.trim() && s.categoryType === 'attributo'),
   );
-  if (!segmentsWithCategory && itemPaths.length > 0) {
+  if (!segmentsWithCategory && ctx.itemPaths.length > 0) {
     warnings.push(
       'Nessun segmento path mappato a categorie attributo nel dizionario — le disambiguazioni potrebbero essere sottostimate.',
     );
   }
-  if (decisionNodes.filter((n) => n.action === 'disambiguate').length === 0 && itemPaths.length > 5) {
+  if (ctx.decisionNodes.filter((n) => n.action === 'disambiguate').length === 0 && ctx.itemPaths.length > 5) {
     warnings.push(
-      `0 nodi disambiguazione su ${itemPaths.length} prestazioni: verifica che i token path siano categorizzati nel dizionario.`,
+      `0 nodi disambiguazione su ${ctx.itemPaths.length} prestazioni: verifica che i token path siano categorizzati nel dizionario.`,
     );
   }
 
-  const stats = buildStats(itemPaths.length, decisionNodes, visitedStates.size, {
-    confirmStates,
-    deadStates,
-    stuckStates,
+  const stats = buildStats(ctx.catalogItemCount, ctx.decisionNodes, ctx.visitedStates.size, {
+    confirmStates: ctx.confirmStates,
+    deadStates: ctx.deadStates,
+    stuckStates: ctx.stuckStates,
   });
 
   return {
-    nodes: decisionNodes,
+    nodes: ctx.decisionNodes,
     stats,
     computedAt: new Date().toISOString(),
     warnings,
   };
+}
+
+function buildBfsProgressSnapshot(
+  ctx: DisambiguationPlanBfsContext,
+  startedAt: number,
+  lastProgressAt: number,
+  lastProgressVisited: number,
+): CompileDisambiguationPlanProgress {
+  const now = typeof performance !== 'undefined' ? performance.now() : startedAt;
+  const elapsedMs = now - startedAt;
+  const visitedStates = ctx.visitedStates.size;
+  const dtSec = Math.max(0.001, (now - lastProgressAt) / 1000);
+  const statesPerSecond = (visitedStates - lastProgressVisited) / dtSec;
+
+  return {
+    visitedStates,
+    queueLength: ctx.queue.length,
+    decisionNodes: ctx.decisionNodes.length,
+    catalogItemCount: ctx.catalogItemCount,
+    elapsedMs,
+    statesPerSecond,
+  };
+}
+
+/**
+ * Explores all reachable conversation states via BFS and collects disambiguation nodes.
+ */
+export function compileDisambiguationPlan(
+  input: CompileDisambiguationPlanInput,
+): DisambiguationPlanResult {
+  const ctx = initDisambiguationPlanBfs(input);
+  seedDisambiguationPlanQueue(ctx);
+  while (stepDisambiguationPlanBfs(ctx)) {
+    /* sync BFS */
+  }
+  return finalizeDisambiguationPlanBfs(ctx);
+}
+
+/**
+ * Async BFS with UI progress yields — use for large catalogs so the browser stays responsive.
+ */
+export async function compileDisambiguationPlanAsync(
+  input: CompileDisambiguationPlanInput,
+  options?: CompileDisambiguationPlanAsyncOptions,
+): Promise<DisambiguationPlanResult> {
+  const ctx = initDisambiguationPlanBfs(input);
+  seedDisambiguationPlanQueue(ctx);
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
+  let lastProgressAt = startedAt;
+  let lastProgressVisited = 0;
+  let loopSteps = 0;
+  let lastYieldAt = startedAt;
+  const yieldEvery = options?.yieldEvery ?? DEFAULT_BFS_YIELD_EVERY;
+
+  const reportProgress = () => {
+    const snapshot = buildBfsProgressSnapshot(ctx, startedAt, lastProgressAt, lastProgressVisited);
+    lastProgressAt = typeof performance !== 'undefined' ? performance.now() : lastProgressAt;
+    lastProgressVisited = snapshot.visitedStates;
+    options?.onProgress?.(snapshot);
+  };
+
+  reportProgress();
+  await yieldToMainThread();
+
+  while (stepDisambiguationPlanBfs(ctx)) {
+    if (options?.shouldCancel?.()) {
+      throw new DOMException('Calcolo piano annullato', 'AbortError');
+    }
+
+    loopSteps += 1;
+    const now = typeof performance !== 'undefined' ? performance.now() : lastYieldAt + DEFAULT_BFS_YIELD_MS;
+    const shouldReport = loopSteps <= 3
+      || loopSteps % yieldEvery === 0
+      || now - lastYieldAt >= DEFAULT_BFS_YIELD_MS;
+
+    if (shouldReport) {
+      reportProgress();
+      lastYieldAt = now;
+      await yieldToMainThread();
+    }
+  }
+
+  reportProgress();
+  await yieldToMainThread();
+  return finalizeDisambiguationPlanBfs(ctx);
 }
 
 /** One simulated user utterance while walking the disambiguation plan toward a target path. */

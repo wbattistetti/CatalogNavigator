@@ -8,7 +8,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AlertTriangle, Calculator, Loader2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 
-import { compileDisambiguationPlan } from '../../lib/compileDisambiguationPlan';
+import {
+  compileDisambiguationPlanAsync,
+  type CompileDisambiguationPlanInput,
+  type CompileDisambiguationPlanProgress,
+} from '../../lib/compileDisambiguationPlan';
 
 import type { DisambiguationPlanResult } from '../../lib/disambiguationPlanTypes';
 
@@ -16,13 +20,7 @@ import {
 
   buildDisambiguationEditorRows,
 
-  buildPlanResultFromStorage,
-
-  buildRestorePlanKey,
-
   editorRowsToStorage,
-
-  hasSavedDisambiguationContent,
 
   mergeDisambiguationPlanAfterCompute,
 
@@ -34,7 +32,18 @@ import {
 
 } from '../../lib/disambiguationPlanMessages';
 
-import { resolveCorpusItemPaths } from '../../lib/corpusItemPaths';
+import {
+  buildCorpusSegmentationInputFromLoadedRefs,
+  resolveCorpusItemPathsFromSegmentationCacheAsync,
+} from '../../lib/corpusItemPaths';
+import {
+  buildDisambiguationPlanCompileInputAsync,
+  canResolveDisambiguationCatalog,
+  createAnalysisWithItemPathsForCompute,
+  resolveDisambiguationCatalogCount,
+  resolveDisambiguationComputeBlockReason,
+  type BuildDisambiguationPreparingProgress,
+} from '../../lib/buildDisambiguationPlanCompileInput';
 
 import type { CorpusSegmentExclusions } from '../../lib/corpusItemPaths';
 
@@ -50,11 +59,15 @@ import type { TokenDictionary } from '../../lib/tokenDictionary';
 
 import type { DisambiguationPlanStorage } from '../../lib/disambiguationPlanTypes';
 
-import { yieldToUi } from '../../lib/yieldToUi';
+import { applyDisambiguationComputeResultAsync } from '../../lib/applyDisambiguationComputeResult';
 
 import { DisambiguationMessagePanel } from './DisambiguationMessagePanel';
 import type { DisambiguationNavRequest } from '../document-editor/useDocumentEditorController';
+import { DisambiguationComputeProgressOverlay, type DisambiguationComputePhase } from '../document-editor/DisambiguationProgressBar';
+import { yieldToUi } from '../../lib/yieldToUi';
 import { DICT_INPUT_FIELD } from '../dictionaries/dictionaryFormStyles';
+import { useOntologyCorpusSegmentation } from '../ontology-corpus/OntologyCorpusSegmentationContext';
+import type { AgentBundleCompileInput } from '../../lib/agentBundleTypes';
 
 function messageListTextColor(status: DisambiguationEditorRow['status']): string {
   if (status === 'approved') return 'text-emerald-300/90';
@@ -107,6 +120,13 @@ interface DisambiguationWorkspaceProps {
   ) => void;
 
   onUpdatePlan: (plan: DisambiguationPlanStorage) => void;
+
+  /** Persists catalog paths resolved during Calcola (from segmentation cache). */
+  onCommitResolvedItemPaths?: (itemPaths: string[]) => void;
+
+  plan: DisambiguationPlanResult | null;
+
+  onPlanChange: (plan: DisambiguationPlanResult | null) => void;
 
   onGenerateMessages: (
 
@@ -180,15 +200,13 @@ function rowMatchesMessageFilter(row: DisambiguationEditorRow, query: string): b
 
 
 async function runPlanCompile(
-
-  compilePlan: () => DisambiguationPlanResult,
-
+  buildInput: () => Promise<CompileDisambiguationPlanInput>,
+  onProgress?: (progress: CompileDisambiguationPlanProgress) => void,
+  shouldCancel?: () => boolean,
 ): Promise<DisambiguationPlanResult> {
-
   await yieldToUi();
-
-  return compilePlan();
-
+  const input = await buildInput();
+  return compileDisambiguationPlanAsync(input, { onProgress, shouldCancel });
 }
 
 
@@ -233,6 +251,12 @@ export function DisambiguationWorkspace({
 
   onUpdatePlan,
 
+  onCommitResolvedItemPaths,
+
+  plan,
+
+  onPlanChange,
+
   onGenerateMessages,
 
   navRequest = null,
@@ -241,9 +265,15 @@ export function DisambiguationWorkspace({
 
 }: DisambiguationWorkspaceProps) {
 
-  const [plan, setPlan] = useState<DisambiguationPlanResult | null>(null);
-
   const [computing, setComputing] = useState(false);
+
+  const [computePhase, setComputePhase] = useState<DisambiguationComputePhase | null>(null);
+
+  const computeCancelRef = useRef(false);
+
+  const [computeProgress, setComputeProgress] = useState<CompileDisambiguationPlanProgress | null>(null);
+
+  const [preparingProgress, setPreparingProgress] = useState<BuildDisambiguationPreparingProgress | null>(null);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -255,7 +285,7 @@ export function DisambiguationWorkspace({
 
   const [focusGrammar, setFocusGrammar] = useState(false);
 
-  const restoredPlanKeyRef = useRef<string | null>(null);
+  const segmentation = useOntologyCorpusSegmentation();
 
   useEffect(() => {
     if (!navRequest?.signature) return;
@@ -267,22 +297,35 @@ export function DisambiguationWorkspace({
 
 
   const canCompute = !!(
-    analysis?.rows?.length
+    canResolveDisambiguationCatalog(
+      analysis,
+      pathsOutOfSync ?? false,
+      segmentation.cache,
+      descriptions,
+    )
     && dictionary?.categories?.length
     && descriptions.some((line) => line.trim().length > 0)
   );
 
+  const computeBlockReason = resolveDisambiguationComputeBlockReason(
+    analysis,
+    dictionary,
+    descriptions,
+    pathsOutOfSync ?? false,
+    segmentation.cache,
+  );
 
 
-  const compilePlan = useCallback((): DisambiguationPlanResult => {
 
-    if (!analysis || !dictionary) {
+  const buildAgentBundleInput = useCallback((activeAnalysis: Analysis): AgentBundleCompileInput => {
 
-      throw new Error('Analisi o dizionario mancante.');
+    if (!dictionary) {
+
+      throw new Error('Dizionario mancante.');
 
     }
 
-    const bundle = compileAgentBundle({
+    return {
 
       documentName,
 
@@ -292,7 +335,7 @@ export function DisambiguationWorkspace({
 
       descriptions,
 
-      analysis,
+      analysis: activeAnalysis,
 
       loadedRefs: loadedRefs.length > 0 ? loadedRefs : undefined,
 
@@ -308,21 +351,9 @@ export function DisambiguationWorkspace({
 
       itemExclusions,
 
-    });
-
-    return compileDisambiguationPlan({
-
-      itemPaths: bundle.itemPaths,
-
-      categories: bundle.dictionary.categories,
-
-      corpusItems: bundle.corpusItems,
-
-    });
+    };
 
   }, [
-
-    analysis,
 
     dictionary,
 
@@ -350,27 +381,57 @@ export function DisambiguationWorkspace({
 
 
 
-  const savedPlanKey = useMemo(() => {
+  const resolveActiveAnalysis = useCallback(async (): Promise<Analysis> => {
+    if (!pathsOutOfSync && analysis && (analysis.item_paths?.some((p) => p.trim()) ?? false)) {
+      return analysis;
+    }
 
-    const msgs = analysis?.disambiguation_plan?.messages ?? [];
+    await yieldToUi();
 
-    const filled = msgs.filter((m) => m.question?.trim()).length;
+    if (loadedRefs.length === 0) {
+      throw new Error('Monta almeno un dizionario nel progetto prima di calcolare il piano.');
+    }
 
-    return buildRestorePlanKey(
-
-      documentId,
-
-      analysis?.id ?? '',
-
-      analysis?.disambiguation_plan?.computedAt,
-
-      filled,
-
+    const segInput = buildCorpusSegmentationInputFromLoadedRefs(
+      descriptions,
+      loadedRefs,
+      segmentExclusions,
+      itemExclusions,
     );
 
-  }, [documentId, analysis?.id, analysis?.disambiguation_plan]);
+    const itemPaths = await resolveCorpusItemPathsFromSegmentationCacheAsync(
+      segInput,
+      segmentation.cache,
+      (processed, total) => setPreparingProgress({ phase: 'paths', processed, total }),
+    );
 
+    if (itemPaths.length === 0) {
+      throw new Error('Nessun path catalogo dalla segmentazione corpus.');
+    }
 
+    return createAnalysisWithItemPathsForCompute(documentId, itemPaths, analysis);
+  }, [
+    pathsOutOfSync,
+    analysis,
+    descriptions,
+    loadedRefs,
+    segmentExclusions,
+    itemExclusions,
+    documentId,
+    segmentation.cache,
+  ]);
+
+  const buildPlanCompileInput = useCallback(
+    (activeAnalysis: Analysis) => buildDisambiguationPlanCompileInputAsync(
+      buildAgentBundleInput(activeAnalysis),
+      {
+        pathsOutOfSync,
+        segmentationCache: segmentation.cache,
+        onPreparing: setPreparingProgress,
+      },
+    ),
+    [buildAgentBundleInput, pathsOutOfSync, segmentation.cache],
+  );
 
   const vincoloCategories = useMemo(
     () => (dictionary?.categories ?? []).filter((c) => c.type === 'vincolo'),
@@ -382,93 +443,21 @@ export function DisambiguationWorkspace({
     [dictionary?.categories],
   );
 
-
-
   useEffect(() => {
-
-    restoredPlanKeyRef.current = null;
-
-    setPlan(null);
-
     setMergeStats(null);
-
     setSelectedSignature(null);
-
     setError(null);
-
+    setMessageFilter('');
   }, [documentId]);
 
-
-
   useEffect(() => {
-
-    if (!canCompute || !analysis?.disambiguation_plan) return;
-
-    if (!hasSavedDisambiguationContent(analysis.disambiguation_plan)) return;
-
-    if (restoredPlanKeyRef.current === savedPlanKey) return;
-
-
-
-    let cancelled = false;
-
-    restoredPlanKeyRef.current = savedPlanKey;
-
-    setComputing(true);
-
-    setError(null);
-
-
-
-    void (async () => {
-
-      try {
-
-        const result = await runPlanCompile(compilePlan);
-
-        if (cancelled) return;
-
-        setPlan(result);
-
-        const rows = buildDisambiguationEditorRows(result, analysis.disambiguation_plan, dictionaryCategories);
-
-        setMergeStats(summarizeFromRows(rows, analysis.disambiguation_plan));
-
-      } catch (err) {
-
-        if (cancelled) return;
-
-        const fallback = buildPlanResultFromStorage(analysis.disambiguation_plan!);
-
-        if (fallback) {
-
-          setPlan(fallback);
-
-        } else {
-
-          setError(err instanceof Error ? err.message : String(err));
-
-        }
-
-      } finally {
-
-        if (!cancelled) setComputing(false);
-
-      }
-
-    })();
-
-
-
-    return () => {
-
-      cancelled = true;
-
-    };
-
-  }, [canCompute, analysis?.disambiguation_plan, savedPlanKey, compilePlan, dictionaryCategories]);
-
-
+    if (!plan || !analysis?.disambiguation_plan) {
+      setMergeStats(null);
+      return;
+    }
+    const rows = buildDisambiguationEditorRows(plan, analysis.disambiguation_plan, dictionaryCategories);
+    setMergeStats(summarizeFromRows(rows, analysis.disambiguation_plan));
+  }, [plan, analysis?.disambiguation_plan, dictionaryCategories]);
 
   const editorRows = useMemo(() => {
 
@@ -552,87 +541,119 @@ export function DisambiguationWorkspace({
 
 
 
-  const applyComputeResult = useCallback((
-
-    result: DisambiguationPlanResult,
-
-    previousPlan: DisambiguationPlanStorage | null | undefined,
-
-  ) => {
-
-    const rows = buildDisambiguationEditorRows(result, previousPlan, dictionaryCategories);
-
-    const { storage, stats } = mergeDisambiguationPlanAfterCompute(
-
-      rows,
-
-      result.computedAt,
-
-      previousPlan,
-
-    );
-
-    onUpdatePlan(storage);
-
-    setPlan(result);
-
-    setMergeStats(stats);
-
-    const mergedRows = buildDisambiguationEditorRows(result, storage, dictionaryCategories);
-
-    const filled = mergedRows.filter((r) => r.question?.trim()).length;
-
-    restoredPlanKeyRef.current = buildRestorePlanKey(
-
-      documentId,
-
-      analysis?.id ?? '',
-
-      result.computedAt,
-
-      filled,
-
-    );
-
-  }, [analysis?.id, documentId, onUpdatePlan, dictionaryCategories]);
+  const handleCancelCompute = useCallback(() => {
+    computeCancelRef.current = true;
+  }, []);
 
 
 
   const handleCompute = useCallback(() => {
 
-    if (!analysis || !dictionary) return;
+    if (!dictionary) return;
 
     setComputing(true);
+
+    setComputePhase('preparing');
+
+    setComputeProgress(null);
+
+    setPreparingProgress(null);
 
     setError(null);
 
     setMergeStats(null);
 
+    computeCancelRef.current = false;
+
 
 
     void (async () => {
 
+      await yieldToUi();
+
       try {
 
-        const result = await runPlanCompile(compilePlan);
+        const activeAnalysis = await resolveActiveAnalysis();
 
-        applyComputeResult(result, analysis.disambiguation_plan);
+        if (computeCancelRef.current) return;
+
+        const result = await runPlanCompile(
+
+          () => buildPlanCompileInput(activeAnalysis),
+
+          (progress) => {
+            setComputePhase('bfs');
+            setComputeProgress(progress);
+          },
+
+          () => computeCancelRef.current,
+
+        );
+
+        if (computeCancelRef.current) return;
+
+        setComputePhase('finalizing');
+
+        setComputeProgress(null);
+
+        await yieldToUi();
+
+        const { storage, stats } = await applyDisambiguationComputeResultAsync(
+
+          result,
+
+          activeAnalysis.disambiguation_plan,
+
+          dictionaryCategories,
+
+        );
+
+        if (computeCancelRef.current) return;
+
+        onUpdatePlan(storage);
+
+        onPlanChange(result);
+
+        setMergeStats(stats);
+
+        if (activeAnalysis.item_paths?.length) {
+          onCommitResolvedItemPaths?.(activeAnalysis.item_paths);
+        }
 
       } catch (err) {
 
-        setPlan(null);
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          setError('Calcolo piano annullato.');
+          return;
+        }
 
         setError(err instanceof Error ? err.message : String(err));
 
       } finally {
 
+        setPreparingProgress(null);
+
         setComputing(false);
+
+        setComputePhase(null);
+
+        setComputeProgress(null);
+
+        computeCancelRef.current = false;
 
       }
 
     })();
 
-  }, [analysis, dictionary, compilePlan, applyComputeResult]);
+  }, [
+    dictionary,
+    resolveActiveAnalysis,
+    buildPlanCompileInput,
+    dictionaryCategories,
+    onUpdatePlan,
+    onPlanChange,
+    onCommitResolvedItemPaths,
+  ]);
 
 
 
@@ -682,19 +703,23 @@ export function DisambiguationWorkspace({
 
 
 
-  const catalogCount = useMemo(() => {
-    if (!dictionary || descriptions.every((line) => !line.trim())) return 0;
-    try {
-      return resolveCorpusItemPaths({
-        descriptions,
-        dictionary,
-        loadedRefs: loadedRefs.length > 0 ? loadedRefs : undefined,
-        segmentExclusions,
-      }).length;
-    } catch {
-      return 0;
-    }
-  }, [descriptions, dictionary, loadedRefs, segmentExclusions]);
+  const catalogCount = useMemo(
+
+    () => resolveDisambiguationCatalogCount(
+
+      analysis?.item_paths,
+
+      pathsOutOfSync ?? false,
+
+      segmentation.cache,
+
+      descriptions,
+
+    ),
+
+    [analysis?.item_paths, pathsOutOfSync, segmentation.cache, descriptions],
+
+  );
 
 
 
@@ -792,13 +817,13 @@ export function DisambiguationWorkspace({
 
 
 
-      {!canCompute && (
+      {!canCompute && computeBlockReason && (
 
         <div className="p-4">
 
           <div className="rounded border border-amber-400/30 bg-amber-400/5 px-4 py-3 font-mono text-sm text-amber-300/90">
 
-            Genera l&apos;ontologia e monta il dizionario prima di calcolare il piano.
+            {computeBlockReason}
 
           </div>
 
@@ -808,7 +833,7 @@ export function DisambiguationWorkspace({
 
 
 
-      {plan && (
+      {plan && !computing && (
 
         <div className="flex flex-1 min-h-0 overflow-hidden">
 
@@ -1064,15 +1089,11 @@ export function DisambiguationWorkspace({
 
         <p className="p-4 font-mono text-sm text-emerald-300/80">
 
-          {hasSavedDisambiguationContent(analysis?.disambiguation_plan)
+          {catalogCount > 0
 
-            ? 'Ripristino piano salvato…'
+            ? `${catalogCount} prestazioni — premi Calcola per aprire l'editor.`
 
-            : catalogCount > 0
-
-              ? `${catalogCount} prestazioni — premi Calcola per aprire l'editor.`
-
-              : 'Premi Calcola per analizzare il piano.'}
+            : 'Premi Calcola per analizzare il piano.'}
 
         </p>
 
@@ -1080,20 +1101,24 @@ export function DisambiguationWorkspace({
 
 
 
-      {computing && (
-
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0a0f0c]/75 backdrop-blur-[1px]">
-
-          <div className="flex flex-col items-center gap-3 rounded-lg border border-emerald-400/30 bg-[#0a1510] px-8 py-6 shadow-lg">
-
-            <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-
-            <p className="font-mono text-sm text-emerald-200">Calcolo piano disambiguazione…</p>
-
-          </div>
-
-        </div>
-
+      {computing && computePhase && (
+        <DisambiguationComputeProgressOverlay
+          phase={computePhase}
+          progress={computeProgress}
+          preparingDetail={
+            preparingProgress
+              ? preparingProgress.phase === 'paths'
+                ? `Path catalogo ${preparingProgress.processed.toLocaleString('it-IT')} / ${preparingProgress.total.toLocaleString('it-IT')}`
+                : `Prestazioni ${preparingProgress.processed.toLocaleString('it-IT')} / ${preparingProgress.total.toLocaleString('it-IT')}`
+              : undefined
+          }
+          preparingPercent={
+            preparingProgress && preparingProgress.total > 0
+              ? (preparingProgress.processed / preparingProgress.total) * 100
+              : undefined
+          }
+          onCancel={handleCancelCompute}
+        />
       )}
 
     </div>

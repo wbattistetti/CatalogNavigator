@@ -55,7 +55,7 @@ export function isLikelyConstraintCategoryName(name: string): boolean {
   if (!n) return false;
   if (n.includes('vincol')) return true;
   if (n.includes('prerequisit') || n.includes('requisit')) return true;
-  if (n.includes('fascia') && (n.includes('eta') || n.includes('anni'))) return true;
+  if (n.includes('fascia') && (n.includes('eta') || n.includes('anni') || n.includes('peso'))) return true;
   if (n === 'eta' || n.startsWith('eta ')) return true;
   return false;
 }

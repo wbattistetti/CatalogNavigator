@@ -10,24 +10,22 @@ import { DocumentEditorTestRail } from './DocumentEditorTestRail';
 import { DocumentEditorAgentOverlays } from './DocumentEditorAgentOverlays';
 import { ResizableTestRail } from './ResizableTestRail';
 import { OntologyRefreshProgressBar } from './OntologyRefreshProgressBar';
+import { DisambiguationAiGenerationProgressBar } from './DisambiguationProgressBar';
 import { CatalogSanityStrip } from './CatalogSanityStrip';
+import { OntologySegmentationResumeDialog } from './OntologySegmentationResumeDialog';
 import { EDITOR_TAB_IDS } from './editorTabIds';
-import { Loader2 } from 'lucide-react';
 
 function DisambiguationGenerationProgress() {
   const { analysisApi } = useDocumentEditorController();
-  const { generating, generatingPhase } = analysisApi;
+  const { generating, generatingPhase, disambiguationGenProgress } = analysisApi;
 
   if (!generating || generatingPhase !== 'disambiguation') return null;
 
-  return (
-    <div className="flex-shrink-0 px-4 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
-      <div className="flex items-center gap-2 font-mono text-sm text-emerald-400/70">
-        <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-        Generazione messaggi dialogo con IA…
-      </div>
-    </div>
-  );
+  if (disambiguationGenProgress) {
+    return <DisambiguationAiGenerationProgressBar progress={disambiguationGenProgress} />;
+  }
+
+  return null;
 }
 
 export function DocumentEditorShell() {
@@ -35,6 +33,12 @@ export function DocumentEditorShell() {
   const {
     dictionaryMode,
     testOpen,
+    segmentationResumePromptOpen,
+    confirmSegmentationResume,
+    dismissSegmentationResumePrompt,
+    partialSegmentationProcessed,
+    partialSegmentationTotal,
+    refreshingOntology,
   } = useDocumentEditorController();
 
   const showTestRail = testOpen
@@ -70,6 +74,16 @@ export function DocumentEditorShell() {
       </div>
 
       <DocumentEditorAgentOverlays />
+
+      <OntologySegmentationResumeDialog
+        open={segmentationResumePromptOpen}
+        processed={partialSegmentationProcessed}
+        total={partialSegmentationTotal}
+        starting={refreshingOntology}
+        onResume={() => confirmSegmentationResume(true)}
+        onStartFresh={() => confirmSegmentationResume(false)}
+        onDismiss={dismissSegmentationResumePrompt}
+      />
     </div>
   );
 }

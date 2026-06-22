@@ -31,7 +31,9 @@ export function ProjectLeftActions() {
   const { analysisDirty, hasTaxonomy } = analysisApi;
   const saveTooltip = [
     dictState?.canSave ? 'dizionario' : null,
-    analysisDirty && hasTaxonomy ? 'ontologia, messaggi e grammatiche agente' : null,
+    analysisDirty && (hasTaxonomy || analysisApi.canPersistAnalysis)
+      ? 'ontologia, messaggi e grammatiche agente'
+      : null,
   ].filter(Boolean).join(' + ') || 'Nessuna modifica da salvare';
 
   return (
@@ -83,16 +85,16 @@ function ProjectActionsToolbar() {
 
   const ontologyRefreshButton = (label: string, highlight = false) => {
     const progressLabel = refreshingOntology && ontologyRefreshProgress
-      ? ontologyRefreshProgress.phase === 'building'
-        ? 'Costruzione albero…'
-        : `${ontologyRefreshProgress.current.toLocaleString('it-IT')} / ${ontologyRefreshProgress.total.toLocaleString('it-IT')}`
-      : 'Ricreazione ontologia…';
+      ? ontologyRefreshProgress.total > 0
+        ? `${ontologyRefreshProgress.current.toLocaleString('it-IT')} / ${ontologyRefreshProgress.total.toLocaleString('it-IT')}`
+        : 'Segmentazione corpus…'
+      : 'Segmentazione corpus…';
 
     if (!showOntologyRefreshButton && !refreshingOntology) return null;
 
     const disabled = refreshingOntology || !canRefreshOntology;
     const title = ontologyRefreshDisabledReason
-      ?? 'Ricalcola i path dell\'albero dal dizionario corrente (ordine categorie incluso)';
+      ?? 'Segmenta il corpus con i dizionari caricati e salva il risultato';
 
     return (
       <div className="flex items-center gap-1">
@@ -117,7 +119,7 @@ function ProjectActionsToolbar() {
             type="button"
             onClick={cancelOntologyRefresh}
             className={`${outlineBtn} text-red-300/90 border-red-400/40 hover:bg-red-400/10`}
-            title="Interrompi la ricreazione ontologia"
+            title="Interrompi la segmentazione e salva il progresso"
           >
             <X className="w-3 h-3" />
           </button>

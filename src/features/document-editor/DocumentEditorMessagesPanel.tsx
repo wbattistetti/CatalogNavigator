@@ -24,6 +24,10 @@ export function DocumentEditorMessagesPanel() {
 
     agentDictionaryContext,
 
+    disambiguationWorkspaceDictionary,
+
+    disambiguationDescriptions,
+
     dictState,
 
     agentNeedsUpdate,
@@ -57,6 +61,12 @@ export function DocumentEditorMessagesPanel() {
     analysis,
 
     updateDisambiguationPlan,
+
+    commitResolvedItemPaths,
+
+    disambiguationPlanResult,
+
+    setDisambiguationPlanResult,
 
     generateDisambiguationMessages,
 
@@ -94,17 +104,9 @@ export function DocumentEditorMessagesPanel() {
 
         analysis={analysis}
 
-        dictionary={agentDictionaryContext?.dictionary ?? null}
+        dictionary={disambiguationWorkspaceDictionary}
 
-        descriptions={
-
-          dictState?.getDescriptions()
-
-          ?? agentDictionaryContext?.descriptions
-
-          ?? []
-
-        }
+        descriptions={disambiguationDescriptions}
 
         loadedRefs={liveLoadedRefs}
 
@@ -137,6 +139,12 @@ export function DocumentEditorMessagesPanel() {
         onExcludeCorpusSegmentOccurrence={excludeCorpusSegmentOccurrence}
 
         onUpdatePlan={updateDisambiguationPlan}
+
+        onCommitResolvedItemPaths={commitResolvedItemPaths}
+
+        plan={disambiguationPlanResult}
+
+        onPlanChange={setDisambiguationPlanResult}
 
         onGenerateMessages={handleGenerateDisambiguationMessages}
 

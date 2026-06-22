@@ -89,10 +89,7 @@ function SplitWorkspace({
 export function DocumentEditorWorkspace() {
   const { dictionaryMode, showOntologyTab, content, catalogSanityHasIssues } = useDocumentEditorController();
   const { activeTab, splitLayout, setSplitLayout } = useDocumentEditorTab();
-  const mountedTabs = useWorkspaceEagerMount(
-    activeTab,
-    (dictionaryMode || showOntologyTab) && !!content.tabular,
-  );
+  const mountedTabs = useWorkspaceEagerMount(activeTab);
   const [dragOver, setDragOver] = useState<DropSide | null>(null);
 
   const onDragOver = useCallback((e: React.DragEvent) => {

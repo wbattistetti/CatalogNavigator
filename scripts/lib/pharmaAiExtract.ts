@@ -32,8 +32,12 @@ REGOLE:
 - Nome commerciale: solo BRAND normalizzato (es. da "CYDECTIN 0,1% SOLUZIONE ORALE PER PECORE" → "CYDECTIN"; da "ADVANTAGE- SOLUZIONE SPOT ON..." → "ADVANTAGE").
 - Principio attivo: solo sostanza/microorganismo/vaccino (senza dose).
 - Dosaggio / concentrazione: valori numerici con unità (es. "80 mg", "0,1%", "5 mg/ml").
-- Quantità confezione: es. "100 ml", "35 compresse", "blister da 3 pipette" (quantità della confezione).
-- Forma farmaceutica vs Forma di confezionamento vs Modalità di somministrazione: distingui (compresse/soluzione orale; flacone/blister; orale/spot on/pour-on/iniettabile).
+- Quantità confezione: es. "100 ml", "35 compresse", "10 dosi" (solo quantità atomica).
+- Tipo contenitore: flacone, blister, fiala, pipetta…
+- Materiale contenitore: vetro, HDPE, PET…
+- Configurazione kit: liofilizzato + solvente, multicomponente…
+- Forma farmaceutica vs Tipo contenitore vs Modalità di somministrazione: distingui (compresse/soluzione orale; flacone/blister; orale/spot on/pour-on/iniettabile).
+- Fascia di peso: range in kg (es. "4–10 kg"), non frasi lunghe "cani di peso da…".
 - Classe terapeutica: codice ATC vet e/o descrizione classe (es. "QP54AB02-MOXIDECTIN").
 - Regime di prescrizione: testo prescrizione così com'è nel catalogo.
 - Target paziente: specie animali, fasce peso/età se presenti (veterinario).

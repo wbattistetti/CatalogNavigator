@@ -10,6 +10,10 @@ import {
 } from './dictionaryTree';
 import { normalizeCompactPath } from './analysisTree';
 import { matchAllCategoryGrammarValues } from './categoryGrammar';
+import {
+  matchAllCategoryGrammarValuesBulk,
+  type CategoryGrammarBulkIndex,
+} from './categoryGrammarBulkIndex';
 import { wordSpanContains, type WordSpanMatch, corpusWordMatchesPhraseWord } from './phraseMatchEngine';
 import {
   getActiveMatchPhrases,
@@ -89,13 +93,13 @@ function findUnshadowedWordStartIndices(
 
 /** Grammar-only matches for canonical tokens not already found by phrase matching. */
 function grammarSupplementMatches(
-  text: string,
+  normalized: string,
   tokens: TokenEntry[],
   categories: TokenCategory[],
   canonicalTexts: Set<string>,
   phraseKept: SegmentMatch[],
+  grammarBulkIndex?: CategoryGrammarBulkIndex,
 ): SegmentMatch[] {
-  const normalized = normalizeDescriptionText(text);
   if (!normalized) return [];
 
   const lower = normalized.toLowerCase();
@@ -105,10 +109,22 @@ function grammarSupplementMatches(
   const seen = new Set(phraseKept.map(segmentMatchKey));
   const supplements: SegmentMatch[] = [];
 
-  for (const category of normalizeCategoryOrders(categories)) {
+  const categoryMatchers = grammarBulkIndex?.categories ?? [];
+
+  for (const category of categories) {
     if (category.type === 'vincolo') continue;
 
-    for (const canonical of matchAllCategoryGrammarValues(lower, category, tokens)) {
+    const missingCanonicals = new Set(
+      (category.tokenTexts ?? []).filter((canonical) => !phraseTexts.has(canonical)),
+    );
+    if (missingCanonicals.size === 0) continue;
+
+    const bulkMatcher = categoryMatchers.find((m) => m.categoryId === category.id);
+    const grammarValues = bulkMatcher
+      ? matchAllCategoryGrammarValuesBulk(lower, bulkMatcher, missingCanonicals)
+      : matchAllCategoryGrammarValues(lower, category, tokens);
+
+    for (const canonical of grammarValues) {
       if (!canonicalTexts.has(canonical) || phraseTexts.has(canonical)) continue;
       const unshadowedStarts = findUnshadowedWordStartIndices(words, canonical, phraseSpans);
       if (unshadowedStarts.length === 0) continue;
@@ -145,13 +161,59 @@ export function segmentDescriptionGrammarAware(
   const canonicalTexts = activeCanonicalTexts(tokens);
   const { matches: phraseMatchList, unmatched } = phraseMatches(text, tokens, prebuiltMatchPhrases);
 
+  return finishGrammarSegmentation(
+    normalized,
+    ordered,
+    canonicalTexts,
+    phraseMatchList,
+    unmatched,
+    tokens,
+  );
+}
+
+/** Grammar path from precomputed phrase matches (skips second phrase scan). */
+export function segmentDescriptionGrammarAwareFromPhraseMatches(
+  text: string,
+  tokens: TokenEntry[],
+  orderedCategories: TokenCategory[],
+  canonicalTexts: Set<string>,
+  phraseMatchList: SegmentMatch[],
+  unmatched: string[],
+  grammarBulkIndex?: CategoryGrammarBulkIndex,
+): SegmentationResult {
+  const normalized = normalizeDescriptionText(text);
+  if (!normalized) {
+    return { segments: [], path: '', unmatched: [] };
+  }
+
+  return finishGrammarSegmentation(
+    normalized,
+    orderedCategories,
+    canonicalTexts,
+    phraseMatchList,
+    unmatched,
+    tokens,
+    grammarBulkIndex,
+  );
+}
+
+function finishGrammarSegmentation(
+  normalized: string,
+  ordered: TokenCategory[],
+  canonicalTexts: Set<string>,
+  phraseMatchList: SegmentMatch[],
+  unmatched: string[],
+  tokens: TokenEntry[],
+  grammarBulkIndex?: CategoryGrammarBulkIndex,
+): SegmentationResult {
   const phraseKept = phraseMatchList.filter((match) => canonicalTexts.has(match.text));
   const grammarMatches = grammarSupplementMatches(
-    text,
+    normalized,
     tokens,
     ordered,
     canonicalTexts,
     phraseKept,
+    grammarBulkIndex,
   );
 
   const segments = orderSegmentsByCategories([...phraseKept, ...grammarMatches], ordered);

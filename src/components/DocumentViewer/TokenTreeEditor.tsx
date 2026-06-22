@@ -622,7 +622,7 @@ export function TokenTreeEditor({
     validIds: allCanonicalTexts,
   });
 
-  const { containerRef: tokenScrollRef, range: tokenRange } = useCorpusVirtualScroll(
+  const { containerRef: tokenScrollRef, range: tokenRange, totalHeight: tokenTotalHeight } = useCorpusVirtualScroll(
     selectableTokenTexts.length,
     TOKEN_ROW_HEIGHT_PX,
   );
@@ -1396,7 +1396,7 @@ export function TokenTreeEditor({
             ) : (
               <div
                 ref={tokenListRef}
-                style={{ height: tokenRange.totalHeight, position: 'relative' }}
+                style={{ height: tokenTotalHeight, position: 'relative' }}
               >
                 <div
                   className="space-y-0.5 absolute left-0 right-0 p-0"

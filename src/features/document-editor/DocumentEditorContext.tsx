@@ -6,6 +6,7 @@ import type { KbDocument } from '../../lib/supabase';
 import { useDocumentEditorController as useControllerHook } from './useDocumentEditorController';
 import { DictionarySelectionProvider } from './DictionarySelectionProvider';
 import { DocumentEditorNavigationProvider } from './DocumentEditorNavigationProvider';
+import { OntologyCorpusSegmentationProvider } from '../ontology-corpus/OntologyCorpusSegmentationContext';
 import {
   DocumentEditorControllerContext,
   type DictionaryAliasPickRequest,
@@ -52,7 +53,9 @@ function DocumentEditorControllerProvider({
     <DocumentEditorControllerContext.Provider value={controller}>
       <DictionaryCatalogContext.Provider value={controller.dictionaryCatalog}>
         <DictionarySessionActionsContext.Provider value={controller.dictionarySessionActions}>
-          {children}
+          <OntologyCorpusSegmentationProvider value={controller.corpusSegmentationContextValue}>
+            {children}
+          </OntologyCorpusSegmentationProvider>
         </DictionarySessionActionsContext.Provider>
       </DictionaryCatalogContext.Provider>
     </DocumentEditorControllerContext.Provider>

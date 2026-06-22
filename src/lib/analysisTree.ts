@@ -100,8 +100,37 @@ function sortSiblingSlots(slots: string[], categories?: TokenCategory[]): string
   return [...slots].sort((a, b) => compareSiblingSlots(a, b, categories));
 }
 
+/** Maps parent slot ("" = forest roots) to direct child paths. Built in O(n). */
+export function buildDirectChildrenIndex(slots: readonly string[]): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  const append = (parent: string, child: string) => {
+    const list = index.get(parent);
+    if (list) list.push(child);
+    else index.set(parent, [child]);
+  };
+
+  for (const raw of slots) {
+    const slot = raw.trim();
+    if (!slot) continue;
+    const lastDot = slot.lastIndexOf('.');
+    if (lastDot === -1) append('', slot);
+    else append(slot.slice(0, lastDot), slot);
+  }
+  return index;
+}
+
+export function getDirectChildSlotsFromIndex(
+  index: ReadonlyMap<string, readonly string[]>,
+  parentSlot: string,
+): string[] {
+  return [...(index.get(parentSlot) ?? [])];
+}
+
 /** Returns direct child slot paths of a parent within a slot list. */
 export function getDirectChildSlots(slots: string[], parentSlot: string): string[] {
+  if (slots.length > 512) {
+    return getDirectChildSlotsFromIndex(buildDirectChildrenIndex(slots), parentSlot);
+  }
   const prefix = parentSlot ? `${parentSlot}.` : '';
   return slots.filter((s) => {
     if (parentSlot && !s.startsWith(prefix)) return false;
@@ -530,16 +559,17 @@ export function orderSlotsDepthFirst(
   categories?: TokenCategory[],
 ): string[] {
   const slotList = [...new Set(slots)];
+  const childrenIndex = buildDirectChildrenIndex(slotList);
   const ordered: string[] = [];
 
   const walk = (node: string) => {
     ordered.push(node);
-    for (const child of sortSiblingSlots(getDirectChildSlots(slotList, node), categories)) {
+    for (const child of sortSiblingSlots(getDirectChildSlotsFromIndex(childrenIndex, node), categories)) {
       walk(child);
     }
   };
 
-  for (const root of sortSiblingSlots(getDirectChildSlots(slotList, ''), categories)) {
+  for (const root of sortSiblingSlots(getDirectChildSlotsFromIndex(childrenIndex, ''), categories)) {
     walk(root);
   }
 

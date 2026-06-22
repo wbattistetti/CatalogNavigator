@@ -1,10 +1,22 @@
 /**
  * Stable cache invalidation key for corpus segmentation (independent of filter order).
+ *
+ * All components are hashed before assembly so the final signature stays well
+ * under PostgreSQL's 8191-byte B-tree index row limit even for large dictionaries.
  */
 import { segmentationCategorySignature } from '../../lib/dictionaryTree';
 import { segmentationGrammarSignature } from '../../lib/grammarAwareSegment';
 import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
 import type { TokenCategory } from '../../lib/dictionaryTree';
+
+/** djb2 rolling hash — same algorithm as corpusContentSignature, fixed-width output. */
+function hashString(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (((h << 5) + h) ^ s.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
 
 function tokenListSignature(tokens: LoadedDictionaryRef['dictionary']['tokens']): string {
   return tokens
@@ -37,7 +49,11 @@ export function corpusContentSignature(descriptions: string[]): string {
   return `${descriptions.length}:${hash}`;
 }
 
-/** Rebuild segmentation cache only when corpus content or dictionary layout changes. */
+/**
+ * Rebuild segmentation cache only when corpus content or dictionary layout changes.
+ * Each component is hashed so the result is always a short fixed-width string,
+ * safe for PostgreSQL B-tree indexes regardless of dictionary size.
+ */
 export function corpusSegmentationCacheSignature(
   descriptions: string[],
   loadedRefs: LoadedDictionaryRef[],
@@ -45,8 +61,8 @@ export function corpusSegmentationCacheSignature(
 ): string {
   return [
     corpusContentSignature(descriptions),
-    loadedRefsSegmentationSignature(loadedRefs),
-    segmentationCategorySignature(fallbackCategories),
-    segmentationGrammarSignature(fallbackCategories),
-  ].join('\0');
+    hashString(loadedRefsSegmentationSignature(loadedRefs)),
+    hashString(segmentationCategorySignature(fallbackCategories)),
+    hashString(segmentationGrammarSignature(fallbackCategories)),
+  ].join('\u001f');
 }

@@ -9,31 +9,68 @@ import {
   type MultiSegmentationResult,
 } from './multiDictionarySegment';
 import { segmentDescription, type TokenEntry } from './tokenDictionary';
+import {
+  buildLoadedRefsSegmentationRuntime,
+  type LoadedRefsSegmentationRuntime,
+} from './loadedRefsSegmentationRuntime';
+import {
+  sanitizeSegmentationEntry,
+  sanitizeStringForPostgresJsonb,
+} from './postgresJsonbStrings';
 
 export type CorpusSegmentationEntry = Pick<MultiSegmentationResult, 'segments' | 'unmatched' | 'path'>;
 
+/** Normalizes description text for cache keys (trim + PostgreSQL-safe). */
+export function normalizeCorpusDescriptionText(text: string): string {
+  return sanitizeStringForPostgresJsonb(text.trim());
+}
+
 const DEFAULT_CHUNK_YIELD_EVERY = 24;
 
-type TaggedPhrases = ReturnType<typeof buildTaggedMatchPhrases>;
+/** Larger corpora yield less often to finish faster without blocking the UI. */
+export function adaptiveCorpusSegmentationYieldEvery(uniqueTextCount: number): number {
+  if (uniqueTextCount < 500) return DEFAULT_CHUNK_YIELD_EVERY;
+  if (uniqueTextCount < 2_000) return 50;
+  if (uniqueTextCount < 10_000) return 150;
+  return 300;
+}
+
+/** Yields so React can paint progress before heavy work continues. */
+export function yieldToMainThread(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+const SEGMENTATION_YIELD_MS = 200;
+const SEGMENTATION_YIELD_BATCH = 150;
 
 function segmentRow(
   text: string,
   loadedRefs: LoadedDictionaryRef[],
   fallbackTokens: TokenEntry[],
   fallbackCategories: TokenCategory[],
-  prebuiltPhrases?: TaggedPhrases,
+  runtime?: LoadedRefsSegmentationRuntime,
 ): CorpusSegmentationEntry {
   if (loadedRefs.length > 0) {
-    const result = segmentDescriptionMulti(text, loadedRefs, prebuiltPhrases);
-    return { segments: result.segments, unmatched: result.unmatched, path: result.path };
+    const result = segmentDescriptionMulti(text, loadedRefs, runtime?.taggedPhrases, runtime);
+    return sanitizeSegmentationEntry({
+      segments: result.segments,
+      unmatched: result.unmatched,
+      path: result.path,
+    });
   }
 
   const legacy = segmentDescription(text, fallbackTokens, fallbackCategories);
-  return {
+  return sanitizeSegmentationEntry({
     segments: legacy.segments.map((t) => ({ text: t, dictionaryId: '' })),
     unmatched: legacy.unmatched,
     path: legacy.path,
-  };
+  });
 }
 
 /** Unique texts with priority items first (stable header order for the rest). */
@@ -41,7 +78,7 @@ export function orderUniqueCorpusTexts(texts: string[], priorityTexts: string[] 
   const seen = new Set<string>();
   const ordered: string[] = [];
   const push = (text: string) => {
-    const trimmed = text.trim();
+    const trimmed = normalizeCorpusDescriptionText(text);
     if (!trimmed || seen.has(trimmed)) return;
     seen.add(trimmed);
     ordered.push(trimmed);
@@ -60,10 +97,12 @@ export function buildCorpusSegmentationCache(
   priorityTexts: string[] = [],
 ): Map<string, CorpusSegmentationEntry> {
   const cache = new Map<string, CorpusSegmentationEntry>();
-  const phrases = loadedRefs.length > 0 ? buildTaggedMatchPhrases(loadedRefs) : undefined;
+  const runtime = loadedRefs.length > 0
+    ? buildLoadedRefsSegmentationRuntime(loadedRefs, buildTaggedMatchPhrases(loadedRefs))
+    : undefined;
 
   for (const text of orderUniqueCorpusTexts(texts, priorityTexts)) {
-    cache.set(text, segmentRow(text, loadedRefs, fallbackTokens, fallbackCategories, phrases));
+    cache.set(text, segmentRow(text, loadedRefs, fallbackTokens, fallbackCategories, runtime));
   }
 
   return cache;
@@ -72,18 +111,12 @@ export function buildCorpusSegmentationCache(
 export interface BuildCorpusSegmentationCacheAsyncOptions {
   yieldEvery?: number;
   shouldCancel?: () => boolean;
-  priorityTexts?: string[];
-  /** Called during scroll to prepend uncached visible rows to the work queue. */
-  getPriorityTexts?: () => string[];
   existingCache?: Map<string, CorpusSegmentationEntry>;
-  onChunk?: (
-    cache: Map<string, CorpusSegmentationEntry>,
-    processed: number,
-    total: number,
-  ) => void;
+  /** Called after each yield batch (and at completion). */
+  onProgress?: (processed: number, total: number, cache: Map<string, CorpusSegmentationEntry>) => void;
 }
 
-/** Yields to the browser between chunks; updates cache incrementally via onChunk. */
+/** Builds the full corpus cache, yielding to the browser between batches. */
 export async function buildCorpusSegmentationCacheAsync(
   texts: string[],
   loadedRefs: LoadedDictionaryRef[],
@@ -92,55 +125,45 @@ export async function buildCorpusSegmentationCacheAsync(
   options?: BuildCorpusSegmentationCacheAsyncOptions,
 ): Promise<Map<string, CorpusSegmentationEntry>> {
   const cache = new Map(options?.existingCache ?? []);
-  const phrases = loadedRefs.length > 0 ? buildTaggedMatchPhrases(loadedRefs) : undefined;
-  const yieldEvery = options?.yieldEvery ?? DEFAULT_CHUNK_YIELD_EVERY;
-  const workQueue = orderUniqueCorpusTexts(texts, options?.priorityTexts ?? []);
+  const taggedPhrases = loadedRefs.length > 0 ? buildTaggedMatchPhrases(loadedRefs) : undefined;
+  const runtime = loadedRefs.length > 0
+    ? buildLoadedRefsSegmentationRuntime(loadedRefs, taggedPhrases)
+    : undefined;
+  const workQueue = orderUniqueCorpusTexts(texts);
+  let lastYield = typeof performance !== 'undefined' ? performance.now() : 0;
   const total = workQueue.length;
-  let queueIndex = 0;
-  let sinceYield = 0;
 
-  const prependUncachedPriority = () => {
-    const priority = options?.getPriorityTexts?.() ?? [];
-    for (let i = priority.length - 1; i >= 0; i--) {
-      const text = priority[i]!.trim();
-      if (!text || cache.has(text)) continue;
-      if (workQueue.includes(text)) {
-        const existingIndex = workQueue.indexOf(text);
-        if (existingIndex > queueIndex) {
-          workQueue.splice(existingIndex, 1);
-          workQueue.splice(queueIndex, 0, text);
-        }
-        continue;
-      }
-      workQueue.splice(queueIndex, 0, text);
-    }
+  let processedCount = 0;
+
+  const reportProgress = () => {
+    options?.onProgress?.(processedCount, total, cache);
   };
 
-  options?.onChunk?.(new Map(cache), cache.size, total);
-  prependUncachedPriority();
+  reportProgress();
+  await yieldToMainThread();
 
-  while (queueIndex < workQueue.length) {
+  for (const text of workQueue) {
     if (options?.shouldCancel?.()) return cache;
+    if (cache.has(text)) {
+      processedCount += 1;
+      continue;
+    }
 
-    prependUncachedPriority();
+    cache.set(text, segmentRow(text, loadedRefs, fallbackTokens, fallbackCategories, runtime));
+    processedCount += 1;
 
-    const text = workQueue[queueIndex]!;
-    queueIndex += 1;
-    if (cache.has(text)) continue;
-
-    cache.set(text, segmentRow(text, loadedRefs, fallbackTokens, fallbackCategories, phrases));
-    sinceYield += 1;
-
-    if (sinceYield >= yieldEvery) {
-      sinceYield = 0;
-      options?.onChunk?.(new Map(cache), cache.size, total);
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      });
+    const now = typeof performance !== 'undefined' ? performance.now() : lastYield + SEGMENTATION_YIELD_MS;
+    const shouldYield = processedCount <= 3
+      || processedCount % SEGMENTATION_YIELD_BATCH === 0
+      || now - lastYield >= SEGMENTATION_YIELD_MS;
+    if (shouldYield) {
+      lastYield = now;
+      reportProgress();
+      await yieldToMainThread();
     }
   }
 
-  options?.onChunk?.(new Map(cache), cache.size, total);
+  reportProgress();
   return cache;
 }
 
@@ -148,5 +171,38 @@ export function lookupCorpusSegmentation(
   cache: Map<string, CorpusSegmentationEntry>,
   text: string,
 ): CorpusSegmentationEntry | undefined {
-  return cache.get(text.trim());
+  return cache.get(normalizeCorpusDescriptionText(text));
+}
+
+/** Builds row segmentations from a precomputed cache (file order). */
+export function rowsFromCorpusSegmentationCache(
+  descriptions: readonly string[],
+  cache: ReadonlyMap<string, CorpusSegmentationEntry>,
+): Array<{
+  rowIndex: number;
+  sourceText: string;
+  path: string;
+  unmatched: string[];
+}> {
+  const rows: Array<{
+    rowIndex: number;
+    sourceText: string;
+    path: string;
+    unmatched: string[];
+  }> = [];
+
+  descriptions.forEach((sourceText, rowIndex) => {
+    const trimmed = normalizeCorpusDescriptionText(sourceText);
+    if (!trimmed) return;
+    const entry = cache.get(trimmed);
+    if (!entry?.path) return;
+    rows.push({
+      rowIndex,
+      sourceText: trimmed,
+      path: entry.path,
+      unmatched: entry.unmatched,
+    });
+  });
+
+  return rows;
 }

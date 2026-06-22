@@ -13,6 +13,7 @@ import { LARGE_DICTIONARY_TOKEN_THRESHOLD } from '../../lib/dictionaryLimits';
 import {
   mergeAllDictionarySessionsIntoLoadedRefs,
   mergeLoadedTokens,
+  type LoadedDictionaryRef,
 } from '../../lib/multiDictionarySegment';
 import { getPathOrderingCategories } from '../../lib/pathCanonicalize';
 import type { KbDocument } from '../../lib/supabase';
@@ -36,6 +37,9 @@ import {
 import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRefresh';
 import { useCorpusExclusions } from './useCorpusExclusions';
 import { useCatalogSanityReport } from './useCatalogSanityReport';
+import { usePersistedSegmentationCache, lookupCorpusSegmentation } from '../../hooks/usePersistedSegmentationCache';
+import { applySegmentExclusions } from '../../lib/corpusSegmentationOverrides';
+import type { OntologyCorpusSegmentationValue } from '../ontology-corpus/OntologyCorpusSegmentationContext';
 
 export type { AgentDictionaryContext };
 
@@ -130,8 +134,8 @@ export function useDocumentEditorController({
   const {
     load,
     initialLoadDone,
-    syncTaxonomyFromLoadedRefs,
-    syncTaxonomyFromLoadedRefsAsync,
+    syncItemPathsFromLoadedRefs,
+    syncItemPathsFromSegmentationCache,
     syncNotice,
     bindGrammarTokens,
     bindPathOrderingCategories,
@@ -283,7 +287,67 @@ export function useDocumentEditorController({
     }
   }, []);
 
-  const { agentNeedsUpdate, canRefreshOntology, showOntologyRefreshButton, ontologyRefreshDisabledReason, refreshingOntology, ontologyRefreshProgress, cancelOntologyRefresh, refreshOntology, buildLiveLoadedRefs, liveLoadedRefs, pathOrderingCategories } = useOntologyRefresh({
+  const liveLoadedRefs = useMemo(
+    () => mergeAllDictionarySessionsIntoLoadedRefs(
+      dicts.loadedRefs,
+      (id) => dicts.getSession(id),
+    ),
+    [dicts.loadedRefs, dicts.getSession, dicts.dictionarySessionsRevision],
+  );
+
+  const pathOrderingCategories = useMemo(
+    () => (liveLoadedRefs.length > 0 ? getPathOrderingCategories(liveLoadedRefs) : []),
+    [liveLoadedRefs],
+  );
+
+  const corpusSegmentation = usePersistedSegmentationCache(
+    doc.id,
+    corpusDescriptions,
+    liveLoadedRefs,
+    pathOrderingCategories,
+    {
+      enabled: showOntologyTab && !!content.tabular && liveLoadedRefs.length > 0,
+    },
+  );
+
+  const runOntologyRefresh = useCallback(async (
+    descriptions: string[],
+    loadedRefs: LoadedDictionaryRef[],
+    options?: {
+      mode?: 'resume' | 'fresh';
+      onProgress?: (current: number, total: number) => void;
+      shouldCancel?: () => boolean;
+    },
+  ) => {
+    const { cache, cancelled } = await corpusSegmentation.buildCorpusSegmentation({
+      mode: options?.mode ?? 'fresh',
+      onProgress: options?.onProgress,
+      shouldCancel: options?.shouldCancel,
+    });
+
+    // Path sync runs in background — do not block the UI after segmentation hits 100%.
+    if (!cancelled && cache.size > 0 && loadedRefs.length > 0) {
+      void syncItemPathsFromSegmentationCache(
+        descriptions,
+        cache,
+        loadedRefs,
+        { segmentExclusions: corpusSegmentExclusions },
+      )
+        .then(() => analysisApi.saveAnalysis())
+        .catch(() => {
+          /* error surfaced via analysisApi.error */
+        });
+    }
+
+    return { cancelled, savedEntryCount: cache.size };
+  }, [
+    corpusSegmentation.buildCorpusSegmentation,
+    syncItemPathsFromSegmentationCache,
+    corpusSegmentExclusions,
+    analysisApi,
+  ]);
+
+  const { agentNeedsUpdate, canRefreshOntology, showOntologyRefreshButton, ontologyRefreshDisabledReason, refreshingOntology, ontologyRefreshProgress, ontologyRefreshError, dismissOntologyRefreshError, partialSaveNotice, dismissPartialSaveNotice, segmentationResumePromptOpen, confirmSegmentationResume, dismissSegmentationResumePrompt, cancelOntologyRefresh, refreshOntology, buildLiveLoadedRefs } = useOntologyRefresh({
     dictState,
     agentDictionaryContext,
     corpusDescriptions,
@@ -293,14 +357,39 @@ export function useDocumentEditorController({
     itemPaths: analysisApi.analysis?.item_paths,
     segmentExclusions: corpusSegmentExclusions,
     itemExclusions: corpusItemExclusions,
-    syncTaxonomyFromLoadedRefsAsync: (descriptions, loadedRefs, options) =>
-      syncTaxonomyFromLoadedRefsAsync(descriptions, loadedRefs, {
-        ...options,
-        segmentExclusions: corpusSegmentExclusions,
-    itemExclusions: corpusItemExclusions,
-      }),
+    partialSegmentationAvailable: corpusSegmentation.partialSegmentationAvailable,
+    partialSegmentationProcessed: corpusSegmentation.progress.processed,
+    partialSegmentationTotal: corpusSegmentation.progress.total,
+    runOntologyRefresh,
+    onCancelSegmentation: corpusSegmentation.cancelBuild,
     onRefreshComplete: handleOntologyRefreshComplete,
   });
+
+  const corpusSegmentationContextValue = useMemo((): OntologyCorpusSegmentationValue => ({
+    cache: corpusSegmentation.cache,
+    progress: corpusSegmentation.progress,
+    matchPhrases: corpusSegmentation.matchPhrases,
+    lookup: (text: string) => {
+      const base = lookupCorpusSegmentation(corpusSegmentation.cache, text.trim());
+      if (!base) return undefined;
+      const excluded = corpusSegmentExclusions.get(text.trim());
+      if (!excluded || excluded.size === 0) return base;
+      return applySegmentExclusions(base, excluded);
+    },
+    removeSegment: removeCorpusSegment,
+    loadingPersisted: corpusSegmentation.loadingPersisted,
+    building: corpusSegmentation.building,
+    stale: corpusSegmentation.stale,
+  }), [
+    corpusSegmentation.cache,
+    corpusSegmentation.progress,
+    corpusSegmentation.matchPhrases,
+    corpusSegmentation.loadingPersisted,
+    corpusSegmentation.building,
+    corpusSegmentation.stale,
+    corpusSegmentExclusions,
+    removeCorpusSegment,
+  ]);
 
   const catalogDescriptions = useMemo(() => {
     const fromPanel = dictState?.getDescriptions() ?? agentDictionaryContext?.descriptions;
@@ -309,7 +398,7 @@ export function useDocumentEditorController({
   }, [dictState, agentDictionaryContext, corpusDescriptions]);
 
   const catalogSanityCanCompute = !!(
-    analysisApi.analysis?.rows?.length
+    analysisApi.hasTaxonomy
     && agentDictionaryContext?.dictionary?.categories?.length
     && catalogDescriptions.some((line) => line.trim().length > 0)
   );
@@ -338,7 +427,7 @@ export function useDocumentEditorController({
         // Re-segment only if no ontology exists yet — once item_paths are set,
         // saving the dictionary must not overwrite them with re-segmented paths.
         if (!analysisApi.hasTaxonomy) {
-          syncTaxonomyFromLoadedRefs(descriptions, liveRefs, {
+          syncItemPathsFromLoadedRefs(descriptions, liveRefs, {
             segmentExclusions: corpusSegmentExclusions,
     itemExclusions: corpusItemExclusions,
           });
@@ -352,7 +441,7 @@ export function useDocumentEditorController({
     [
       buildLiveLoadedRefs,
       analysisApi.hasTaxonomy,
-      syncTaxonomyFromLoadedRefs,
+      syncItemPathsFromLoadedRefs,
       bindGrammarTokens,
       syncGrammarsFromTokens,
       corpusSegmentExclusions,
@@ -413,9 +502,9 @@ export function useDocumentEditorController({
       try {
         const liveRefs = buildLiveLoadedRefs();
         if (liveRefs.length === 0) return;
-        syncTaxonomyFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs, {
+        syncItemPathsFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs, {
           segmentExclusions: corpusSegmentExclusions,
-    itemExclusions: corpusItemExclusions,
+          itemExclusions: corpusItemExclusions,
         });
         // Mark only after sync actually ran — avoids skipping mount when idle callback is cancelled.
         lastAgentMountRevision.current = agentMountRevision;
@@ -444,7 +533,9 @@ export function useDocumentEditorController({
     agentDictionaryContext,
     agentMountRevision,
     buildLiveLoadedRefs,
-    syncTaxonomyFromLoadedRefs,
+    syncItemPathsFromLoadedRefs,
+    corpusSegmentExclusions,
+    corpusItemExclusions,
   ]);
 
   const handleUnloadLibraryDictionary = useCallback(
@@ -463,7 +554,7 @@ export function useDocumentEditorController({
         );
 
         if (descriptions.length > 0) {
-          syncTaxonomyFromLoadedRefs(descriptions, liveRefs, {
+          syncItemPathsFromLoadedRefs(descriptions, liveRefs, {
             segmentExclusions: corpusSegmentExclusions,
     itemExclusions: corpusItemExclusions,
           });
@@ -480,7 +571,7 @@ export function useDocumentEditorController({
       dictState,
       agentDictionaryContext,
       dicts,
-      syncTaxonomyFromLoadedRefs,
+      syncItemPathsFromLoadedRefs,
       bindGrammarTokens,
       syncGrammarsFromTokens,
       corpusSegmentExclusions,
@@ -507,7 +598,7 @@ export function useDocumentEditorController({
 
   const canSaveProject = dictionaryMode && (
     Boolean(dictState?.canSave)
-    || (analysisApi.analysisDirty && analysisApi.hasTaxonomy)
+    || (analysisApi.analysisDirty && analysisApi.canPersistAnalysis)
   );
   const savingProject = Boolean(dictState?.saving) || analysisApi.saving;
 
@@ -516,7 +607,7 @@ export function useDocumentEditorController({
     if (dictState?.canSave) {
       await dictState.save();
     }
-    if (analysisApi.analysisDirty && analysisApi.hasTaxonomy) {
+    if (analysisApi.analysisDirty && analysisApi.canPersistAnalysis) {
       await analysisApi.saveAnalysis();
     }
   }, [analysisApi, dictState, dictionaryMode]);
@@ -534,6 +625,49 @@ export function useDocumentEditorController({
   const clearDisambiguationNavRequest = useCallback(() => {
     setDisambiguationNavRequest(null);
   }, []);
+
+  /** Dictionary for disambiguation tab — panel state, agent bundle, or live project refs. */
+  const disambiguationWorkspaceDictionary = useMemo((): TokenDictionary | null => {
+    const fromPanel = dictState?.getMergedDictionary();
+    if (fromPanel?.categories?.length) return fromPanel;
+
+    if (agentDictionaryContext?.dictionary.categories?.length) {
+      return agentDictionaryContext.dictionary;
+    }
+
+    if (liveLoadedRefs.length > 0) {
+      const tokens = mergeLoadedTokens(liveLoadedRefs);
+      const categories = getPathOrderingCategories(liveLoadedRefs);
+      if (categories.length > 0 && getActiveTokens(tokens).length > 0) {
+        return {
+          descriptionColumn: descriptionColumn ?? ontologyColumns[0] ?? '',
+          tokens,
+          categories,
+        };
+      }
+    }
+
+    return fromPanel ?? agentDictionaryContext?.dictionary ?? null;
+  }, [
+    dictState,
+    agentDictionaryContext,
+    liveLoadedRefs,
+    dicts.dictionarySessionsRevision,
+    descriptionColumn,
+    ontologyColumns,
+  ]);
+
+  const disambiguationDescriptions = useMemo(() => {
+    if (corpusDescriptions.some((line) => line.trim().length > 0)) {
+      return corpusDescriptions;
+    }
+    const fromPanel = dictState?.getDescriptions();
+    if (fromPanel?.some((line) => line.trim().length > 0)) return fromPanel;
+    if (agentDictionaryContext?.descriptions.some((line) => line.trim().length > 0)) {
+      return agentDictionaryContext.descriptions;
+    }
+    return catalogDescriptions;
+  }, [corpusDescriptions, dictState, agentDictionaryContext, catalogDescriptions]);
 
   return {
     doc,
@@ -580,17 +714,32 @@ export function useDocumentEditorController({
     handleTokenGrammarSaved: handleGrammarSaved,
     syncNotice,
     agentDictionaryContext,
+    disambiguationWorkspaceDictionary,
+    disambiguationDescriptions,
     agentNeedsUpdate,
     canRefreshOntology,
     showOntologyRefreshButton,
     ontologyRefreshDisabledReason,
     refreshingOntology,
     ontologyRefreshProgress,
+    ontologyRefreshError,
+    dismissOntologyRefreshError,
+    partialSaveNotice,
+    dismissPartialSaveNotice,
+    segmentationResumePromptOpen,
+    confirmSegmentationResume,
+    dismissSegmentationResumePrompt,
+    partialSegmentationProcessed: corpusSegmentation.progress.processed,
+    partialSegmentationTotal: corpusSegmentation.progress.total,
     cancelOntologyRefresh,
     refreshOntology,
     buildLiveLoadedRefs,
+    segmentationPersistError: corpusSegmentation.persistError,
+    dismissSegmentationPersistError: corpusSegmentation.dismissPersistError,
     liveLoadedRefs,
     pathOrderingCategories,
+    corpusSegmentationContextValue,
+    corpusSegmentation,
       corpusSegmentExclusions,
     corpusItemExclusions,
     removeCorpusSegment,

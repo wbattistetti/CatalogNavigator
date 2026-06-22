@@ -1,6 +1,6 @@
 /**
- * Builds corpus segmentation cache during idle time to avoid blocking tab switches.
- * Updates incrementally and prioritizes viewport-visible rows while scrolling.
+ * Builds the full corpus segmentation cache once per corpus/dictionary signature.
+ * Yields on the main thread during build but commits a single React update when done.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TokenCategory } from '../lib/dictionaryTree';
@@ -25,10 +25,6 @@ export interface SegmentationCacheProgress {
 export interface UseSegmentationCacheOptions {
   /** When false, keeps the last cache and skips rebuild (e.g. ontology tab hidden). */
   enabled?: boolean;
-  /** Description texts currently visible — segmented before the rest of the corpus. */
-  priorityTexts?: string[];
-  /** Live priority list (e.g. viewport rows) without cache invalidation. */
-  getPriorityTexts?: () => string[];
 }
 
 export interface UseSegmentationCacheResult {
@@ -53,11 +49,6 @@ export function useSegmentationCache(
 
   const textsRef = useRef(texts);
   textsRef.current = texts;
-
-  const priorityRef = useRef<string[]>([]);
-  priorityRef.current = options?.priorityTexts ?? [];
-
-  const getPriorityTexts = options?.getPriorityTexts;
 
   const refsSignature = useMemo(
     () => loadedRefsSegmentationSignature(loadedRefs),
@@ -85,34 +76,29 @@ export function useSegmentationCache(
     setProgress({ processed: 0, total: uniqueTotal, ready: false });
 
     const build = async () => {
-      await buildCorpusSegmentationCacheAsync(
+      const result = await buildCorpusSegmentationCacheAsync(
         corpusTexts,
         loadedRefs,
         [],
         fallbackCategories,
         {
           shouldCancel: () => cancelled,
-          priorityTexts: getPriorityTexts?.() ?? priorityRef.current,
-          getPriorityTexts: () => getPriorityTexts?.() ?? priorityRef.current,
-          onChunk: (partial, processed, total) => {
-            if (cancelled) return;
-            setCache(partial);
-            setProgress({
-              processed,
-              total: Math.max(total, uniqueTotal),
-              ready: false,
-            });
+          onProgress: (processed, total) => {
+            if (!cancelled) {
+              setProgress({ processed, total, ready: false });
+            }
           },
         },
       );
 
-      if (!cancelled) {
-        setProgress({
-          processed: uniqueTotal,
-          total: uniqueTotal,
-          ready: true,
-        });
-      }
+      if (cancelled) return;
+
+      setCache(result);
+      setProgress({
+        processed: uniqueTotal,
+        total: uniqueTotal,
+        ready: true,
+      });
     };
 
     void build();

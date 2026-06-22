@@ -17,7 +17,7 @@ import { extractPharmaBatchResilient } from './lib/pharmaAiExtract';
 import {
   PHARMA_CATEGORY_NAMES,
   PHARMA_DICTIONARY_NAME,
-  PHARMA_VINCOLO_CATEGORY,
+  isPharmaVincoloCategory,
   type PharmaCategoryName,
 } from './lib/pharmaDictionaryCategories';
 import { readPharmaCsv } from './lib/pharmaCsvParse';
@@ -167,7 +167,7 @@ function buildCategoriesFromCheckpoint(
   return PHARMA_CATEGORY_NAMES.map((name, order) => {
     const prev = byName.get(name);
     const icon = resolveCategoryIcon(name);
-    const type = name === PHARMA_VINCOLO_CATEGORY ? 'vincolo' : 'attributo';
+    const type = isPharmaVincoloCategory(name) ? 'vincolo' : 'attributo';
     return {
       id: prev?.id ?? `cat_pharma_${order}_${name.replace(/\W+/g, '_').slice(0, 20)}`,
       name,

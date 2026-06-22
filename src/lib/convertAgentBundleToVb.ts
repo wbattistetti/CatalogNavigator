@@ -101,24 +101,10 @@ export interface VbAgentBundlePayload {
 export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayload {
   const analysis = bundle.ontology ?? bundle.analysis;
   const categories = normalizeCategoryOrders(bundle.dictionary.categories ?? []);
-  const rowBySlot = new Map(analysis.rows.map((row) => [row.slot_filling, row]));
 
   const confirmationForPath = (path: string): string | null => {
-    const direct = rowBySlot.get(path)?.confirmation_text?.trim();
-    if (direct) return direct;
-    let best: string | null = null;
-    let bestLen = -1;
-    for (const row of analysis.rows) {
-      const text = row.confirmation_text?.trim();
-      if (!text) continue;
-      if (path === row.slot_filling || path.startsWith(`${row.slot_filling}.`)) {
-        if (row.slot_filling.length > bestLen) {
-          bestLen = row.slot_filling.length;
-          best = text;
-        }
-      }
-    }
-    return best;
+    const item = bundle.corpusItems.find((i) => i.path === path);
+    return item?.sourceText?.trim() ?? null;
   };
 
   const vbCategories = categories.map((cat) => {

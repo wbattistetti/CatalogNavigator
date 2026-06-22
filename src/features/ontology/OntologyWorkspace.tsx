@@ -21,8 +21,6 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
     handleUnloadLibraryDictionary,
     syncNotice,
     analysisApi,
-    corpusSegmentExclusions,
-    removeCorpusSegment,
   } = useDocumentEditorController();
   const { openDictionaryTree } = useDocumentEditorDictionaryNav();
 
@@ -65,8 +63,6 @@ export const OntologyWorkspace = memo(function OntologyWorkspace() {
       syncNotice={syncNotice}
       error={analysisApi.error}
       ontologyItemCount={analysisApi.analysis?.item_paths?.length ?? 0}
-      corpusSegmentExclusions={corpusSegmentExclusions}
-      onRemoveCorpusSegment={removeCorpusSegment}
     />
     </div>
   );

@@ -1,0 +1,237 @@
+{
+  "generatedAt": "2026-06-22T05:56:39.197Z",
+  "dryRun": true,
+  "sourceCheckpoint": "C:\\Agent Browser\\backups\\pharma-csv-extract-checkpoint.json",
+  "stats": {
+    "inputTokens": 11926,
+    "outputCanonicalTokens": 7447,
+    "outputAliases": 883,
+    "decomposedCount": 4752,
+    "formaFarmaceuticaPurified": 0,
+    "formaFarmaceuticaSplit": 0,
+    "nomeCommercialePurified": 256,
+    "nomeCommercialeSplit": 256,
+    "byCategory": {
+      "Principio attivo": 1307,
+      "Nome commerciale": 2258,
+      "Classe terapeutica": 808,
+      "Forma farmaceutica": 35,
+      "Tipo contenitore": 25,
+      "Materiale contenitore": 13,
+      "Configurazione kit": 4,
+      "Dosaggio / concentrazione": 2262,
+      "Quantità confezione": 264,
+      "Indicazione clinica": 15,
+      "Vincoli / controindicazioni": 181,
+      "Modalità di somministrazione": 51,
+      "Regime di prescrizione": 17,
+      "Fascia di peso": 70,
+      "Target paziente / fascia di età": 137,
+      "Indicazioni regolatorie": 0,
+      "Stabilità e conservazione": 0,
+      "Via di eliminazione / metabolismo": 0,
+      "Interazioni farmacologiche rilevanti": 0
+    }
+  },
+  "aliasCount": 821,
+  "categories": [
+    {
+      "category": "Principio attivo",
+      "count": 1307,
+      "samples": [
+        "2-metil-2-fenossiPropionato sodico",
+        "Acepromazina",
+        "acepromazina maleato",
+        "acetilcisteina",
+        "acetilmetionina",
+        "ACIDO ACETILSALICILICO"
+      ]
+    },
+    {
+      "category": "Nome commerciale",
+      "count": 2258,
+      "samples": [
+        "AAGENT",
+        "ABINAC",
+        "ACA CERULEN",
+        "ACA CERULEN R",
+        "ACARENE",
+        "ACQUA PER PREPARAZIONE"
+      ]
+    },
+    {
+      "category": "Classe terapeutica",
+      "count": 808,
+      "samples": [
+        "EXTRA-OMEOPATICI",
+        "Q102AD02",
+        "Q102AD02-BVD virus diarrea bovina",
+        "QA01AD05-ACETYLSALICYLIC ACID",
+        "QA02AF02-ORDINARY SALT COMBINATIONS AND ANTIFLATULENTS",
+        "QA02BA01-CIMETIDINE"
+      ]
+    },
+    {
+      "category": "Forma farmaceutica",
+      "count": 35,
+      "samples": [
+        "antisiero",
+        "capsule",
+        "collirio",
+        "compressa",
+        "compressa masticabile",
+        "compresse"
+      ]
+    },
+    {
+      "category": "Tipo contenitore",
+      "count": 25,
+      "samples": [
+        "applicatore",
+        "barattolo",
+        "blister",
+        "bombola",
+        "bottiglia",
+        "bustina"
+      ]
+    },
+    {
+      "category": "Materiale contenitore",
+      "count": 13,
+      "samples": [
+        "alluminio",
+        "cartone",
+        "HDPE",
+        "LDPE",
+        "PET",
+        "plastica"
+      ]
+    },
+    {
+      "category": "Configurazione kit",
+      "count": 4,
+      "samples": [
+        "liofilizzato + componente",
+        "liofilizzato + solvente",
+        "liofilizzato + solvente + accessorio",
+        "multicomponente"
+      ]
+    },
+    {
+      "category": "Dosaggio / concentrazione",
+      "count": 2262,
+      "samples": [
+        "0 g",
+        "0 grammo",
+        "0 grammo (I)",
+        "0 mg",
+        "0 MILLIGRAMMO",
+        "0,01 grammo"
+      ]
+    },
+    {
+      "category": "Quantità confezione",
+      "count": 264,
+      "samples": [
+        "- 500",
+        "- HOMACCORD VETERINARIO",
+        "- OUT",
+        "- SULFADIMETOSSINA 200",
+        "- VAC",
+        "(A.I.P.)"
+      ]
+    },
+    {
+      "category": "Indicazione clinica",
+      "count": 15,
+      "samples": [
+        "analgesia",
+        "antielmintico",
+        "dermatite",
+        "disturbi neurologici",
+        "induzione del calore",
+        "induzione del parto"
+      ]
+    },
+    {
+      "category": "Vincoli / controindicazioni",
+      "count": 181,
+      "samples": [
+        "ad uso esclusivo del medico veterinario",
+        "FRAZIONI:12",
+        "FRAZIONI:16",
+        "Frazioni:40",
+        "in caso di induzione del parto, la somministrazione deve essere effettuata esclusivamente dal medico veterinario",
+        "L'uso per via intrarticolare deve essere effettuato esclusivamente dal medico veterinario"
+      ]
+    },
+    {
+      "category": "Modalità di somministrazione",
+      "count": 51,
+      "samples": [
+        "acqua da bere",
+        "applicatore corto",
+        "applicatore lungo",
+        "auricolare",
+        "collari",
+        "cutaneo"
+      ]
+    },
+    {
+      "category": "Regime di prescrizione",
+      "count": 17,
+      "samples": [
+        "A.I.P.",
+        "in triplice copia non ripetibile",
+        "libera vendita",
+        "non ripetibile",
+        "ricetta in triplice copia non ripetibile",
+        "Ricetta in triplice copia non ripetibile - libera vendita"
+      ]
+    },
+    {
+      "category": "Fascia di peso",
+      "count": 70,
+      "samples": [
+        "≤ 10 kg",
+        "≤ 2.5 kg",
+        "≤ 25 kg",
+        "≤ 4 kg",
+        "≤ 4.5 kg",
+        "≤ 40 kg"
+      ]
+    },
+    {
+      "category": "Target paziente / fascia di età",
+      "count": 137,
+      "samples": [
+        "agnelli",
+        "animali",
+        "animali che producono latte per consumo umano",
+        "animali da compagnia",
+        "animali da cortile",
+        "animali da laboratorio"
+      ]
+    },
+    {
+      "category": "Indicazioni regolatorie",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "category": "Stabilità e conservazione",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "category": "Via di eliminazione / metabolismo",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "category": "Interazioni farmacologiche rilevanti",
+      "count": 0,
+      "samples": []
+    }
+  ]
+}

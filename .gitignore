@@ -27,6 +27,9 @@ supabase/.temp/
 
 *.bak
 
+# Large benchmark CSV (copy from Downloads locally)
+public/benchmark/*.csv
+
 dialog-engine/.vs/
 dialog-engine/**/bin/
 dialog-engine/**/obj/

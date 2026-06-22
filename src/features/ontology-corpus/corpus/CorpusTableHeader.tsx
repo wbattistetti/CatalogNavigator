@@ -1,7 +1,7 @@
 /**
  * Sticky table header with description filter and segmentation progress.
  */
-import type { SegmentationCacheProgress } from '../../../hooks/useSegmentationCache';
+import type { SegmentationCacheProgress } from '../../../hooks/usePersistedSegmentationCache';
 import { CORPUS_ROW_GRID } from '../corpusLayout';
 import { CorpusDescriptionFilterInput } from './CorpusDescriptionFilterInput';
 import type { CorpusDescriptionFilter } from '../useCorpusDescriptionFilter';
@@ -10,11 +10,17 @@ export function CorpusTableHeader({
   filter,
   progress,
   ontologyItemCount,
+  loadingPersisted = false,
+  building = false,
+  stale = false,
 }: {
   filter: CorpusDescriptionFilter;
   progress: SegmentationCacheProgress;
   /** Saved ontology leaf paths (`analysis.item_paths`). */
   ontologyItemCount: number;
+  loadingPersisted?: boolean;
+  building?: boolean;
+  stale?: boolean;
 }) {
   return (
     <>
@@ -35,25 +41,28 @@ export function CorpusTableHeader({
           <span className="ml-1.5 tabular-nums text-amber-200/95 normal-case">
             ({ontologyItemCount.toLocaleString('it-IT')})
           </span>
-          {!progress.ready && progress.total > 0 && (
+          {loadingPersisted && (
+            <span className="ml-2 normal-case text-emerald-400/45">
+              caricamento…
+            </span>
+          )}
+          {!loadingPersisted && building && progress.total > 0 && (
             <span className="ml-2 normal-case text-emerald-400/45 tabular-nums">
-              {progress.processed.toLocaleString('it-IT')}
-              /
-              {progress.total.toLocaleString('it-IT')}
+              {progress.processed.toLocaleString('it-IT')}/{progress.total.toLocaleString('it-IT')}
+            </span>
+          )}
+          {!loadingPersisted && !building && stale && (
+            <span className="ml-2 normal-case text-amber-300/55">
+              obsoleta
             </span>
           )}
         </div>
       </div>
-      {!progress.ready && progress.total > 0 && (
+      {!loadingPersisted && building && progress.total > 0 && (
         <div className="h-0.5 bg-[#1a3a2a]">
           <div
-            className="h-full bg-sky-400/70 transition-all duration-150"
-            style={{
-              width: `${Math.max(
-                2,
-                (progress.processed / Math.max(progress.total, 1)) * 100,
-              )}%`,
-            }}
+            className="h-full bg-sky-400/50 transition-[width] duration-150"
+            style={{ width: `${Math.min(100, (progress.processed / progress.total) * 100)}%` }}
           />
         </div>
       )}

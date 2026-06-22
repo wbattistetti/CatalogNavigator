@@ -20,15 +20,17 @@ import {
   type CorpusSegmentExclusions,
 } from './corpusSegmentationOverrides';
 
-export type { CorpusItemExclusions };
+export type { CorpusSegmentExclusions, CorpusItemExclusions };
+import {
+  yieldToMainThread,
+  type CorpusSegmentationEntry,
+} from './corpusSegmentationCache';
 import {
   buildLeafDescriptionMap,
   segmentAllDescriptions,
   type RowSegmentation,
   type TokenDictionary,
 } from './tokenDictionary';
-
-export type { CorpusSegmentExclusions, CorpusItemExclusions };
 
 export interface CorpusSegmentationInput {
   descriptions: string[];
@@ -110,6 +112,55 @@ export function resolveCorpusItemPathsFromRows(
     .map((row) => row.path.trim())
     .filter(Boolean);
   return canonicalizeCorpusLeafPaths(leafPaths, input);
+}
+
+/** Resolves leaf paths from a warmed corpus segmentation cache (no live re-segmentation). */
+export function resolveCorpusItemPathsFromSegmentationCache(
+  input: CorpusSegmentationInput,
+  cache: ReadonlyMap<string, CorpusSegmentationEntry>,
+): string[] {
+  return resolveCorpusItemPathsFromRows(rowsFromSegmentationCache(cache), input);
+}
+
+const PATH_RESOLVE_YIELD_EVERY = 400;
+
+function rowsFromSegmentationCache(
+  cache: ReadonlyMap<string, CorpusSegmentationEntry>,
+): RowSegmentation[] {
+  const rows: RowSegmentation[] = [];
+  for (const [text, entry] of cache.entries()) {
+    if (!entry?.path?.trim()) continue;
+    rows.push({
+      rowIndex: rows.length,
+      sourceText: text,
+      path: entry.path,
+      unmatched: entry.unmatched ?? [],
+    });
+  }
+  return rows;
+}
+
+/**
+ * Async path resolution from segmentation cache — yields so the UI stays responsive.
+ */
+export async function resolveCorpusItemPathsFromSegmentationCacheAsync(
+  input: CorpusSegmentationInput,
+  cache: ReadonlyMap<string, CorpusSegmentationEntry>,
+  onProgress?: (processed: number, total: number) => void,
+): Promise<string[]> {
+  const rows = rowsFromSegmentationCache(cache);
+  const total = rows.length;
+  let processed = 0;
+
+  for (let i = 0; i < rows.length; i += PATH_RESOLVE_YIELD_EVERY) {
+    processed = Math.min(i + PATH_RESOLVE_YIELD_EVERY, total);
+    onProgress?.(processed, total);
+    await yieldToMainThread();
+  }
+
+  onProgress?.(total, total);
+  await yieldToMainThread();
+  return resolveCorpusItemPathsFromRows(rows, input);
 }
 
 /** Canonical leaf prestation paths for runtime catalog / export (live segmentation). */

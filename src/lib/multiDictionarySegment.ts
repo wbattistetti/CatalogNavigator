@@ -12,7 +12,7 @@ import {
   getPathOrderingCategories,
   getPrimaryLoadedDictionaryRef,
 } from './pathCanonicalize';
-import { collectWordSpanMatchesAfterShadow, type WordSpanMatch, wordsMatchAtPhrase } from './phraseMatchEngine';
+import { collectWordSpanMatchesAfterShadow, findAllWordSpanMatches, type WordSpanMatch } from './phraseMatchEngine';
 import { dropPreliminaryNegatedMatches } from './preliminaryNegation';
 import {
   applySuppressionCascade,
@@ -27,7 +27,12 @@ import {
   type RowSegmentation,
   type TokenEntry,
 } from './tokenDictionary';
-import { segmentDescriptionGrammarAware } from './grammarAwareSegment';
+import { segmentDescriptionGrammarAwareFromPhraseMatches } from './grammarAwareSegment';
+import {
+  buildLoadedRefsSegmentationRuntime,
+  orderTaggedMatchesByCategories,
+  type LoadedRefsSegmentationRuntime,
+} from './loadedRefsSegmentationRuntime';
 
 export interface LoadedDictionaryRef {
   dictionary: KbDictionary;
@@ -63,32 +68,25 @@ type ScoredTaggedSpan = WordSpanMatch & {
   priority: number;
 };
 
-function wordsMatch(tokenWords: string[], start: number, phrase: string): boolean {
-  return wordsMatchAtPhrase(tokenWords, start, phrase);
-}
-
 function segmentWordsMulti(
   words: string[],
   phrases: TaggedPhrase[],
 ): { matches: TaggedMatch[]; unmatched: string[] } {
-  const candidates: ScoredTaggedSpan[] = [];
-  for (const rule of phrases) {
-    const partCount = tokenizeToWords(rule.phrase).length;
-    if (partCount === 0) continue;
-    for (let i = 0; i <= words.length - partCount; i++) {
-      if (!wordsMatch(words, i, rule.phrase)) continue;
-      candidates.push({
-        wordStart: i,
-        wordEnd: i + partCount,
-        phrase: rule.phrase,
-        canonical: rule.canonical,
-        isAlias: rule.phrase !== rule.canonical,
-        dictionaryId: rule.dictionaryId,
-        priority: rule.priority,
-        score: rule.priority * 1_000_000 + partCount * 1000 + rule.phrase.length,
-      });
-    }
-  }
+  const phraseByText = new Map(phrases.map((p) => [p.phrase, p]));
+  const candidates: ScoredTaggedSpan[] = findAllWordSpanMatches(words, phrases).map((m) => {
+    const rule = phraseByText.get(m.phrase)!;
+    const partCount = m.wordEnd - m.wordStart;
+    return {
+      wordStart: m.wordStart,
+      wordEnd: m.wordEnd,
+      phrase: m.phrase,
+      canonical: m.canonical,
+      isAlias: m.isAlias,
+      dictionaryId: rule.dictionaryId,
+      priority: rule.priority,
+      score: rule.priority * 1_000_000 + partCount * 1000 + rule.phrase.length,
+    };
+  });
 
   const selected = dropPreliminaryNegatedMatches(
     words,
@@ -188,41 +186,60 @@ export function segmentDescriptionMulti(
   text: string,
   loaded: LoadedDictionaryRef[],
   prebuiltPhrases?: TaggedPhrase[],
+  runtime?: LoadedRefsSegmentationRuntime,
 ): MultiSegmentationResult {
   const normalized = normalizeDescriptionText(text);
   if (!normalized || loaded.length === 0) {
     return { segments: [], path: '', unmatched: normalized ? tokenizeToWords(normalized) : [] };
   }
 
-  const phrases = prebuiltPhrases ?? buildTaggedMatchPhrases(loaded);
-  if (phrases.length === 0) {
+  const ctx = runtime ?? buildLoadedRefsSegmentationRuntime(loaded, prebuiltPhrases);
+  const taggedPhrases = prebuiltPhrases ?? ctx.taggedPhrases;
+
+  if (taggedPhrases.length === 0 && ctx.grammarMatchPhrases.length === 0) {
     return { segments: [], path: '', unmatched: tokenizeToWords(normalized) };
   }
 
   const words = tokenizeToWords(normalized);
-  const { matches, unmatched } = segmentWordsMulti(words, phrases);
-  const phraseSegments = orderTaggedSegments(matches, loaded);
-  const tokens = mergeLoadedTokens(loaded);
-  const categories = getPathOrderingCategories(loaded);
-  const canonicalTexts = activeCanonicalTexts(tokens);
-  const grammarResult = segmentDescriptionGrammarAware(
-    text,
-    tokens,
-    categories,
-    getActiveMatchPhrases(tokens),
+  const { matches: phraseMatchList, unmatched: phraseUnmatched } = segmentWordsWithPositions(
+    words,
+    ctx.grammarMatchPhrases,
   );
 
-  const path = filterPathToCanonicalTokens(grammarResult.path, canonicalTexts);
+  const grammarResult = segmentDescriptionGrammarAwareFromPhraseMatches(
+    text,
+    ctx.mergedTokens,
+    ctx.orderedCategories,
+    ctx.canonicalTexts,
+    phraseMatchList,
+    phraseUnmatched,
+    ctx.grammarBulkIndex,
+  );
+
+  const path = filterPathToCanonicalTokens(grammarResult.path, ctx.canonicalTexts);
+
+  if (path) {
+    return {
+      segments: path.split('.').map((segText) => ({
+        text: segText,
+        dictionaryId: ctx.tokenDictionaryIdByText.get(segText) ?? ctx.primaryDictionaryId,
+      })),
+      path,
+      unmatched: grammarResult.unmatched,
+    };
+  }
+
+  const { matches, unmatched } = segmentWordsMulti(words, taggedPhrases);
+  const phraseSegments = orderTaggedMatchesByCategories(
+    matches,
+    ctx.pathCategories,
+    ctx.primaryDictionaryId,
+  );
 
   return {
-    segments: path
-      ? path.split('.').map((segText) => ({
-        text: segText,
-        dictionaryId: resolveTokenDictionaryId(segText, loaded),
-      }))
-      : phraseSegments.filter((s) => canonicalTexts.has(s.text)),
-    path,
-    unmatched: grammarResult.path ? grammarResult.unmatched : [...new Set(unmatched)],
+    segments: phraseSegments.filter((s) => ctx.canonicalTexts.has(s.text)),
+    path: '',
+    unmatched: [...new Set(unmatched)],
   };
 }
 

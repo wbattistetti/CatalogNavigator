@@ -1,5 +1,6 @@
 /**
- * Keeps a workspace mounted but hidden when inactive (preserves internal state).
+ * Renders one workspace when its tab is active. Inactive tabs unmount completely
+ * so hidden Glide grids and dock layouts do not block document scroll.
  */
 import type { ReactNode } from 'react';
 
@@ -9,16 +10,10 @@ interface WorkspacePanelProps {
 }
 
 export function WorkspacePanel({ active, children }: WorkspacePanelProps) {
+  if (!active) return null;
+
   return (
-    <div
-      aria-hidden={!active}
-      className={
-        active
-          ? 'absolute inset-0 flex flex-col min-w-0 min-h-0 overflow-hidden z-[1]'
-          : 'absolute inset-0 flex flex-col min-w-0 min-h-0 overflow-hidden invisible pointer-events-none z-0'
-      }
-      style={active ? undefined : { contentVisibility: 'hidden', contain: 'strict' }}
-    >
+    <div className="absolute inset-0 flex flex-col min-w-0 min-h-0 overflow-hidden">
       <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden">
         {children}
       </div>

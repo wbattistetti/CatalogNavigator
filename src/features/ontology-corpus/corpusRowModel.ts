@@ -13,12 +13,15 @@ export interface CorpusFilterStats {
   active: boolean;
 }
 
+/** Cached collator — avoids creating a new Intl.Collator on every comparison (11k× = 900ms). */
+const collator = new Intl.Collator('it', { sensitivity: 'base' });
+
 /** Builds sorted non-empty corpus rows from raw description strings. */
 export function buildCorpusRows(descriptions: string[]): CorpusRow[] {
   return descriptions
     .map((text, rowIndex) => ({ rowIndex, text: text.trim() }))
     .filter((r) => r.text.length > 0)
-    .sort((a, b) => a.text.localeCompare(b.text, 'it', { sensitivity: 'base' }));
+    .sort((a, b) => collator.compare(a.text, b.text));
 }
 
 /** Splits a filter query into lowercase terms (whitespace-separated). */

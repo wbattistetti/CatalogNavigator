@@ -215,3 +215,70 @@
 .dictionaries-editor-dock .dv-split-view-container .dv-sash-container .dv-sash.dv-enabled {
   transition-delay: 0s;
 }
+
+/* Glide grid fills the document preview flex slot */
+.tabular-glide-grid {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Scrollbar chrome only — do NOT override overflow (Glide sets it via CSS vars) */
+.tabular-glide-grid .dvn-scroller::-webkit-scrollbar,
+.tabular-glide-bench .dvn-scroller::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+.tabular-glide-grid .dvn-scroller::-webkit-scrollbar-track,
+.tabular-glide-bench .dvn-scroller::-webkit-scrollbar-track {
+  background: #0a1510;
+  border-left: 1px solid #1a3a2a;
+}
+
+.tabular-glide-grid .dvn-scroller::-webkit-scrollbar-thumb,
+.tabular-glide-bench .dvn-scroller::-webkit-scrollbar-thumb {
+  background: #34d399;
+  border-radius: 8px;
+  border: 3px solid #0a1510;
+}
+
+.tabular-glide-grid .dvn-scroller::-webkit-scrollbar-thumb:hover,
+.tabular-glide-bench .dvn-scroller::-webkit-scrollbar-thumb:hover {
+  background: #6ee7b7;
+}
+
+.tabular-glide-grid .dvn-scroller::-webkit-scrollbar-corner,
+.tabular-glide-bench .dvn-scroller::-webkit-scrollbar-corner {
+  background: #0a1510;
+}
+
+/* Glide owns overflow on .dvn-scroller — only style scrollbars, never override overflow */
+.tabular-glide-grid .dvn-scroller,
+.tabular-glide-bench .dvn-scroller {
+  scrollbar-width: auto;
+  scrollbar-color: #34d399 #0a1510;
+}
+
+/* Virtual tabular grid scroll container */
+.tabular-virtual-grid {
+  scrollbar-gutter: stable;
+}
+
+/* AG Grid fills the document preview flex slot (unused — kept for future spike) */
+.tabular-ag-grid {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabular-ag-grid .ag-root-wrapper {
+  border: none;
+  border-radius: 0;
+}

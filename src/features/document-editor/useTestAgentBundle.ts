@@ -31,7 +31,8 @@ function useTestAgentCompileInput() {
     const descriptions = dictState?.getDescriptions()
       ?? agentDictionaryContext?.descriptions
       ?? [];
-    if (!dictionary || !analysis?.rows?.length) return null;
+    if (!dictionary || !analysis) return null;
+    if (!descriptions.some((d) => d.trim().length > 0)) return null;
 
     return {
       documentName: doc.name,
