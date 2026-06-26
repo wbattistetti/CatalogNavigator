@@ -65,6 +65,8 @@ export interface TokenTreeEditorProps {
   categories: TokenCategory[];
   onTokensChange: (tokens: TokenEntry[]) => void;
   onCategoriesChange: (categories: TokenCategory[]) => void;
+  /** Atomic tokens + categories update (avoids stale reconcile when both change). */
+  onLayoutChange?: (tokens: TokenEntry[], categories: TokenCategory[]) => void;
   onRemoveCanonical: (text: string) => void;
   onRemoveAlias: (text: string) => void;
   aliasPickActive?: boolean;
@@ -541,6 +543,7 @@ export function TokenTreeEditor({
   categories,
   onTokensChange,
   onCategoriesChange,
+  onLayoutChange,
   onRemoveCanonical,
   onRemoveAlias,
   aliasPickActive = false,
@@ -564,6 +567,8 @@ export function TokenTreeEditor({
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>(NO_CATEGORY_SENTINEL);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newTokenName, setNewTokenName] = useState('');
+  const [newTokenFeedback, setNewTokenFeedback] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+  const pendingActiveCategoryIdRef = useRef<string | null>(null);
   const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
   const [categoryDropIndex, setCategoryDropIndex] = useState<number | null>(null);
   const [tokenDragActive, setTokenDragActive] = useState(false);
@@ -642,6 +647,7 @@ export function TokenTreeEditor({
   useEffect(() => {
     setSplittingTokenText(null);
     setSplitError(null);
+    setNewTokenFeedback(null);
   }, [activeCategoryKey]);
 
   useEffect(() => {
@@ -706,6 +712,14 @@ export function TokenTreeEditor({
   }, [tokens]);
 
   useEffect(() => {
+    const pending = pendingActiveCategoryIdRef.current;
+    if (pending) {
+      if (sortedCategories.some((c) => c.id === pending)) {
+        pendingActiveCategoryIdRef.current = null;
+        setActiveCategoryKey(pending);
+      }
+      return;
+    }
     if (activeCategoryKey === NO_CATEGORY_SENTINEL) return;
     if (!sortedCategories.some((c) => c.id === activeCategoryKey)) {
       setActiveCategoryKey(NO_CATEGORY_SENTINEL);
@@ -727,7 +741,10 @@ export function TokenTreeEditor({
       const next = createCategoryWithTokens(categories, name, []);
       const created = findCategoryByName(next, name);
       setNewCategoryName('');
-      if (created) setActiveCategoryKey(created.id);
+      if (created) {
+        pendingActiveCategoryIdRef.current = created.id;
+        setActiveCategoryKey(created.id);
+      }
       onCategoriesChange(next);
     } catch {
       /* invalid */
@@ -738,20 +755,32 @@ export function TokenTreeEditor({
     const raw = newTokenName.trim();
     if (!raw) return;
 
+    setNewTokenFeedback(null);
     try {
       const result = applyNewConceptLine(tokens, categories, activeCategoryKey, raw);
-      onTokensChange(result.tokens);
-      onCategoriesChange(result.categories);
+      if (onLayoutChange) {
+        onLayoutChange(result.tokens, result.categories);
+      } else {
+        onTokensChange(result.tokens);
+        onCategoriesChange(result.categories);
+      }
       setSelected(new Set([result.canonical]));
       setNewTokenName('');
-    } catch {
-      return;
+      if (result.notice) {
+        setNewTokenFeedback({ kind: 'info', text: result.notice });
+      }
+    } catch (err) {
+      setNewTokenFeedback({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Aggiunta non valida',
+      });
     }
   }, [
     activeCategoryKey,
     categories,
     newTokenName,
     onCategoriesChange,
+    onLayoutChange,
     onTokensChange,
     setSelected,
     tokens,
@@ -990,6 +1019,7 @@ export function TokenTreeEditor({
   }, []);
 
   const selectCategory = useCallback((categoryKey: string) => {
+    pendingActiveCategoryIdRef.current = null;
     setActiveCategoryKey(categoryKey);
     if (
       grammarPanelOpen
@@ -1335,7 +1365,10 @@ export function TokenTreeEditor({
               <input
                 type="text"
                 value={newTokenName}
-                onChange={(e) => setNewTokenName(e.target.value)}
+                onChange={(e) => {
+                  setNewTokenName(e.target.value);
+                  if (newTokenFeedback) setNewTokenFeedback(null);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddToken()}
                 placeholder="canonico o canonico: syn1, syn2"
                 className={`flex-1 min-w-0 ${DICT_INPUT_FIELD} placeholder:text-emerald-300/70 focus:border-sky-400/40`}
@@ -1369,6 +1402,16 @@ export function TokenTreeEditor({
                 <Plus className="w-3 h-3" />
               </button>
             </div>
+            {newTokenFeedback && (
+              <p
+                role="alert"
+                className={`${TREE_LABEL} px-0.5 pt-1 ${
+                  newTokenFeedback.kind === 'error' ? 'text-red-300/90' : 'text-amber-200/90'
+                }`}
+              >
+                {newTokenFeedback.text}
+              </p>
+            )}
           </div>
           <div className="flex-shrink-0 px-2 py-1 flex items-center gap-2 border-b border-[#1a3a2a]/60">
             <span

@@ -38,6 +38,9 @@ import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRe
 import { useCorpusExclusions } from './useCorpusExclusions';
 import { useCatalogSanityReport } from './useCatalogSanityReport';
 import { usePersistedSegmentationCache, lookupCorpusSegmentation } from '../../hooks/usePersistedSegmentationCache';
+import { saveProjectBundle } from '../../application/project/saveProjectBundle';
+import { resolveCorpusOntologyStatus } from '../../domain/project/corpusOntologyStatus';
+import { isProjectDictionaryLayoutStable } from '../../domain/project/projectLayoutReady';
 import { applySegmentExclusions } from '../../lib/corpusSegmentationOverrides';
 import type { OntologyCorpusSegmentationValue } from '../ontology-corpus/OntologyCorpusSegmentationContext';
 
@@ -300,6 +303,12 @@ export function useDocumentEditorController({
     [liveLoadedRefs],
   );
 
+  const dictionaryLayoutStable = isProjectDictionaryLayoutStable({
+    dictionariesLoading: dicts.loading,
+    hydratingLinked: dicts.hydratingLinked,
+    loadedDictionaryCount: liveLoadedRefs.length,
+  });
+
   const corpusSegmentation = usePersistedSegmentationCache(
     doc.id,
     corpusDescriptions,
@@ -307,6 +316,7 @@ export function useDocumentEditorController({
     pathOrderingCategories,
     {
       enabled: showOntologyTab && !!content.tabular && liveLoadedRefs.length > 0,
+      layoutStable: dictionaryLayoutStable,
     },
   );
 
@@ -347,6 +357,29 @@ export function useDocumentEditorController({
     analysisApi,
   ]);
 
+  const corpusOntologyStatus = useMemo(
+    () => resolveCorpusOntologyStatus({
+      layoutStable: dictionaryLayoutStable,
+      layoutStabilizing: corpusSegmentation.layoutStabilizing,
+      loadingPersisted: corpusSegmentation.loadingPersisted,
+      segmentationReady: corpusSegmentation.progress.ready,
+      segmentationStale: corpusSegmentation.stale,
+      partialSaved: corpusSegmentation.partialSegmentationAvailable,
+      partialProcessed: corpusSegmentation.progress.processed,
+      partialTotal: corpusSegmentation.progress.total,
+    }),
+    [
+      dictionaryLayoutStable,
+      corpusSegmentation.layoutStabilizing,
+      corpusSegmentation.loadingPersisted,
+      corpusSegmentation.progress.ready,
+      corpusSegmentation.progress.processed,
+      corpusSegmentation.progress.total,
+      corpusSegmentation.stale,
+      corpusSegmentation.partialSegmentationAvailable,
+    ],
+  );
+
   const { agentNeedsUpdate, canRefreshOntology, showOntologyRefreshButton, ontologyRefreshDisabledReason, refreshingOntology, ontologyRefreshProgress, ontologyRefreshError, dismissOntologyRefreshError, partialSaveNotice, dismissPartialSaveNotice, segmentationResumePromptOpen, confirmSegmentationResume, dismissSegmentationResumePrompt, cancelOntologyRefresh, refreshOntology, buildLiveLoadedRefs } = useOntologyRefresh({
     dictState,
     agentDictionaryContext,
@@ -380,6 +413,7 @@ export function useDocumentEditorController({
     loadingPersisted: corpusSegmentation.loadingPersisted,
     building: corpusSegmentation.building,
     stale: corpusSegmentation.stale,
+    layoutStabilizing: corpusSegmentation.layoutStabilizing,
   }), [
     corpusSegmentation.cache,
     corpusSegmentation.progress,
@@ -387,6 +421,7 @@ export function useDocumentEditorController({
     corpusSegmentation.loadingPersisted,
     corpusSegmentation.building,
     corpusSegmentation.stale,
+    corpusSegmentation.layoutStabilizing,
     corpusSegmentExclusions,
     removeCorpusSegment,
   ]);
@@ -412,7 +447,7 @@ export function useDocumentEditorController({
     analysis: analysisApi.analysis,
     loadedRefs: liveLoadedRefs,
     leafDescriptionMap,
-    dictionaryDirty: dictState?.dirty ?? false,
+    dictionaryDirty: dictState?.dirty ?? dicts.anyEditorDirty,
     analysisDirty: analysisApi.analysisDirty,
     pathsOutOfSync: agentNeedsUpdate,
     segmentExclusions: corpusSegmentExclusions,
@@ -596,21 +631,42 @@ export function useDocumentEditorController({
     [dicts.setSessionTokens, dicts.setSessionCategories],
   );
 
-  const canSaveProject = dictionaryMode && (
-    Boolean(dictState?.canSave)
-    || (analysisApi.analysisDirty && analysisApi.canPersistAnalysis)
+  const hasPersistableDictionary = Boolean(
+    dictionaryMode && dictState?.getMergedDictionary()?.categories?.length,
   );
-  const savingProject = Boolean(dictState?.saving) || analysisApi.saving;
+  const hasDirtyDictionaries = dicts.anyEditorDirty;
+  const canSaveProject = dictionaryMode && (
+    hasPersistableDictionary
+    || hasDirtyDictionaries
+    || analysisApi.canPersistAnalysis
+  );
+  const savingProject = Boolean(dictState?.saving)
+    || analysisApi.saving
+    || dicts.savingDictionaryId != null;
 
   const saveProject = useCallback(async () => {
     if (!dictionaryMode) return;
-    if (dictState?.canSave) {
-      await dictState.save();
+    await saveProjectBundle({
+      saveAllDirtyDictionaries: dicts.saveAllDirtyDictionaries,
+      saveAnalysis: async () => {
+        if (analysisApi.canPersistAnalysis) {
+          await analysisApi.saveAnalysis();
+        }
+      },
+    });
+    if (dictState) {
+      const merged = dictState.getMergedDictionary();
+      if (merged) {
+        await handleDictionaryAfterSave(merged, dictState.getDescriptions());
+      }
     }
-    if (analysisApi.analysisDirty && analysisApi.canPersistAnalysis) {
-      await analysisApi.saveAnalysis();
-    }
-  }, [analysisApi, dictState, dictionaryMode]);
+  }, [
+    analysisApi,
+    dictState,
+    dictionaryMode,
+    dicts.saveAllDirtyDictionaries,
+    handleDictionaryAfterSave,
+  ]);
 
   const openDisambiguationMessage = useCallback((
     signature: string,
@@ -755,6 +811,8 @@ export function useDocumentEditorController({
     canSaveProject,
     savingProject,
     saveProject,
+    corpusOntologyStatus,
+    dictionaryLayoutStable,
   };
 }
 

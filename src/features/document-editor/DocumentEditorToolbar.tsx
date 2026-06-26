@@ -15,7 +15,7 @@ const outlineActive = 'text-emerald-200 border-emerald-400/45 bg-emerald-400/10'
 const outlineIdle = 'text-emerald-300/75 border-[#1a3a2a] hover:border-emerald-400/35 hover:text-emerald-200';
 const headerChip = 'inline-flex items-center gap-1 px-2 py-0.5 font-mono text-xs border rounded transition-colors disabled:opacity-40 flex-shrink-0';
 
-/** Left header chip: saves dictionary + ontology when dirty. */
+/** Left header chip: saves all dirty dictionaries + ontology when dirty. */
 export function ProjectLeftActions() {
   const {
     dictionaryMode,
@@ -24,17 +24,28 @@ export function ProjectLeftActions() {
     saveProject,
     dictState,
     analysisApi,
+    dicts,
   } = useDocumentEditorController();
 
   if (!dictionaryMode) return null;
 
-  const { analysisDirty, hasTaxonomy } = analysisApi;
-  const saveTooltip = [
-    dictState?.canSave ? 'dizionario' : null,
-    analysisDirty && (hasTaxonomy || analysisApi.canPersistAnalysis)
-      ? 'ontologia, messaggi e grammatiche agente'
-      : null,
-  ].filter(Boolean).join(' + ') || 'Nessuna modifica da salvare';
+  const { analysisDirty, canPersistAnalysis } = analysisApi;
+  const dirtyDictionaryCount = dicts.getDirtyDictionaryIds().length;
+  const hasPendingChanges = Boolean(dictState?.canSave)
+    || dirtyDictionaryCount > 0
+    || (analysisDirty && canPersistAnalysis);
+  const saveTooltip = hasPendingChanges
+    ? [
+      dirtyDictionaryCount > 0
+        ? `${dirtyDictionaryCount} dizionario/i`
+        : null,
+      analysisDirty && canPersistAnalysis
+        ? 'ontologia, messaggi, grammatiche agente e test chat'
+        : null,
+    ].filter(Boolean).join(' + ')
+    : canPersistAnalysis || dictState?.getMergedDictionary()?.categories?.length
+      ? 'Forza salvataggio su database (nessuna modifica locale rilevata)'
+      : 'Nessun contenuto da salvare';
 
   return (
     <button

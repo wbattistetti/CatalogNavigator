@@ -1,6 +1,7 @@
 /**
  * In-memory edit session for a single dictionary (tokens + categories buffer).
  */
+import { ensureCategoryGrammarsCoverDictionaryAliases } from './categoryGrammar';
 import type { KbDictionary } from './dictionaryLibrary';
 import type { TokenCategory } from './dictionaryTree';
 import { serializeDictionarySnapshot } from './serializeTokens';
@@ -34,13 +35,15 @@ function buildSavedSnapshot(dict: KbDictionary): { snapshot: string; compactSnap
 }
 
 export function createDictionaryEditSession(dict: KbDictionary): DictionaryEditSession {
+  const categories = ensureCategoryGrammarsCoverDictionaryAliases(dict.categories, dict.tokens);
+  const grammarsSynced = categories !== dict.categories;
   const { snapshot, compactSnapshot } = buildSavedSnapshot(dict);
   return {
     dictionaryId: dict.id,
     tokens: dict.tokens,
-    categories: dict.categories,
+    categories,
     savedSnapshot: snapshot,
-    dirty: false,
+    dirty: grammarsSynced && compactSnapshot,
     compactSnapshot,
   };
 }

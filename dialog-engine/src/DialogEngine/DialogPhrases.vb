@@ -39,10 +39,28 @@ Public Module DialogPhrases
     Public Function FormatLeafConfirmation(targetPath As String, node As Models.DialogNode, preamble As String) As String
         Dim text = node?.ConfirmationText?.Trim()
         If Not String.IsNullOrEmpty(text) Then
-            Dim pre = If(String.IsNullOrWhiteSpace(preamble), "Quindi confermo:", preamble.Trim())
+            text = StripTrailingCatalogPath(text, targetPath)
+            Dim pre = If(String.IsNullOrWhiteSpace(preamble), "Giusto per confermare, desidera prenotare:", preamble.Trim())
             Return $"{pre} {text}"
         End If
         Return $"Selezionato: {targetPath}"
+    End Function
+
+    Private Function StripTrailingCatalogPath(text As String, path As String) As String
+        Dim trimmed = text?.Trim()
+        Dim pathTrimmed = path?.Trim()
+        If String.IsNullOrEmpty(trimmed) OrElse String.IsNullOrEmpty(pathTrimmed) Then
+            Return If(trimmed, String.Empty)
+        End If
+        If String.Equals(trimmed, pathTrimmed, StringComparison.OrdinalIgnoreCase) Then
+            Return trimmed
+        End If
+        Dim suffix = " " & pathTrimmed
+        If trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) Then
+            Dim without = trimmed.Substring(0, trimmed.Length - suffix.Length).TrimEnd()
+            If without.Length > 0 Then Return without
+        End If
+        Return trimmed
     End Function
 
     Public Function DefaultNoMatchReplies(question As String) As (NoMatch1 As String, NoMatch2 As String, NoMatch3 As String)

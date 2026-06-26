@@ -60,6 +60,12 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
   const aliasPickActive = dictionaryAliasPick?.dictionaryId === dictionaryId;
   const aliasPickPhrase = aliasPickActive ? dictionaryAliasPick?.normalizedPhrase ?? null : null;
 
+  const handleLayoutChange = useCallback((nextTokens: typeof tokens, nextCategories: typeof categories) => {
+    const synced = reconcileCategoryGrammarsWithTokens(nextCategories, nextTokens);
+    setSessionTokens(dictionaryId, nextTokens);
+    setSessionCategories(dictionaryId, synced);
+  }, [setSessionTokens, setSessionCategories, dictionaryId]);
+
   const handleTokensChange = useCallback((next: typeof tokens) => {
     const synced = reconcileCategoryGrammarsWithTokens(categories, next);
     setSessionTokens(dictionaryId, next);
@@ -172,6 +178,7 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
             categories={categories}
             onTokensChange={handleTokensChange}
             onCategoriesChange={handleCategoriesChange}
+            onLayoutChange={handleLayoutChange}
             onRemoveCanonical={handleRemoveCanonical}
             onRemoveAlias={handleRemoveAlias}
             aliasPickActive={aliasPickActive}

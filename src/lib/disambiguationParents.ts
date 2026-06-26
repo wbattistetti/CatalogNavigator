@@ -128,19 +128,58 @@ export function hasMultipleDisambiguationContexts(
   return parentInfo?.scope === 'multiple';
 }
 
+/** Fallback path prefixes when category mapping is unavailable (path minus last segment). */
+export function deriveContextPrefixesFromCandidatePaths(paths: string[]): string[] {
+  const prefixes = new Set<string>();
+  for (const raw of paths) {
+    const path = raw.trim();
+    if (!path) continue;
+    const segments = path.split('.').filter(Boolean);
+    if (segments.length < 2) continue;
+    prefixes.add(segments.slice(0, -1).join('.'));
+  }
+  return [...prefixes].sort((a, b) => a.localeCompare(b, 'it'));
+}
+
 export function resolveDisambiguationContextVariants(
   parentInfo: DisambiguationParentInfo | null | undefined,
   contextVariants?: DisambiguationContextVariant[],
+  candidatePaths?: string[],
+  sampleAcquired?: Record<string, string>,
 ): DisambiguationContextVariant[] {
   if (contextVariants && contextVariants.length > 0) {
     return contextVariants;
   }
   const prefixes = parentInfo?.contextPrefixes.filter((p) => p.trim()) ?? [];
   if (prefixes.length > 0) {
-    return prefixes.map((pathPrefix) => ({ pathPrefix, acquired: {} }));
+    return prefixes.map((pathPrefix) => ({
+      pathPrefix,
+      acquired: sampleAcquired && Object.keys(sampleAcquired).length > 0
+        ? { ...sampleAcquired }
+        : {},
+    }));
   }
   if (parentInfo?.parents.length) {
-    return parentInfo.parents.map((pathPrefix) => ({ pathPrefix, acquired: {} }));
+    return parentInfo.parents.map((pathPrefix) => ({
+      pathPrefix,
+      acquired: sampleAcquired && Object.keys(sampleAcquired).length > 0
+        ? { ...sampleAcquired }
+        : {},
+    }));
+  }
+  const fallbackPrefixes = candidatePaths?.length
+    ? deriveContextPrefixesFromCandidatePaths(candidatePaths)
+    : [];
+  if (fallbackPrefixes.length > 0) {
+    return fallbackPrefixes.map((pathPrefix) => ({
+      pathPrefix,
+      acquired: sampleAcquired && Object.keys(sampleAcquired).length > 0
+        ? { ...sampleAcquired }
+        : {},
+    }));
+  }
+  if (sampleAcquired && Object.keys(sampleAcquired).length > 0) {
+    return [{ pathPrefix: '—', acquired: { ...sampleAcquired } }];
   }
   return [];
 }

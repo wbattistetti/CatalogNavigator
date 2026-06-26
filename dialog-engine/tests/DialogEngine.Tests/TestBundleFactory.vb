@@ -127,13 +127,15 @@ Public Module TestBundleFactory
     Public Function BuildMultiExamBundle() As AgentBundle
         Dim ecgOnlyPath = "cardiologica.prima.ecg_only"
         Dim ecgEchoPath = "cardiologica.prima.ecg_echo"
+        Dim radioEcgOnlyPath = "radiologica.prima.ecg_only"
+        Dim radioEcgEchoPath = "radiologica.prima.ecg_echo"
 
         Return New AgentBundle With {
             .Meta = New AgentBundleMeta With {.DocumentName = "Cardio esami"},
             .Ontology = New Ontology With {
                 .StartQuestion = "Come posso aiutarla?",
                 .Categories = New List(Of CategoryDefinition) From {
-                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"cardiologica"}},
+                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"cardiologica", "radiologica"}},
                     New CategoryDefinition With {.Id = "c2", .Name = "tipo visita", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"prima"}},
                     New CategoryDefinition With {.Id = "c3", .Name = "esami", .Order = 2, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"ecg", "eco_doppler"}}
                 },
@@ -148,6 +150,16 @@ Public Module TestBundleFactory
                     }),
                     BuildCatalogItem(ecgEchoPath, {
                         Attr("cardiologica", "specialità"),
+                        Attr("prima", "tipo visita"),
+                        AttrMulti("esami", "ecg", "eco_doppler")
+                    }),
+                    BuildCatalogItem(radioEcgOnlyPath, {
+                        Attr("radiologica", "specialità"),
+                        Attr("prima", "tipo visita"),
+                        AttrMulti("esami", "ecg")
+                    }),
+                    BuildCatalogItem(radioEcgEchoPath, {
+                        Attr("radiologica", "specialità"),
                         Attr("prima", "tipo visita"),
                         AttrMulti("esami", "ecg", "eco_doppler")
                     })
@@ -234,9 +246,151 @@ Public Module TestBundleFactory
         Dim category = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "specialità")
         If category Is Nothing Then Return
         category.Grammar = New Models.CategoryGrammar With {
-            .Regex = "(?<cardiologica>cardiologica|visita cardiologica)",
-            .Mappings = New Dictionary(Of String, String) From {{"cardiologica", "cardiologica"}}
+            .Regex = "(?<cardiologica>cardiologica|visita cardiologica)|(?<urologica>urologia|urologica|visita urologica)|(?<radiologica>radiologia|radiologica|visita radiologica)",
+            .Mappings = New Dictionary(Of String, String) From {
+                {"cardiologica", "cardiologica"},
+                {"urologica", "urologica"},
+                {"radiologica", "radiologica"}
+            }
         }
+    End Sub
+
+    Public Sub AddEcgCategoryGrammar(bundle As AgentBundle)
+        Dim category = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "ECG")
+        If category Is Nothing Then Return
+        category.Grammar = New Models.CategoryGrammar With {
+            .Regex = "(?<ecg>ecg|elettrocardiogramma)",
+            .Mappings = New Dictionary(Of String, String) From {{"ecg", "ecg"}}
+        }
+    End Sub
+
+    Public Function BuildSpecialtyCorrectionBundle() As AgentBundle
+        Dim cardioEcgPath = "cardiologica.prima.ecg"
+        Dim urologiaPath = "urologica.prima"
+        Dim radiologicaPath = "radiologica.prima"
+
+        Return New AgentBundle With {
+            .Meta = New AgentBundleMeta With {.DocumentName = "Specialty correction"},
+            .Ontology = New Ontology With {
+                .StartQuestion = "Come posso aiutarla?",
+                .ConfirmationPreamble = "Confermo:",
+                .Categories = New List(Of CategoryDefinition) From {
+                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"cardiologica", "urologica", "radiologica"}},
+                    New CategoryDefinition With {.Id = "c2", .Name = "tipo visita", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"prima"}},
+                    New CategoryDefinition With {.Id = "c3", .Name = "ECG", .Order = 2, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"ecg"}}
+                },
+                .Nodes = New List(Of DialogNode) From {
+                    New DialogNode With {.Path = cardioEcgPath, .ConfirmationText = "Visita cardiologica prima con ECG"},
+                    New DialogNode With {.Path = urologiaPath, .ConfirmationText = "Visita urologica prima"},
+                    New DialogNode With {.Path = radiologicaPath, .ConfirmationText = "Visita radiologica prima"}
+                }
+            },
+            .Catalog = New Catalog With {
+                .Items = New List(Of CatalogItem) From {
+                    BuildCatalogItem(cardioEcgPath, {
+                        Attr("cardiologica", "specialità"),
+                        Attr("prima", "tipo visita"),
+                        Attr("ecg", "ECG")
+                    }),
+                    BuildCatalogItem(urologiaPath, {
+                        Attr("urologica", "specialità"),
+                        Attr("prima", "tipo visita")
+                    }),
+                    BuildCatalogItem(radiologicaPath, {
+                        Attr("radiologica", "specialità"),
+                        Attr("prima", "tipo visita")
+                    })
+                }
+            }
+        }
+    End Function
+
+    Public Sub AddCorrectionTestGrammars(bundle As AgentBundle)
+        AddSpecialitaGrammar(bundle)
+        AddEcgCategoryGrammar(bundle)
+    End Sub
+
+    Public Function BuildChirurgicaCrossSlotBundle() As AgentBundle
+        Dim primaGenerale = "chirurgica.generale.prima"
+        Dim primaOrtopedica = "chirurgica.ortopedica.prima"
+        Dim primaMaxillo = "chirurgica.maxillo_facciale.prima"
+        Dim controlloGenerale = "chirurgica.generale.controllo"
+
+        Return New AgentBundle With {
+            .Meta = New AgentBundleMeta With {.DocumentName = "Chirurgica cross-slot"},
+            .Ontology = New Ontology With {
+                .StartQuestion = "Come posso aiutarla?",
+                .ConfirmationPreamble = "Confermo:",
+                .Categories = New List(Of CategoryDefinition) From {
+                    New CategoryDefinition With {.Id = "c1", .Name = "specialità", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"chirurgica"}},
+                    New CategoryDefinition With {.Id = "c2", .Name = "sottospecialità", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"generale", "ortopedica", "maxillo facciale"}},
+                    New CategoryDefinition With {.Id = "c3", .Name = "tipo visita", .Order = 2, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"prima", "controllo"}}
+                },
+                .Nodes = New List(Of DialogNode) From {
+                    New DialogNode With {.Path = controlloGenerale, .ConfirmationText = "Visita chirurgica di controllo generale"},
+                    New DialogNode With {.Path = primaGenerale, .ConfirmationText = "Prima visita chirurgica generale"},
+                    New DialogNode With {.Path = primaOrtopedica, .ConfirmationText = "Prima visita chirurgica ortopedica"},
+                    New DialogNode With {.Path = primaMaxillo, .ConfirmationText = "Prima visita chirurgica maxillo facciale"}
+                }
+            },
+            .Catalog = New Catalog With {
+                .Items = New List(Of CatalogItem) From {
+                    BuildCatalogItem(primaGenerale, {
+                        Attr("chirurgica", "specialità"),
+                        Attr("generale", "sottospecialità"),
+                        Attr("prima", "tipo visita")
+                    }),
+                    BuildCatalogItem(primaOrtopedica, {
+                        Attr("chirurgica", "specialità"),
+                        Attr("ortopedica", "sottospecialità"),
+                        Attr("prima", "tipo visita")
+                    }),
+                    BuildCatalogItem(primaMaxillo, {
+                        Attr("chirurgica", "specialità"),
+                        Attr("maxillo facciale", "sottospecialità"),
+                        Attr("prima", "tipo visita")
+                    }),
+                    BuildCatalogItem(controlloGenerale, {
+                        Attr("chirurgica", "specialità"),
+                        Attr("generale", "sottospecialità"),
+                        Attr("controllo", "tipo visita")
+                    })
+                }
+            }
+        }
+    End Function
+
+    Public Sub AddChirurgicaCrossSlotGrammars(bundle As AgentBundle)
+        Dim specialita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "specialità")
+        If specialita IsNot Nothing Then
+            specialita.Grammar = New CategoryGrammar With {
+                .Regex = "(?<chirurgica>visita chirurgica|chirurgica)",
+                .Mappings = New Dictionary(Of String, String) From {{"chirurgica", "chirurgica"}}
+            }
+        End If
+
+        Dim sottospecialita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "sottospecialità")
+        If sottospecialita IsNot Nothing Then
+            sottospecialita.Grammar = New CategoryGrammar With {
+                .Regex = "(?<generale>generale)|(?<ortopedica>ortopedica)|(?<maxillo>maxillo(?:\s+facciale)?)",
+                .Mappings = New Dictionary(Of String, String) From {
+                    {"generale", "generale"},
+                    {"ortopedica", "ortopedica"},
+                    {"maxillo", "maxillo facciale"}
+                }
+            }
+        End If
+
+        Dim tipoVisita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "tipo visita")
+        If tipoVisita IsNot Nothing Then
+            tipoVisita.Grammar = New CategoryGrammar With {
+                .Regex = "(?<prima>prima(?:\s+visita)?)|(?<controllo>di\s+controllo|controllo)",
+                .Mappings = New Dictionary(Of String, String) From {
+                    {"prima", "prima"},
+                    {"controllo", "controllo"}
+                }
+            }
+        End If
     End Sub
 
     Public Sub AddAgeVincoloResolution(bundle As AgentBundle)

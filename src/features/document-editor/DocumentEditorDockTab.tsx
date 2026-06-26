@@ -1,7 +1,7 @@
 /**
  * Draggable tab chrome for main document editor dock panels.
  */
-import { AlertTriangle, BookOpen, FileText, Library, MessageSquare, TestTube2 } from 'lucide-react';
+import { AlertTriangle, BookOpen, Bookmark, FileText, Library, MessageSquare, ScrollText } from 'lucide-react';
 import type { IDockviewPanelHeaderProps } from 'dockview';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 
@@ -12,9 +12,10 @@ const TAB_META: Record<
   [EDITOR_TAB_IDS.document]: { label: 'Documento originale', icon: FileText },
   [EDITOR_TAB_IDS.dictionaries]: { label: 'Dizionari', icon: Library },
   [EDITOR_TAB_IDS.ontology]: { label: 'Ontologia', icon: BookOpen },
+  [EDITOR_TAB_IDS.readableCatalog]: { label: 'Catalogo leggibile', icon: ScrollText },
   [EDITOR_TAB_IDS.disambiguation]: { label: 'Messaggi di disambiguazione', icon: MessageSquare },
   [EDITOR_TAB_IDS.report]: { label: 'Report', icon: AlertTriangle },
-  [EDITOR_TAB_IDS.testPlan]: { label: 'Test Plan', icon: TestTube2 },
+  [EDITOR_TAB_IDS.savedChatTests]: { label: 'Test salvati', icon: Bookmark },
 };
 
 function isEditorTabId(id: string): id is EditorTabId {

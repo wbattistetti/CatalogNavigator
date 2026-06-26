@@ -1,12 +1,12 @@
 /**
  * Main navigation tabs — instant click switch; drag tab onto workspace to split side-by-side.
  */
-import { AlertTriangle, BookOpen, FileText, Library, MessageSquare, TestTube2 } from 'lucide-react';
+import { AlertTriangle, BookOpen, Bookmark, FileText, Library, MessageSquare, ScrollText } from 'lucide-react';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
 import { EDITOR_TAB_DRAG_MIME } from './documentEditorSplitLayout';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 import { catalogSanityIssueCount, hasCatalogSanityIssues } from '../../lib/catalogSanity';
-
+import { useReadableCatalogRows } from '../ontology/useReadableCatalogRows';
 const TABS: Array<{
   id: EditorTabId;
   label: string;
@@ -20,23 +20,24 @@ const TABS: Array<{
   { id: EDITOR_TAB_IDS.document, label: 'Documento originale', icon: FileText },
   { id: EDITOR_TAB_IDS.dictionaries, label: 'Dizionari', icon: Library, dictionaryOnly: true },
   { id: EDITOR_TAB_IDS.ontology, label: 'Ontologia', icon: BookOpen, dictionaryOnly: true },
+  { id: EDITOR_TAB_IDS.readableCatalog, label: 'Catalogo leggibile', icon: ScrollText, dictionaryOnly: true, ontologyTab: true },
   { id: EDITOR_TAB_IDS.report, label: 'Report', icon: AlertTriangle, dictionaryOnly: true, reportTab: true },
-  { id: EDITOR_TAB_IDS.testPlan, label: 'Test Plan', icon: TestTube2, dictionaryOnly: true, ontologyTab: true },
+  { id: EDITOR_TAB_IDS.savedChatTests, label: 'Test salvati', icon: Bookmark, dictionaryOnly: true, ontologyTab: true },
   { id: EDITOR_TAB_IDS.disambiguation, label: 'Messaggi di disambiguazione', icon: MessageSquare, dictionaryOnly: true },
 ];
 
 export function DocumentEditorTabStrip() {
   const { dictionaryMode, showOntologyTab, catalogSanityReport } = useDocumentEditorController();
   const { activeTab, setActiveTab, splitLayout } = useDocumentEditorTab();
+  const { pendingCount: readableCatalogPending } = useReadableCatalogRows();
   const showReportTab = showOntologyTab && hasCatalogSanityIssues(catalogSanityReport);
   const reportBadge = catalogSanityIssueCount(catalogSanityReport);
 
   const visible = TABS.filter((t) => {
     if (t.reportTab) return showReportTab;
-    if (t.ontologyTab || t.id === EDITOR_TAB_IDS.ontology || t.id === EDITOR_TAB_IDS.disambiguation) {
+    if (t.ontologyTab || t.id === EDITOR_TAB_IDS.ontology || t.id === EDITOR_TAB_IDS.disambiguation || t.id === EDITOR_TAB_IDS.readableCatalog) {
       return showOntologyTab;
-    }
-    if (t.dictionaryOnly) return dictionaryMode;
+    }    if (t.dictionaryOnly) return dictionaryMode;
     return true;
   });
 
@@ -48,7 +49,7 @@ export function DocumentEditorTabStrip() {
           ? splitLayout.primary === t.id || splitLayout.secondary === t.id
           : activeTab === t.id;
         const isReport = t.id === EDITOR_TAB_IDS.report;
-
+        const isReadable = t.id === EDITOR_TAB_IDS.readableCatalog;
         return (
           <button
             key={t.id}
@@ -79,7 +80,11 @@ export function DocumentEditorTabStrip() {
                 {reportBadge}
               </span>
             )}
-          </button>
+            {isReadable && readableCatalogPending > 0 && (
+              <span className="ml-0.5 min-w-[1.1rem] px-1 py-px rounded-full bg-orange-400/20 border border-orange-400/35 text-[10px] text-orange-100/95 tabular-nums text-center">
+                {readableCatalogPending}
+              </span>
+            )}          </button>
         );
       })}
     </div>

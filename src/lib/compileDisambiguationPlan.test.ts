@@ -137,6 +137,7 @@ describe('compileDisambiguationPlan — optional category (none)', () => {
     const plainItem: BundleCorpusItem = {
       path: 'cardiologica.prima visita',
       sourceText: 'cardiologica.prima visita',
+      confirmationText: 'cardiologica.prima visita',
       segments: corpus[0]!.segments.filter((s) => s.categoryName !== 'ECG'),
       unmatched: [],
       constraints: [],

@@ -46,6 +46,7 @@ describe('getItemAttributoValues', () => {
     const item: BundleCorpusItem = {
       path: 'cardiologica.prima.ecg.eco_doppler',
       sourceText: '',
+      confirmationText: '',
       segments: [
         { text: 'cardiologica', categoryName: 'specialità', categoryType: 'attributo' },
         { text: 'prima', categoryName: 'tipo visita', categoryType: 'attributo' },

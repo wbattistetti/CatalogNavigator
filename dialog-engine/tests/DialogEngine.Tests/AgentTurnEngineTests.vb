@@ -469,6 +469,26 @@ Public Class AgentTurnEngineTests
     End Sub
 
     <Fact>
+    Public Sub ConfirmsViaCrossSlot_WhenPendingDisambiguationAnsweredWithOtherCategory()
+        Dim bundle = TestBundleFactory.BuildChirurgicaCrossSlotBundle()
+        TestBundleFactory.AddChirurgicaCrossSlotGrammars(bundle)
+
+        Dim state = AgentTurnEngine.ProcessAgentTurnFromText(
+            bundle,
+            AgentTurnEngine.InitAgentSession(),
+            "visita chirurgica"
+        ).NextState
+
+        Assert.NotNull(state.PendingConstraint)
+        Assert.Equal("sottospecialità", state.PendingConstraint.CategoryName)
+
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "di controllo")
+        Assert.Equal("confirm", result.Instruction.Action)
+        Assert.Equal("chirurgica.generale.controllo", result.NextState.SelectedPath)
+        Assert.Contains("controllo", result.SpokenHint.ToLowerInvariant())
+    End Sub
+
+    <Fact>
     Public Sub HttpResponse_BuildsWebhookPayload()
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim turn = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {

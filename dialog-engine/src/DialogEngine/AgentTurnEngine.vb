@@ -79,6 +79,12 @@ Public Module AgentTurnEngine
         turn As Models.AgentTurnInput
     ) As Models.AgentTurnResult
         Dim transcript = If(turn IsNot Nothing AndAlso turn.Transcript IsNot Nothing, turn.Transcript.Trim(), String.Empty)
+
+        Dim correctionResult = CorrectionTurn.TryHandle(
+            bundle, conversation, transcript,
+            confirmImplicit:=turn IsNot Nothing AndAlso turn.ConfirmImplicitConcepts)
+        If correctionResult IsNot Nothing Then Return correctionResult
+
         Dim conceptsThisTurn = ExtractConceptsFromTranscript(bundle, conversation, transcript, turn)
         Return ContinueDialogStep(bundle, conversation, turn, conceptsThisTurn, transcript)
     End Function
@@ -166,6 +172,14 @@ Public Module AgentTurnEngine
         Dim priorConversation = conversation
 
         If IsDisambiguationAnswerMiss(priorConversation, conceptsThisTurn, transcript) Then
+            Dim crossSlot = CrossSlotPendingAnswer.TryExtractDuringPendingDisambiguation(
+                bundle, priorConversation, transcript)
+            If crossSlot IsNot Nothing AndAlso crossSlot.Count > 0 Then
+                conceptsThisTurn = crossSlot
+            End If
+        End If
+
+        If IsDisambiguationAnswerMiss(priorConversation, conceptsThisTurn, transcript) Then
             Dim pending = priorConversation.PendingConstraint
             Dim categoryName = pending.CategoryName
             Dim options = DisambiguationAnswer.ResolveOptionsForPending(bundle, priorConversation, categoryName)
@@ -179,14 +193,15 @@ Public Module AgentTurnEngine
                 bundle, nextConversation, conceptsThisTurn, target, AgentSlotMatch.CandidatePaths(priorCandidates))
         End If
 
-        conversation = MergeIntoConversation(
+        conversation = AgentDialogStep.MergeIntoConversation(
             bundle, conversation, conceptsThisTurn, transcript,
             ConceptOps.ResolveExactAttributoCommits(priorConversation, conceptsThisTurn))
 
         Dim candidates = CatalogFilter.FilterCandidates(bundle.Catalog, conversation)
         Dim confirmImplicit = turn IsNot Nothing AndAlso turn.ConfirmImplicitConcepts
 
-        Return NextStep(bundle, priorConversation, conversation, conceptsThisTurn, candidates, confirmImplicit)
+        Return AgentDialogStep.ResolveNextStep(
+            bundle, priorConversation, conversation, conceptsThisTurn, candidates, confirmImplicit)
     End Function
 
     Private Function IsDisambiguationAnswerMiss(
@@ -208,78 +223,6 @@ Public Module AgentTurnEngine
             .LastTranscript = conversation.LastTranscript,
             .PendingConstraint = conversation.PendingConstraint
         }
-    End Function
-
-    Private Function MergeIntoConversation(
-        bundle As Models.AgentBundle,
-        conversation As Models.AgentSessionState,
-        conceptsInUtterance As IList(Of Models.Concept),
-        utterance As String,
-        exactAttributoCategories As IList(Of String)
-    ) As Models.AgentSessionState
-        Dim prior = If(conversation IsNot Nothing AndAlso conversation.AcquiredConcepts IsNot Nothing,
-            conversation.AcquiredConcepts, New List(Of Models.Concept)())
-        Dim ontology = If(bundle IsNot Nothing, bundle.Ontology, Nothing)
-
-        Return New Models.AgentSessionState With {
-            .AcquiredConcepts = ConceptOps.MergeAcquired(prior, conceptsInUtterance, ontology),
-            .ExactAttributoCategories = ConceptOps.CloneExactAttributoCategories(exactAttributoCategories),
-            .SelectedPath = If(conversation IsNot Nothing, conversation.SelectedPath, Nothing),
-            .NoMatchCount = If(conversation IsNot Nothing, conversation.NoMatchCount, 0),
-            .LastTranscript = If(String.IsNullOrWhiteSpace(utterance) AndAlso conversation IsNot Nothing,
-                conversation.LastTranscript, utterance.Trim()),
-            .PendingConstraint = If(conversation IsNot Nothing, conversation.PendingConstraint, Nothing)
-        }
-    End Function
-
-    Private Function NextStep(
-        bundle As Models.AgentBundle,
-        priorConversation As Models.AgentSessionState,
-        conversation As Models.AgentSessionState,
-        conceptsInUtterance As IList(Of Models.Concept),
-        candidates As IList(Of Models.CatalogItem),
-        confirmImplicit As Boolean
-    ) As Models.AgentTurnResult
-        Dim survivingPaths = AgentSlotMatch.CandidatePaths(candidates)
-
-        If candidates Is Nothing OrElse candidates.Count = 0 Then
-            Dim acquiredCount = ConceptOps.AcquiredCount(conversation.AcquiredConcepts)
-            Dim hint = If(
-                acquiredCount = 0 AndAlso Not String.IsNullOrWhiteSpace(bundle.Ontology.StartQuestion),
-                bundle.Ontology.StartQuestion.Trim(),
-                If(acquiredCount = 0, "Non ho capito. Può ripetere?", "Nessuna prestazione compatibile con i criteri indicati."))
-            Return TurnResultBuilder.NoMatch(
-                conversation, priorConversation, conceptsInUtterance, hint, 0, survivingPaths)
-        End If
-
-        If AgentSlotMatch.ShouldAskAge(bundle, candidates, conversation) Then
-            Dim ageCategory = CategoryTypes.FirstAgeVincoloCategory(bundle.Ontology)
-            Dim categoryName = If(ageCategory IsNot Nothing, ageCategory.Name, "fascia di età")
-            Return TurnResultBuilder.AskAge(bundle, conversation, conceptsInUtterance, categoryName, survivingPaths)
-        End If
-
-        If candidates.Count = 1 Then
-            Return TurnResultBuilder.Confirm(bundle, conversation, candidates(0).Path, conceptsInUtterance, survivingPaths)
-        End If
-
-        If confirmImplicit Then
-            Dim inferred = AgentSlotMatch.FindInferredConcept(
-                bundle, candidates, conversation.AcquiredConcepts, conversation.ExactAttributoCategories)
-            If inferred IsNot Nothing Then
-                Return TurnResultBuilder.ConfirmImplicit(conversation, conceptsInUtterance, inferred, survivingPaths)
-            End If
-        End If
-
-        Dim disambiguation = AgentSlotMatch.FindDisambiguationTarget(
-            bundle, candidates, conversation.AcquiredConcepts, conversation.ExactAttributoCategories)
-        If disambiguation IsNot Nothing Then
-            Return TurnResultBuilder.Disambiguate(bundle, conversation, conceptsInUtterance, disambiguation, survivingPaths)
-        End If
-
-        Return TurnResultBuilder.NoMatch(
-            conversation, priorConversation, conceptsInUtterance,
-            "Ho bisogno di un dettaglio in più per individuare la prestazione.",
-            candidates.Count, survivingPaths)
     End Function
 
     Private Function IsCollectingPendingInput(conversation As Models.AgentSessionState) As Boolean

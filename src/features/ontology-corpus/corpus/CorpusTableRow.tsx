@@ -60,7 +60,7 @@ function CorpusTableRowInner({
         onMouseUp={(e) => onMouseUp(e, text)}
         onContextMenu={(e) => onContextMenu(e, text)}
       >
-        <p className="font-mono text-xs select-text cursor-text">
+        <p className="font-mono text-xs select-text cursor-text whitespace-normal break-words leading-relaxed">
           <MemoCorpusHighlightedDescription
             text={text}
             matchPhrases={matchPhrases}

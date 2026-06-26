@@ -17,6 +17,18 @@ Public Module IncomingConcepts
         Return ValueSetOps.ValuesFromConcept(concept).Count > 0
     End Function
 
+    Private Function ConceptMatchesCrossSlotDuringPendingDisambiguation(
+        bundle As Models.AgentBundle,
+        concept As Models.Concept,
+        pending As Models.ExpectedConstraint,
+        candidates As IList(Of Models.CatalogItem)
+    ) As Boolean
+        If pending Is Nothing OrElse concept Is Nothing Then Return False
+        If String.IsNullOrWhiteSpace(concept.Category) Then Return False
+        If String.Equals(concept.Category, pending.CategoryName, StringComparison.Ordinal) Then Return False
+        Return AgentSlotMatch.ConceptMatchesCorpusOnCandidates(bundle, candidates, concept)
+    End Function
+
     Public Function ConceptMatchesPendingDisambiguation(
         concept As Models.Concept,
         pending As Models.ExpectedConstraint
@@ -48,7 +60,10 @@ Public Module IncomingConcepts
 
         If pending IsNot Nothing AndAlso
            String.Equals(pending.ValueKind, CategoryTypes.ValueKindCanonicalToken, StringComparison.OrdinalIgnoreCase) Then
-            Return items.Where(Function(c) ConceptMatchesPendingDisambiguation(c, pending)).ToList()
+            Return items.Where(
+                Function(c) ConceptMatchesPendingDisambiguation(c, pending) OrElse
+                            ConceptMatchesCrossSlotDuringPendingDisambiguation(bundle, c, pending, candidates)
+            ).ToList()
         End If
 
         Return items.Where(Function(c) AgentSlotMatch.ConceptMatchesCorpusOnCandidates(bundle, candidates, c)).ToList()

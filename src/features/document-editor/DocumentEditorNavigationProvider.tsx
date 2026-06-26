@@ -43,8 +43,9 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
     }
     if (controller.showOntologyTab) {
       tabs.add(EDITOR_TAB_IDS.ontology);
+      tabs.add(EDITOR_TAB_IDS.readableCatalog);
       tabs.add(EDITOR_TAB_IDS.disambiguation);
-      tabs.add(EDITOR_TAB_IDS.testPlan);
+      tabs.add(EDITOR_TAB_IDS.savedChatTests);
     }
     if (controller.showOntologyTab && controller.catalogSanityHasIssues) {
       tabs.add(EDITOR_TAB_IDS.report);
@@ -81,7 +82,7 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
       (activeTab === EDITOR_TAB_IDS.ontology
         || activeTab === EDITOR_TAB_IDS.disambiguation
         || activeTab === EDITOR_TAB_IDS.report
-        || activeTab === EDITOR_TAB_IDS.testPlan)
+        || activeTab === EDITOR_TAB_IDS.savedChatTests)
       && !controller.showOntologyTab
     ) {
       setActiveTabState(EDITOR_TAB_IDS.document);

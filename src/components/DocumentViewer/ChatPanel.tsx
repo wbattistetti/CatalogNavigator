@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   CheckCircle2,
   AlertCircle,
+  BookmarkPlus,
+  Braces,
   ChevronDown,
-  ExternalLink,
   MessageSquareText,
   Pencil,
   RotateCcw,
@@ -33,6 +34,13 @@ import {
   describePendingSessionMismatch,
 } from '../../lib/pendingDisambiguationAnswerContext';
 import { pingVbEngine, postVbTextTurn, type VbTextTurnResponse } from '../../lib/vbTestEngineClient';
+import type { SavedChatMessageInput } from '../../lib/savedChatTests';
+import { resolveBubbleDisambiguationSignature } from '../../lib/resolveBubbleDisambiguationSignature';
+
+export type OpenDisambiguationMessageHandler = (
+  signature: string,
+  opts?: { focusGrammar?: boolean },
+) => void;
 
 export interface DisambiguationPlanMessagePatch {
   signature: string;
@@ -46,7 +54,13 @@ interface ChatPanelProps {
   agentBundle?: AgentBundle | null;
   onClose: () => void;
   onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
-  onOpenDisambiguationMessage?: (signature: string) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+  onSaveChat?: (payload: ChatPanelSavePayload) => void;
+}
+
+export interface ChatPanelSavePayload {
+  messages: SavedChatMessageInput[];
+  selectedPath: string | null;
 }
 
 type PlanCopyField = 'question' | 'no_match_1' | 'no_match_2' | 'no_match_3';
@@ -108,15 +122,49 @@ function resolveDisambiguationOptions(result: VbTextTurnResponse): {
   return { categoryName: categoryName || undefined, options };
 }
 
+function DisambiguationNavButtons({
+  signature,
+  onOpen,
+}: {
+  signature: string;
+  onOpen?: OpenDisambiguationMessageHandler;
+}) {
+  if (!onOpen) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      <button
+        type="button"
+        onClick={() => onOpen(signature, { focusGrammar: false })}
+        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border border-sky-400/35 bg-sky-400/10 text-sky-200 font-mono ${CHAT_TEXT} hover:bg-sky-400/20 transition-colors`}
+      >
+        <MessageSquareText className="w-3 h-3 flex-shrink-0" />
+        Apri messaggio
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpen(signature, { focusGrammar: true })}
+        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border border-violet-400/35 bg-violet-400/10 text-violet-200 font-mono ${CHAT_TEXT} hover:bg-violet-400/20 transition-colors`}
+      >
+        <Braces className="w-3 h-3 flex-shrink-0" />
+        Apri grammatica
+      </button>
+    </div>
+  );
+}
+
 function DisambiguationMetaPanel({
   msg,
   metaLabel,
   metaToneClass,
+  onOpenMessage,
 }: {
   msg: ChatMessage;
   metaLabel: string;
   metaToneClass: string;
+  onOpenMessage?: OpenDisambiguationMessageHandler;
 }) {
+  const signature = resolveBubbleDisambiguationSignature(msg);
+
   return (
     <>
       <p className={`font-mono ${CHAT_TEXT} ${metaToneClass}`}>{metaLabel}</p>
@@ -125,9 +173,10 @@ function DisambiguationMetaPanel({
         parentInfo={msg.disambiguationParentInfo}
         candidatePaths={msg.disambiguationCandidatePaths}
         options={msg.disambiguationOptions}
-        signature={msg.disambiguationSignature}
+        signature={signature ?? msg.disambiguationSignature}
         defaultPathsOpen={msg.disambiguationParentInfo?.scope === 'multiple'}
       />
+      {signature && <DisambiguationNavButtons signature={signature} onOpen={onOpenMessage} />}
     </>
   );
 }
@@ -258,10 +307,10 @@ function TurnDebugPanel({
 
 function UserTurnRecognitionPanel({
   recognition,
-  onEditGrammar,
+  onOpenDisambiguationMessage,
 }: {
   recognition: UserTurnRecognition;
-  onEditGrammar?: () => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
 }) {
   const summary = formatUserTurnRecognitionSummary(recognition);
   const vbCategoryHit = recognition.vbParsed.find(
@@ -270,6 +319,11 @@ function UserTurnRecognitionPanel({
   const showPlanRuntimeMismatch = recognition.planOptions
     && recognition.planOptions.length > 0
     && recognition.planOptions.join('\0') !== recognition.options.join('\0');
+  const signature = resolveBubbleDisambiguationSignature({
+    disambiguationSignature: recognition.signature,
+    disambiguationCategory: recognition.categoryName,
+    disambiguationOptions: recognition.options,
+  });
 
   return (
     <div className="space-y-2">
@@ -316,15 +370,8 @@ function UserTurnRecognitionPanel({
         </p>
       )}
 
-      {recognition.signature && onEditGrammar && (
-        <button
-          type="button"
-          onClick={onEditGrammar}
-          className={`inline-flex items-center gap-1.5 mt-1 px-2 py-1 rounded border border-sky-400/35 bg-sky-400/10 text-sky-200 font-mono ${CHAT_TEXT} hover:bg-sky-400/20 transition-colors`}
-        >
-          <ExternalLink className="w-3 h-3 flex-shrink-0" />
-          Modifica grammatica nel pannello messaggi
-        </button>
+      {signature && onOpenDisambiguationMessage && (
+        <DisambiguationNavButtons signature={signature} onOpen={onOpenDisambiguationMessage} />
       )}
     </div>
   );
@@ -335,7 +382,7 @@ function UserMessageBubble({
   onOpenDisambiguationMessage,
 }: {
   msg: ChatMessage;
-  onOpenDisambiguationMessage?: (signature: string) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
 }) {
   const recognition = msg.turnRecognition;
   const [open, setOpen] = useState(() => shouldAutoExpandUserTurnRecognition(recognition));
@@ -376,11 +423,7 @@ function UserMessageBubble({
         <div className="mt-2 pt-2 border-t border-emerald-400/15 pl-[18px]">
           <UserTurnRecognitionPanel
             recognition={recognition}
-            onEditGrammar={
-              recognition.signature && onOpenDisambiguationMessage
-                ? () => onOpenDisambiguationMessage(recognition.signature!)
-                : undefined
-            }
+            onOpenDisambiguationMessage={onOpenDisambiguationMessage}
           />
         </div>
       )}
@@ -391,9 +434,11 @@ function UserMessageBubble({
 function AgentMessageBubble({
   msg,
   onSave,
+  onOpenDisambiguationMessage,
 }: {
   msg: ChatMessage;
   onSave: (text: string) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
 }) {
   const [open, setOpen] = useState(() => shouldAutoExpandTurnDebug(msg.turnDebug));
   const [editing, setEditing] = useState(false);
@@ -472,6 +517,7 @@ function AgentMessageBubble({
                 msg={msg}
                 metaLabel={metaLabel}
                 metaToneClass={metaToneClass}
+                onOpenMessage={onOpenDisambiguationMessage}
               />
             )}
             {hasTurnDebug && msg.turnDebug && (
@@ -521,6 +567,7 @@ function AgentMessageBubble({
                 msg={msg}
                 metaLabel={metaLabel}
                 metaToneClass={metaToneClass}
+                onOpenMessage={onOpenDisambiguationMessage}
               />
             )}
             {hasTurnDebug && msg.turnDebug && (
@@ -539,6 +586,131 @@ function AgentMessageBubble({
   );
 }
 
+function ChatMessageList({
+  messages,
+  selectedPath,
+  onPatchDisambiguationMessage,
+  onAgentMessageSave,
+  onOpenDisambiguationMessage,
+}: {
+  messages: readonly ChatMessage[];
+  selectedPath?: string | null;
+  onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
+  /** Live chat: patch plan + update local bubble text. */
+  onAgentMessageSave?: (msg: ChatMessage, text: string) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+}) {
+  const handleAgentSave = useCallback((msg: ChatMessage, newText: string) => {
+    if (onAgentMessageSave) {
+      onAgentMessageSave(msg, newText);
+      return;
+    }
+    if (!onPatchDisambiguationMessage) return;
+    const signature = resolveBubbleDisambiguationSignature(msg);
+    if (!signature) return;
+    const field = msg.editablePlanField ?? 'question';
+    onPatchDisambiguationMessage({
+      signature,
+      [field]: newText,
+    });
+  }, [onAgentMessageSave, onPatchDisambiguationMessage]);
+
+  return (
+    <>
+      {messages.map((msg) => {
+        if (msg.isResult) {
+          const path = selectedPath ?? null;
+          return (
+            <div key={msg.id} className="flex flex-col items-center gap-2 py-2">
+              <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-amber-400/8 border border-amber-400/25 w-full">
+                <CheckCircle2 className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className={`font-sans ${CHAT_TEXT} text-amber-200`}>{msg.text}</p>
+                  {path && (
+                    <p className={`font-mono ${CHAT_TEXT} text-amber-400/50 mt-1 break-all`}>{path}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        }
+        if (msg.role === 'agent') {
+          return (
+            <div key={msg.id} className="flex w-full items-start gap-2">
+              <div className="w-full max-w-[92%] px-3 py-2 rounded-lg bg-[#0d1f10] border border-[#1a3a2a]">
+                <AgentMessageBubble
+                  msg={msg}
+                  onSave={(text) => handleAgentSave(msg, text)}
+                  onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+                />
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={msg.id} className="flex justify-end">
+            <div className="max-w-[92%] px-3 py-2 rounded-lg bg-emerald-400/15 border border-emerald-400/18">
+              <UserMessageBubble
+                msg={msg}
+                onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** Read-only replay of a saved chat with the same interactive panels as the live test rail. */
+export function ChatMessageReplay({
+  messages,
+  selectedPath,
+  onPatchDisambiguationMessage,
+  onOpenDisambiguationMessage,
+}: {
+  messages: readonly SavedChatMessageInput[];
+  selectedPath?: string | null;
+  onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+}) {
+  const chatMessages = useMemo((): ChatMessage[] => (
+    messages.map((msg, index) => {
+      const signature = resolveBubbleDisambiguationSignature(msg);
+      return {
+        id: String(index),
+        role: msg.role,
+        text: msg.text,
+        isResult: msg.isResult,
+        hintSource: msg.hintSource as ChatMessage['hintSource'],
+        disambiguationSignature: signature ?? msg.disambiguationSignature,
+        disambiguationCategory: msg.disambiguationCategory,
+        disambiguationOptions: msg.disambiguationOptions,
+        editablePlanField: msg.editablePlanField,
+        turnStuckReasons: msg.turnStuckReasons,
+        turnRecognition: msg.turnRecognition
+          ? {
+            ...msg.turnRecognition,
+            signature: msg.turnRecognition.signature ?? signature ?? undefined,
+          }
+          : undefined,
+        turnDebug: msg.turnDebug,
+      };
+    })
+  ), [messages]);
+
+  return (
+    <div className="px-2 py-3 space-y-3">
+      <ChatMessageList
+        messages={chatMessages}
+        selectedPath={selectedPath}
+        onPatchDisambiguationMessage={onPatchDisambiguationMessage}
+        onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+      />
+    </div>
+  );
+}
+
 interface ChatUiState {
   messages: ChatMessage[];
   selectedPath: string | null;
@@ -553,7 +725,7 @@ function initChatState(bundle: AgentBundle): ChatUiState {
       : [{
         id: '0',
         role: 'agent',
-        text: 'Imposta la Domanda di start nella barra in alto, poi salva.',
+        text: 'Imposta la Domanda di apertura nel pannello Messaggi (sezione globale in alto), poi salva.',
       }],
     selectedPath: null,
     candidatePaths: null,
@@ -574,6 +746,7 @@ export function ChatPanel({
   onClose,
   onPatchDisambiguationMessage,
   onOpenDisambiguationMessage,
+  onSaveChat,
 }: ChatPanelProps) {
   const [state, setState] = useState<ChatUiState>(() => (
     agentBundle ? initChatState(agentBundle) : { messages: [], selectedPath: null, candidatePaths: null }
@@ -582,6 +755,7 @@ export function ChatPanel({
   const [vbOnline, setVbOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState('');
+  const [saveFlash, setSaveFlash] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const msgId = useRef(1);
@@ -599,13 +773,37 @@ export function ChatPanel({
     setVbSession(null);
     if (agentBundle) setState(initChatState(agentBundle));
     setInput('');
+    setSaveFlash(false);
   }, [agentBundle]);
 
+  const saveChat = useCallback(() => {
+    if (!onSaveChat || state.messages.length === 0) return;
+    const payload: ChatPanelSavePayload = {
+      messages: state.messages.map((msg) => ({
+        role: msg.role,
+        text: msg.text,
+        isResult: msg.isResult,
+        hintSource: msg.hintSource,
+        disambiguationSignature: msg.disambiguationSignature,
+        disambiguationCategory: msg.disambiguationCategory,
+        disambiguationOptions: msg.disambiguationOptions,
+        editablePlanField: msg.editablePlanField,
+        turnStuckReasons: msg.turnStuckReasons,
+        turnRecognition: msg.turnRecognition,
+        turnDebug: msg.turnDebug,
+      })),
+      selectedPath: state.selectedPath,
+    };
+    onSaveChat(payload);
+    setSaveFlash(true);
+  }, [onSaveChat, state.messages, state.selectedPath]);
+
   const handlePatchMessage = useCallback((msg: ChatMessage, newText: string) => {
-    if (!msg.disambiguationSignature || !onPatchDisambiguationMessage) return;
+    const signature = resolveBubbleDisambiguationSignature(msg);
+    if (!signature || !onPatchDisambiguationMessage) return;
     const field = msg.editablePlanField ?? 'question';
     onPatchDisambiguationMessage({
-      signature: msg.disambiguationSignature,
+      signature,
       [field]: newText,
     });
     setState((prev) => ({
@@ -718,6 +916,13 @@ export function ChatPanel({
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const unreachable = /Failed to fetch|NetworkError|fetch failed/i.test(message)
+        || /VB engine HTTP (5\d\d|0)/i.test(message);
+      const agentText = message.includes('[convertAgentBundleToVb]')
+        ? message
+        : unreachable
+          ? `Motore VB non raggiungibile: ${message}. Avvia DialogEngine.Api (porta 5190).`
+          : `Errore motore VB: ${message}`;
       setState((prev) => ({
         ...prev,
         messages: [
@@ -725,7 +930,7 @@ export function ChatPanel({
           {
             id: nextMsgId(),
             role: 'agent',
-            text: `Motore VB non raggiungibile: ${message}. Avvia DialogEngine.Api (porta 5190).`,
+            text: agentText,
           },
         ],
       }));
@@ -798,6 +1003,21 @@ export function ChatPanel({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {onSaveChat && (
+            <button
+              type="button"
+              onClick={saveChat}
+              disabled={state.messages.length === 0 || loading}
+              title={saveFlash ? 'Chat salvata' : 'Salva chat nei test'}
+              className={`p-1 rounded transition-colors disabled:opacity-40 ${
+                saveFlash
+                  ? 'text-emerald-300 bg-emerald-400/15'
+                  : 'text-emerald-400/40 hover:text-emerald-400/80 hover:bg-emerald-400/10'
+              }`}
+            >
+              <BookmarkPlus className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button onClick={restart} title="Riavvia" className="p-1 rounded text-emerald-400/40 hover:text-emerald-400/80 hover:bg-emerald-400/10 transition-colors">
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
@@ -817,43 +1037,12 @@ export function ChatPanel({
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-3">
-        {state.messages.map((msg) => {
-          if (msg.isResult) {
-            return (
-              <div key={msg.id} className="flex flex-col items-center gap-2 py-2">
-                <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-amber-400/8 border border-amber-400/25 w-full">
-                  <CheckCircle2 className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className={`font-sans ${CHAT_TEXT} text-amber-200`}>{msg.text}</p>
-                    <p className={`font-mono ${CHAT_TEXT} text-amber-400/50 mt-1 break-all`}>{state.selectedPath}</p>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-          if (msg.role === 'agent') {
-            return (
-              <div key={msg.id} className="flex w-full items-start gap-2">
-                <div className="w-full max-w-[92%] px-3 py-2 rounded-lg bg-[#0d1f10] border border-[#1a3a2a]">
-                  <AgentMessageBubble
-                    msg={msg}
-                    onSave={(text) => handlePatchMessage(msg, text)}
-                  />
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div key={msg.id} className="flex justify-end">
-              <div className="max-w-[92%] px-3 py-2 rounded-lg bg-emerald-400/15 border border-emerald-400/18">
-                <UserMessageBubble
-                  msg={msg}
-                  onOpenDisambiguationMessage={onOpenDisambiguationMessage}
-                />
-              </div>
-            </div>
-          );
-        })}
+        <ChatMessageList
+          messages={state.messages}
+          selectedPath={state.selectedPath}
+          onAgentMessageSave={handlePatchMessage}
+          onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+        />
         <div ref={bottomRef} />
       </div>
 

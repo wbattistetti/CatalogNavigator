@@ -76,6 +76,8 @@ export function DocumentEditorMessagesPanel() {
 
     analysisDirty,
 
+    updateAgentConfig,
+
   } = analysisApi;
 
 
@@ -151,6 +153,8 @@ export function DocumentEditorMessagesPanel() {
         navRequest={disambiguationNavRequest}
 
         onNavRequestHandled={clearDisambiguationNavRequest}
+
+        onUpdateAgentConfig={updateAgentConfig}
 
       />
 

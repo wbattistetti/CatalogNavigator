@@ -58,6 +58,9 @@ describe('buildUserTurnRecognition', () => {
         categoryName: 'esame',
         options: ['ecg', 'none'],
       },
+      priorSession: {
+        pendingExpectedInput: [{ valueKind: 'canonical_token', categoryName: 'esame' }],
+      },
     });
     expect(recognition?.grammarMatch?.selectedOption).toBe('ecg');
     expect(formatUserTurnRecognitionSummary(recognition!)).toContain('ecg');
@@ -75,6 +78,21 @@ describe('buildUserTurnRecognition', () => {
       },
     });
     expect(recognition?.grammarMatch).toBeNull();
+    expect(shouldAutoExpandUserTurnRecognition(recognition)).toBe(true);
+  });
+
+  it('surfaces correction intent during pending disambiguation', () => {
+    const recognition = buildUserTurnRecognition({
+      userText: 'scusi intendevo una radiologica',
+      bundle,
+      vbParsed: [],
+      pending: {
+        categoryName: 'esame',
+        options: ['ecg', 'none'],
+      },
+    });
+    expect(recognition?.correctionIntent?.payloadText).toBe('radiologica');
+    expect(formatUserTurnRecognitionSummary(recognition!)).toContain('Correzione');
     expect(shouldAutoExpandUserTurnRecognition(recognition)).toBe(true);
   });
 });

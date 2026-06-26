@@ -42,6 +42,8 @@ export interface BundleCorpusSegment {
 export interface BundleCorpusItem {
   path: string;
   sourceText: string;
+  /** Spoken confirmation phrase (readable catalog); defaults to sourceText when unset. */
+  confirmationText: string;
   segments: BundleCorpusSegment[];
   unmatched: string[];
   constraints: CompiledConstraint[];

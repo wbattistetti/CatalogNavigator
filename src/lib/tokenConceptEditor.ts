@@ -4,6 +4,7 @@
  */
 import {
   addTokenToCategorySorted,
+  getCategoryIdForToken,
   moveTokensToRoot,
   NO_CATEGORY_SENTINEL,
   type TokenCategory,
@@ -155,20 +156,61 @@ export function applyCanonicalConceptEdit(
   return { tokens: nextTokens, categories: nextCategories, canonical: newCanonical };
 }
 
+function resolveTargetCategoryId(activeCategoryKey: string): string | null {
+  return activeCategoryKey === NO_CATEGORY_SENTINEL ? null : activeCategoryKey;
+}
+
+function categoryDisplayName(categories: TokenCategory[], categoryId: string): string {
+  return categories.find((c) => c.id === categoryId)?.name?.trim() || 'Categoria';
+}
+
+export interface ApplyNewConceptLineResult {
+  tokens: TokenEntry[];
+  categories: TokenCategory[];
+  canonical: string;
+  /** Set when an existing canonical is recategorized into the active bucket. */
+  notice?: string;
+}
+
+function assertNotDuplicateInTargetBucket(
+  categories: TokenCategory[],
+  activeCategoryKey: string,
+  canonical: string,
+): void {
+  const currentCategoryId = getCategoryIdForToken(canonical, categories);
+  const targetCategoryId = resolveTargetCategoryId(activeCategoryKey);
+
+  if (currentCategoryId !== targetCategoryId) return;
+
+  if (targetCategoryId === null) {
+    throw new Error(`«${canonical}» è già nel dizionario (senza categoria)`);
+  }
+  throw new Error(`«${canonical}» è già in questa categoria`);
+}
+
 /**
  * Adds a new canonical (and optional aliases) from the editor / "Nuovo token" field.
+ * Reuses an existing canonical and moves it when it lives in another category.
  */
 export function applyNewConceptLine(
   tokens: TokenEntry[],
   categories: TokenCategory[],
   activeCategoryKey: string,
   editorLine: string,
-): { tokens: TokenEntry[]; categories: TokenCategory[]; canonical: string } {
+): ApplyNewConceptLineResult {
   const { canonical, aliases } = parseConceptEditorLine(editorLine);
 
   let nextTokens = tokens;
+  let notice: string | undefined;
   const exists = nextTokens.some((t) => t.text === canonical && isCanonicalToken(t));
-  if (!exists) {
+  if (exists) {
+    assertNotDuplicateInTargetBucket(categories, activeCategoryKey, canonical);
+    const fromCategoryId = getCategoryIdForToken(canonical, categories);
+    if (fromCategoryId) {
+      const name = categoryDisplayName(categories, fromCategoryId);
+      notice = `«${canonical}» spostato dalla categoria «${name}»`;
+    }
+  } else {
     nextTokens = addToken(nextTokens, canonical);
   }
 
@@ -181,5 +223,5 @@ export function applyNewConceptLine(
 
   nextTokens = syncAliasesForCanonical(nextTokens, canonical, aliases);
 
-  return { tokens: nextTokens, categories: nextCategories, canonical };
+  return { tokens: nextTokens, categories: nextCategories, canonical, notice };
 }

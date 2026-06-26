@@ -168,8 +168,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     setLocalError(null);
 
     try {
-      if (!projectDictId) throw new Error('Nessun dizionario di progetto');
-      await dicts.saveDictionary(projectDictId);
+      await dicts.saveAllDirtyDictionaries();
 
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
@@ -182,7 +181,7 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     } finally {
       setSaving(false);
     }
-  }, [descriptionColumn, saving, dicts, getMergedDictionary, descriptions, onAfterSave, projectDictId]);
+  }, [descriptionColumn, saving, dicts, getMergedDictionary, descriptions, onAfterSave]);
 
   const handleDiscard = useCallback(() => {
     if (projectDictId) dicts.discardDictionary(projectDictId);
@@ -232,9 +231,9 @@ export const DictionaryPanel = memo(function DictionaryPanel({
   }, [dicts]);
 
   const panelState = useMemo((): DictionaryPanelState => ({
-    dirty: projectDirty,
-    canSave: projectDirty && !saving && !!projectDictId,
-    saving,
+    dirty: projectDirty || dicts.anyEditorDirty,
+    canSave: (projectDirty || dicts.anyEditorDirty) && !saving && !dicts.savingDictionaryId && !!projectDictId,
+    saving: saving || dicts.savingDictionaryId != null,
     activeTokenCount: activeCount,
     ontologyColumns,
     descriptionColumn,
@@ -247,6 +246,8 @@ export const DictionaryPanel = memo(function DictionaryPanel({
     replaceCategories,
   }), [
     projectDirty,
+    dicts.anyEditorDirty,
+    dicts.savingDictionaryId,
     saving,
     projectDictId,
     activeCount,

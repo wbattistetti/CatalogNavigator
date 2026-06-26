@@ -47,22 +47,48 @@ export function DisambiguationAnswerGrammarEditor({
   autoFocus = false,
   onSave,
 }: DisambiguationAnswerGrammarEditorProps) {
-  const grammarSync = grammar?.regex ?? '';
+  const grammarRegex = grammar?.regex ?? '';
+  const optionsKey = options.join('\0');
+  const rowSyncKey = `${grammarRegex}\0${optionsKey}\0${style}`;
+
   const initialPanels = useMemo(
     () => buildDisambiguationAnswerGrammarPanels(options, grammar, style),
-    [options, grammar, style, grammarSync],
+    [options, grammarRegex, style],
   );
   const [panels, setPanels] = useState(initialPanels);
   const [error, setError] = useState<string | null>(null);
   const [testUtterance, setTestUtterance] = useState('');
   const [testOpen, setTestOpen] = useState(false);
+  const lastRowSyncKeyRef = useRef(rowSyncKey);
 
   useEffect(() => {
+    if (lastRowSyncKeyRef.current === rowSyncKey) return;
+    lastRowSyncKeyRef.current = rowSyncKey;
     setPanels(initialPanels);
     setError(null);
     setTestUtterance('');
     setTestOpen(false);
-  }, [initialPanels]);
+  }, [rowSyncKey, initialPanels]);
+
+  const persistPanels = useCallback((nextPanels: typeof panels) => {
+    try {
+      const compiled = compileDisambiguationAnswerGrammarFromPanels(nextPanels);
+      onSave(compiled);
+      lastRowSyncKeyRef.current = `${compiled.regex ?? ''}\0${optionsKey}\0${style}`;
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [onSave, optionsKey, style]);
+
+  const updatePanelSynonyms = useCallback((index: number, synonyms: string[]) => {
+    let nextPanels: typeof panels = [];
+    setPanels((prev) => {
+      nextPanels = prev.map((p, i) => (i === index ? { ...p, synonyms } : p));
+      return nextPanels;
+    });
+    persistPanels(nextPanels);
+  }, [persistPanels]);
 
   const testResult = useMemo(
     () => matchDisambiguationAnswerDraft(panels, testUtterance),
@@ -73,23 +99,9 @@ export function DisambiguationAnswerGrammarEditor({
     if (!runtimeOptions?.length || sameOptionTokenSets(runtimeOptions, options)) return null;
     const runtimePanels = buildDisambiguationAnswerGrammarPanels(runtimeOptions, grammar, style);
     return matchDisambiguationAnswerDraft(runtimePanels, testUtterance);
-  }, [runtimeOptions, options, grammar, style, grammarSync, panels, testUtterance]);
+  }, [runtimeOptions, options, grammar, grammarRegex, style, testUtterance]);
 
   const optionsDiffer = !!runtimeOptions?.length && !sameOptionTokenSets(runtimeOptions, options);
-
-  const updatePanelSynonyms = useCallback((index: number, synonyms: string[]) => {
-    setPanels((prev) => {
-      const nextPanels = prev.map((p, i) => (i === index ? { ...p, synonyms } : p));
-      try {
-        const compiled = compileDisambiguationAnswerGrammarFromPanels(nextPanels);
-        onSave(compiled);
-        setError(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-      return nextPanels;
-    });
-  }, [onSave]);
 
   if (style === 'ask_age') return null;
 
@@ -259,7 +271,7 @@ function OptionSynonymColumn({
   const deleteSynonym = (synonym: string) => {
     const synIdx = findSynonymIndex(synonyms, synonym);
     if (synIdx < 0) return;
-    onChange(synonyms.filter((_, i) => i !== synIdx));
+    onChange(normalizeSortedSynonymList(synonyms.filter((_, i) => i !== synIdx)));
   };
 
   return (
@@ -423,6 +435,10 @@ function SynonymCell({
       </span>
       <button
         type="button"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
         onClick={(e) => {
           e.stopPropagation();
           onDelete();

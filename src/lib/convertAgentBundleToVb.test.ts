@@ -8,6 +8,7 @@ import {
   convertSessionStateFromVb,
   convertSessionStateToVb,
 } from './convertAgentBundleToVb';
+import { readableCatalogKey } from './readableCatalog';
 import { segmentAllDescriptions } from './tokenDictionary';
 import type { Analysis } from './analysisTypes';
 import type { TokenDictionary } from './tokenDictionary';
@@ -89,6 +90,42 @@ describe('convertAgentBundleToVb', () => {
     expect(vb.ontology.categories).toHaveLength(4);
     expect(vb.ontology.startQuestion).toBe('Come posso aiutarla?');
     expect(vb.ontology.nodes.some((n) => n.confirmationText?.includes('adulto'))).toBe(true);
+  });
+
+  it('prefers readable catalog text over raw sourceText for VB nodes', () => {
+    const analysis = buildAnalysis();
+    const baseBundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary,
+      descriptions,
+      analysis,
+    });
+    const adultPath = baseBundle.itemPaths.find((p) => p.includes('adulto'));
+    expect(adultPath).toBeTruthy();
+
+    const adultSource = descriptions.find((d) => d.includes('adulto'));
+    expect(adultSource).toBeTruthy();
+
+    const bundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary,
+      descriptions,
+      analysis: {
+        ...analysis,
+        readable_catalog: {
+          [readableCatalogKey(adultSource!)]: {
+            text: 'Prima visita cardiologica per adulti',
+            status: 'approved',
+          },
+        },
+      },
+    });
+
+    const vb = convertAgentBundleToVb(bundle);
+    const adultNode = vb.ontology.nodes.find((n) => n.path === adultPath);
+    expect(adultNode?.confirmationText).toBe('Prima visita cardiologica per adulti');
   });
 
   it('round-trips pendingConstraint for ask_age between VB and TS session state', () => {
@@ -198,7 +235,7 @@ describe('convertAgentBundleToVb', () => {
     expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.mappings).toBeTruthy();
   });
 
-  it('throws a clear error when a non-ask_age message has no answer_grammar', () => {
+  it('auto-compiles answer_grammar from options when missing from storage', () => {
     const analysis = buildAnalysis();
     analysis.disambiguation_plan = {
       computedAt: '2026-06-18T12:00:00.000Z',
@@ -212,7 +249,6 @@ describe('convertAgentBundleToVb', () => {
         no_match_2: null,
         no_match_3: null,
         contextCount: 1,
-        // answer_grammar deliberately missing — must fail at export time
       }],
     };
 
@@ -224,12 +260,74 @@ describe('convertAgentBundleToVb', () => {
       analysis,
     });
 
-    expect(() => convertAgentBundleToVb(bundle)).toThrow(
-      /Messaggio di disambiguazione senza answer_grammar/,
-    );
-    expect(() => convertAgentBundleToVb(bundle)).toThrow(
-      /target\|\|adulto\|pediatrica\|\|choice/,
-    );
+    const vb = convertAgentBundleToVb(bundle);
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.regex).toBeTruthy();
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.mappings).toBeTruthy();
+  });
+
+  it('auto-compiles optional_include answer grammar from options', () => {
+    const analysis = buildAnalysis();
+    analysis.disambiguation_plan = {
+      computedAt: '2026-06-18T12:00:00.000Z',
+      messages: [{
+        signature: 'sotto specialità||ortopedica||optional_include',
+        categoryName: 'sotto specialità',
+        options: ['ortopedica', 'none'],
+        style: 'optional_include',
+        question: 'Vuole anche la visita ortopedica?',
+        no_match_1: null,
+        no_match_2: null,
+        no_match_3: null,
+        contextCount: 1,
+      }],
+    };
+
+    const bundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary,
+      descriptions,
+      analysis,
+    });
+
+    const vb = convertAgentBundleToVb(bundle);
+    expect(vb.ontology.disambiguationPlan?.messages[0]?.answerGrammar?.regex).toContain('ortopedica');
+  });
+
+  it('syncs stale category grammars with dictionary aliases at VB export', () => {
+    const surgicalDictionary: TokenDictionary = {
+      ...dictionary,
+      categories: [{
+        id: 'c-surg',
+        name: 'specialità',
+        order: 0,
+        tokenTexts: ['chirurgia'],
+        type: 'attributo',
+        grammar: {
+          regex: '(?<chirurgia>chirurgia)',
+          mappings: { chirurgia: 'chirurgia' },
+        },
+      }],
+      tokens: [
+        { text: 'chirurgia', enabled: true },
+        { text: 'chirurgica', enabled: true, aliasOf: 'chirurgia' },
+      ],
+    };
+
+    const bundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary: surgicalDictionary,
+      descriptions: ['visita chirurgica generale'],
+      analysis: {
+        ...buildAnalysis(),
+        item_paths: ['chirurgia.generale'],
+      },
+    });
+
+    const vb = convertAgentBundleToVb(bundle);
+    const specialita = vb.ontology.categories.find((c) => c.name === 'specialità');
+    expect(specialita?.grammar?.regex).toContain('chirurgica');
   });
 
   it('groups multiple segments for the same category into one concept values array', () => {

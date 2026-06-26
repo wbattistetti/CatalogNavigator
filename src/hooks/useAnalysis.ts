@@ -49,7 +49,21 @@ import type {
   GrammarEntry,
   RowStatus,
 } from '../lib/analysisTypes';
-import type { LoadedDictionaryRef } from '../lib/multiDictionarySegment';
+import type { ReadableCatalogStorage } from '../lib/readableCatalog';
+import {
+  parseReadableCatalog,
+  pruneReadableCatalog,
+  readableCatalogKey,
+} from '../lib/readableCatalog';
+import {
+  createSavedChatTest,
+  mergeSavedChatTests,
+  parseSavedChatTests,
+  preserveSavedChatTestsOnReload,
+  type SavedChatMessageInput,
+  type SavedChatTestsStorage,
+} from '../lib/savedChatTests';
+import { normalizeConfirmationPreamble } from '../lib/confirmationPrompts';
 
 export type {
   AgentGenProgress,
@@ -89,8 +103,10 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     ...data,
     rows: [],
     start_question: data.start_question ?? null,
-    confirmation_preamble: data.confirmation_preamble ?? 'Quindi confermo:',
+    confirmation_preamble: normalizeConfirmationPreamble(data.confirmation_preamble),
     disambiguation_plan: parseDisambiguationPlan(data.disambiguation_plan),
+    readable_catalog: parseReadableCatalog(data.readable_catalog),
+    saved_chat_tests: parseSavedChatTests(data.saved_chat_tests),
     item_paths: itemPaths.length > 0 ? itemPaths : null,
   };
 }
@@ -107,8 +123,10 @@ function draftAnalysis(
     rows: [],
     item_paths: itemPaths.length > 0 ? itemPaths : null,
     start_question: existing?.start_question ?? null,
-    confirmation_preamble: existing?.confirmation_preamble ?? 'Quindi confermo:',
+    confirmation_preamble: normalizeConfirmationPreamble(existing?.confirmation_preamble),
     disambiguation_plan: existing?.disambiguation_plan ?? null,
+    readable_catalog: existing?.readable_catalog ?? null,
+    saved_chat_tests: existing?.saved_chat_tests ?? null,
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
@@ -123,6 +141,8 @@ async function persistAnalysis(documentId: string, analysis: Analysis): Promise<
     start_question: analysis.start_question,
     confirmation_preamble: analysis.confirmation_preamble,
     disambiguation_plan: analysis.disambiguation_plan ?? null,
+    readable_catalog: analysis.readable_catalog ?? null,
+    saved_chat_tests: analysis.saved_chat_tests ?? null,
   };
   const { data: inserted, error } = await supabase
     .from('kb_analyses')
@@ -131,11 +151,11 @@ async function persistAnalysis(documentId: string, analysis: Analysis): Promise<
     .single();
   if (error) {
     if (
-      analysis.disambiguation_plan
-      && /disambiguation_plan|column|schema cache/i.test(error.message)
+      (analysis.disambiguation_plan || analysis.readable_catalog || analysis.saved_chat_tests)
+      && /disambiguation_plan|readable_catalog|saved_chat_tests|column|schema cache/i.test(error.message)
     ) {
       throw new Error(
-        `${error.message} — Esegui la migration Supabase: npx supabase db push (colonna disambiguation_plan).`,
+        `${error.message} — Esegui la migration Supabase: npx supabase db push.`,
       );
     }
     throw new Error(error.message);
@@ -158,6 +178,9 @@ function buildSyncNotice(summary: { addedItemPaths: number; removedItemPaths: nu
 
 export function useAnalysis(documentId: string) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  /** In-memory saved VB chats — survives tab switches and DB round-trips without the column. */
+  const [savedChatTests, setSavedChatTests] = useState<SavedChatTestsStorage>([]);
+  const savedChatTestsRef = useRef<SavedChatTestsStorage>([]);
   const [loading, setLoading] = useState(true);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -193,6 +216,23 @@ export function useAnalysis(documentId: string) {
     generationAbortRef.current?.abort();
   }, []);
 
+  const syncSavedChatTests = useCallback((
+    next: SavedChatTestsStorage,
+    syncAnalysis = true,
+  ) => {
+    savedChatTestsRef.current = next;
+    setSavedChatTests(next);
+    if (!syncAnalysis) return;
+    setAnalysis((prev) => {
+      const base = prev ?? draftAnalysis(documentId, [], null);
+      return {
+        ...base,
+        saved_chat_tests: next.length > 0 ? next : null,
+        updated_at: new Date().toISOString(),
+      };
+    });
+  }, [documentId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -210,11 +250,35 @@ export function useAnalysis(documentId: string) {
       }
       setError(null);
       const loaded = data ? normalizeLoadedAnalysis(data as Analysis) : null;
+      const sessionTests = savedChatTestsRef.current;
+
       setAnalysis((prev) => {
-        if (loaded && hasOntologyItemPaths(loaded)) return loaded;
+        if (loaded && hasOntologyItemPaths(loaded)) {
+          const mergedTests = mergeSavedChatTests(
+            sessionTests,
+            loaded.saved_chat_tests ?? [],
+          );
+          return { ...loaded, saved_chat_tests: mergedTests.length > 0 ? mergedTests : null };
+        }
         if (prev && hasOntologyItemPaths(prev) && prev.document_id === documentId) return prev;
+        if (loaded) {
+          const mergedTests = mergeSavedChatTests(
+            sessionTests,
+            loaded.saved_chat_tests ?? [],
+          );
+          return { ...loaded, saved_chat_tests: mergedTests.length > 0 ? mergedTests : null };
+        }
         return loaded;
       });
+
+      if (loaded) {
+        const mergedTests = mergeSavedChatTests(
+          sessionTests,
+          loaded.saved_chat_tests ?? [],
+        );
+        savedChatTestsRef.current = mergedTests;
+        setSavedChatTests(mergedTests);
+      }
       setAnalysisDirty(false);
       setSyncNotice(null);
     } finally {
@@ -225,6 +289,8 @@ export function useAnalysis(documentId: string) {
 
   useEffect(() => {
     setAnalysis(null);
+    setSavedChatTests([]);
+    savedChatTestsRef.current = [];
     setDisambiguationPlanResult(null);
     setInitialLoadDone(false);
     setLoading(true);
@@ -250,8 +316,24 @@ export function useAnalysis(documentId: string) {
     setSaving(true);
     setError(null);
     try {
-      const persisted = await persistAnalysis(documentId, analysis);
-      setAnalysis(normalizeLoadedAnalysis(persisted));
+      const toPersist: Analysis = {
+        ...analysis,
+        saved_chat_tests: savedChatTestsRef.current.length > 0
+          ? savedChatTestsRef.current
+          : null,
+      };
+      const persisted = await persistAnalysis(documentId, toPersist);
+      const normalized = normalizeLoadedAnalysis(persisted);
+      const preserved = preserveSavedChatTestsOnReload(
+        savedChatTestsRef.current,
+        normalized.saved_chat_tests ?? [],
+      );
+      savedChatTestsRef.current = preserved;
+      setSavedChatTests(preserved);
+      setAnalysis({
+        ...normalized,
+        saved_chat_tests: preserved.length > 0 ? preserved : null,
+      });
       setAnalysisDirty(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -285,6 +367,106 @@ export function useAnalysis(documentId: string) {
     });
     setAnalysisDirty(true);
   }, [documentId]);
+
+  const updateReadableCatalogEntry = useCallback((
+    sourceText: string,
+    update: {
+      text?: string;
+      status?: RowStatus;
+    },
+  ) => {
+    const storageKey = readableCatalogKey(sourceText);
+    if (!storageKey) return;
+
+    setAnalysis((prev) => {
+      const base = prev ?? draftAnalysis(documentId, [], null);
+      const current = base.readable_catalog?.[storageKey];
+      const fallbackText = storageKey;
+      const nextText = update.text !== undefined
+        ? update.text.trim() || fallbackText
+        : current?.text?.trim() || fallbackText;
+
+      let nextStatus: RowStatus = update.status !== undefined
+        ? update.status
+        : current?.status ?? null;
+
+      if (update.text !== undefined && update.status === undefined) {
+        nextStatus = nextText !== fallbackText ? 'approved' : current?.status ?? null;
+      }
+
+      const shouldPersist = nextStatus !== null || nextText !== fallbackText;
+      const nextCatalog: ReadableCatalogStorage = { ...(base.readable_catalog ?? {}) };
+
+      if (!shouldPersist) {
+        delete nextCatalog[storageKey];
+      } else {
+        nextCatalog[storageKey] = { text: nextText, status: nextStatus };
+      }
+
+      return {
+        ...base,
+        readable_catalog: Object.keys(nextCatalog).length > 0 ? nextCatalog : null,
+        updated_at: new Date().toISOString(),
+      };
+    });
+    setAnalysisDirty(true);
+  }, [documentId]);
+
+  const addSavedChatTest = useCallback((
+    messages: readonly SavedChatMessageInput[],
+    finalPath: string | null,
+  ): SavedChatTestsStorage[number] | null => {
+    if (messages.length === 0) return null;
+
+    const prev = savedChatTestsRef.current;
+    const created = createSavedChatTest(messages, finalPath, prev.length);
+    syncSavedChatTests([...prev, created]);
+    setAnalysisDirty(true);
+    return created;
+  }, [syncSavedChatTests]);
+
+  const saveChatTest = useCallback((
+    messages: readonly SavedChatMessageInput[],
+    finalPath: string | null,
+  ): SavedChatTestsStorage[number] | null => {
+    if (messages.length === 0) return null;
+
+    const prev = savedChatTestsRef.current;
+    const created = createSavedChatTest(messages, finalPath, prev.length);
+    const nextTests = [...prev, created];
+    syncSavedChatTests(nextTests);
+    setAnalysisDirty(true);
+
+    const base = analysis ?? draftAnalysis(documentId, [], null);
+    const nextAnalysis: Analysis = {
+      ...base,
+      saved_chat_tests: nextTests,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (hasPersistableAnalysisState(nextAnalysis)) {
+      void (async () => {
+        setSaving(true);
+        setError(null);
+        try {
+          await persistAnalysis(documentId, nextAnalysis);
+          setAnalysisDirty(false);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setSaving(false);
+        }
+      })();
+    }
+
+    return created;
+  }, [analysis, documentId, syncSavedChatTests]);
+
+  const removeSavedChatTest = useCallback((id: string) => {
+    const next = savedChatTestsRef.current.filter((test) => test.id !== id);
+    syncSavedChatTests(next);
+    setAnalysisDirty(true);
+  }, [syncSavedChatTests]);
 
   /** Commits catalog paths resolved from live segmentation (e.g. after Calcola). */
   const commitResolvedItemPaths = useCallback((itemPaths: string[]) => {
@@ -324,6 +506,14 @@ export function useAnalysis(documentId: string) {
       return base;
     }
     const next = draftAnalysis(documentId, result.item_paths, base);
+    const prunedCatalog = pruneReadableCatalog(
+      base?.readable_catalog,
+      [],
+      result.item_paths,
+    );
+    if (prunedCatalog !== base?.readable_catalog) {
+      next.readable_catalog = prunedCatalog;
+    }
     setAnalysis(next);
     setAnalysisDirty(true);
     setSyncNotice(buildSyncNotice(result.summary));
@@ -596,6 +786,11 @@ export function useAnalysis(documentId: string) {
     discardAnalysisChanges,
     updateAgentConfig,
     updateDisambiguationPlan,
+    updateReadableCatalogEntry,
+    addSavedChatTest,
+    saveChatTest,
+    removeSavedChatTest,
+    savedChatTests,
     cancelGeneration,
     generateDisambiguationMessages,
     generateDictionaryCategoryGrammars,

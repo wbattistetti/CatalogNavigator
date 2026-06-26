@@ -14,12 +14,14 @@ import { parseAgeConstraintToken } from './ageConstraintParse';
 import {
   buildCorpusLeafDescriptionMap,
   resolveCorpusItemPaths,
+  resolveCorpusSegmentationRows,
 } from './corpusItemPaths';
 import { getPathOrderingCategories } from './pathCanonicalize';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import type { CatalogSanityReport } from './catalogSanity';
 import { analyzeCatalogSanity, catalogSanityWarnings } from './catalogSanity';
 import { buildCorpusItemsFromPaths } from './slotExtract';
+import { resolveReadableConfirmationForPath } from './readableCatalog';
 
 function compileVincoloConstraint(
   tokenText: string,
@@ -132,13 +134,23 @@ export function compileAgentBundle(input: AgentBundleCompileInput): AgentBundle 
 
   const leafDescriptionMap = input.leafDescriptionMap
     ?? buildCorpusLeafDescriptionMap(segmentationInput);
+  const segmentationRows = resolveCorpusSegmentationRows(segmentationInput);
 
   const baseCorpus = buildCorpusItemsFromPaths(itemPaths, pathCategories);
-  const corpusItems: BundleCorpusItem[] = baseCorpus.map((item) => ({
-    ...item,
-    sourceText: resolveLeafSourceText(item.path, leafDescriptionMap),
-    constraints: compileConstraintsForPath(item.segments, item.path, compileWarnings),
-  }));
+  const readableCatalog = ontology.readable_catalog ?? null;
+  const corpusItems: BundleCorpusItem[] = baseCorpus.map((item) => {
+    const sourceText = resolveLeafSourceText(item.path, leafDescriptionMap);
+    return {
+      ...item,
+      sourceText,
+      confirmationText: resolveReadableConfirmationForPath(
+        item.path,
+        segmentationRows,
+        readableCatalog,
+      ),
+      constraints: compileConstraintsForPath(item.segments, item.path, compileWarnings),
+    };
+  });
 
   const catalogSanity = analyzeCatalogSanity(corpusItems);
   compileWarnings.push(...catalogSanityWarnings(catalogSanity));

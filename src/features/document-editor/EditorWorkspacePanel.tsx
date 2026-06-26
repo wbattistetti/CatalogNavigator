@@ -9,7 +9,8 @@ import { useDocumentEditorController } from './DocumentEditorContext';
 import { DocumentWorkspace } from './DocumentWorkspace';
 import { DocumentEditorMessagesPanel } from './DocumentEditorMessagesPanel';
 import { CatalogReportWorkspace } from '../ontology/CatalogReportWorkspace';
-import { TestPlanWorkspace } from '../ontology/TestPlanWorkspace';
+import { ReadableCatalogWorkspace } from '../ontology/ReadableCatalogWorkspace';
+import { SavedChatTestsWorkspace } from '../ontology/SavedChatTestsWorkspace';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
 
 const MountedDocumentWorkspace = memo(function MountedDocumentWorkspace() {
@@ -28,12 +29,16 @@ const MountedDisambiguationWorkspace = memo(function MountedDisambiguationWorksp
   return <DocumentEditorMessagesPanel />;
 });
 
+const MountedReadableCatalogWorkspace = memo(function MountedReadableCatalogWorkspace() {
+  return <ReadableCatalogWorkspace />;
+});
+
 const MountedCatalogReportWorkspace = memo(function MountedCatalogReportWorkspace() {
   return <CatalogReportWorkspace />;
 });
 
-const MountedTestPlanWorkspace = memo(function MountedTestPlanWorkspace() {
-  return <TestPlanWorkspace />;
+const MountedSavedChatTestsWorkspace = memo(function MountedSavedChatTestsWorkspace() {
+  return <SavedChatTestsWorkspace />;
 });
 
 function LoadingPlaceholder({ label }: { label: string }) {
@@ -60,7 +65,7 @@ export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
   tabId: EditorTabId;
   mounted: boolean;
 }) {
-  const { content, dicts } = useDocumentEditorController();
+  const { content, dicts, analysisApi } = useDocumentEditorController();
 
   if (!mounted) {
     return <div className="h-full min-h-0 bg-[#0d0d0d]" aria-hidden />;
@@ -105,16 +110,29 @@ export const EditorWorkspacePanel = memo(function EditorWorkspacePanel({
           <MountedDisambiguationWorkspace />
         </WorkspaceBody>
       );
+    case EDITOR_TAB_IDS.readableCatalog:
+      return (
+        <WorkspaceBody>
+          <MountedReadableCatalogWorkspace />
+        </WorkspaceBody>
+      );
     case EDITOR_TAB_IDS.report:
       return (
         <WorkspaceBody>
           <MountedCatalogReportWorkspace />
         </WorkspaceBody>
       );
-    case EDITOR_TAB_IDS.testPlan:
+    case EDITOR_TAB_IDS.savedChatTests:
+      if (analysisApi.loading && !analysisApi.initialLoadDone) {
+        return (
+          <WorkspaceBody>
+            <LoadingPlaceholder label="Caricamento test salvati…" />
+          </WorkspaceBody>
+        );
+      }
       return (
         <WorkspaceBody>
-          <MountedTestPlanWorkspace />
+          <MountedSavedChatTestsWorkspace />
         </WorkspaceBody>
       );
     default:

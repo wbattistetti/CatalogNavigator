@@ -66,6 +66,8 @@ export interface AnalysisRow {
 }
 
 import type { DisambiguationPlanStorage } from './disambiguationPlanTypes';
+import type { ReadableCatalogStorage } from './readableCatalog';
+import type { SavedChatTestsStorage } from './savedChatTests';
 
 export interface Analysis {
   id: string;
@@ -75,6 +77,10 @@ export interface Analysis {
   start_question: string | null;
   confirmation_preamble: string | null;
   disambiguation_plan?: DisambiguationPlanStorage | null;
+  /** Per-path spoken confirmation text + review status for catalog leaves. */
+  readable_catalog?: ReadableCatalogStorage | null;
+  /** Manual VB chat sessions saved from Test Motore VB. */
+  saved_chat_tests?: SavedChatTestsStorage | null;
   created_at: string;
   updated_at: string;
 }

@@ -33,7 +33,11 @@ function CorpusHighlightedDescription({
 
   if (spans.length === 0) {
     return (
-      <span className="text-emerald-300/80" data-source-start={0} data-source-end={text.length}>
+      <span
+        className="text-emerald-300/80 whitespace-normal break-words leading-relaxed"
+        data-source-start={0}
+        data-source-end={text.length}
+      >
         {text}
       </span>
     );
@@ -87,7 +91,11 @@ function CorpusHighlightedDescription({
     );
   }
 
-  return <span className="text-emerald-300/80 leading-relaxed">{parts}</span>;
+  return (
+    <span className="text-emerald-300/80 leading-relaxed whitespace-normal break-words">
+      {parts}
+    </span>
+  );
 }
 
 export const MemoCorpusHighlightedDescription = memo(

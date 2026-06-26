@@ -3,7 +3,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { TokenCategory } from './dictionaryTree';
-import { deriveDisambiguationParents, formatDisambiguationParentLines, resolveDisambiguationContextVariants } from './disambiguationParents';
+import {
+  deriveContextPrefixesFromCandidatePaths,
+  deriveDisambiguationParents,
+  formatDisambiguationParentLines,
+  resolveDisambiguationContextVariants,
+} from './disambiguationParents';
+import { buildDisambiguationContextAccordionLabel } from './disambiguationContextDisplay';
 
 const categories: TokenCategory[] = [
   { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['cardiologica'] },
@@ -80,5 +86,60 @@ describe('resolveDisambiguationContextVariants', () => {
     });
     expect(variants).toHaveLength(2);
     expect(variants[0]?.pathPrefix).toBe('cardiologica.> 17 anni.prima');
+  });
+
+  it('falls back to candidate path prefixes when parent info is empty', () => {
+    const variants = resolveDisambiguationContextVariants(
+      { parents: [], contextPrefixes: [], scope: 'none', parentCategoryName: null },
+      [],
+      [
+        'ecodoppler.aorta',
+        'ecodoppler.arti inferiori',
+        'ecodoppler.aorta+vasi epiaortici',
+      ],
+      { prestazione: 'ecodoppler' },
+    );
+    expect(variants).toHaveLength(1);
+    expect(variants[0]?.pathPrefix).toBe('ecodoppler');
+    expect(variants[0]?.acquired).toEqual({ prestazione: 'ecodoppler' });
+  });
+});
+
+describe('deriveContextPrefixesFromCandidatePaths', () => {
+  it('derives unique parent prefixes from full paths', () => {
+    expect(deriveContextPrefixesFromCandidatePaths([
+      'cardiologica.ecodoppler.aorta',
+      'cardiologica.ecg.venoso',
+    ])).toEqual(['cardiologica.ecg', 'cardiologica.ecodoppler']);
+  });
+});
+
+describe('buildDisambiguationContextAccordionLabel', () => {
+  it('shows labeled acquired context for a single context', () => {
+    expect(buildDisambiguationContextAccordionLabel({
+      categoryName: 'distretti anatomici',
+      variant: {
+        pathPrefix: 'cardiologica.ecodoppler',
+        acquired: { specialita: 'cardiologica', prestazione: 'ecodoppler' },
+      },
+      categories,
+    })).toContain('Si chiede dopo');
+    expect(buildDisambiguationContextAccordionLabel({
+      categoryName: 'distretti anatomici',
+      variant: {
+        pathPrefix: 'cardiologica.ecodoppler',
+        acquired: { specialita: 'cardiologica', prestazione: 'ecodoppler' },
+      },
+      categories,
+    })).toContain('«distretti anatomici»');
+  });
+
+  it('shows context count when multiple triggers exist', () => {
+    expect(buildDisambiguationContextAccordionLabel({
+      categoryName: 'varie',
+      variant: { pathPrefix: 'cardiologica.ecg', acquired: {} },
+      categories,
+      fallbackLabel: 'Devi disambiguare tra',
+    })).toContain('«varie»');
   });
 });

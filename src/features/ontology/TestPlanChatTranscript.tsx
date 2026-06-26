@@ -88,6 +88,7 @@ export function TestPlanChatTranscript({
   finalPath,
   running,
   emptyHint,
+  variant = 'compact',
 }: {
   startQuestion?: string;
   transcript: readonly DialogTestTurnRecord[];
@@ -95,6 +96,8 @@ export function TestPlanChatTranscript({
   finalPath?: string | null;
   running?: boolean;
   emptyHint?: string;
+  /** compact: scrollable column in Test Plan; full: entire transcript visible (saved chats grid). */
+  variant?: 'compact' | 'full';
 }) {
   const hasLive = transcript.length > 0 || running;
   const messages = buildTestPlanChatMessages(startQuestion, transcript, finalPath);
@@ -108,8 +111,12 @@ export function TestPlanChatTranscript({
     );
   }
 
+  const containerClass = variant === 'full'
+    ? 'flex flex-col px-2 py-2 space-y-2 bg-[#060c08]/60'
+    : 'flex flex-col min-h-[140px] max-h-[280px] overflow-y-auto px-2 py-2 space-y-2 bg-[#060c08]/60';
+
   return (
-    <div className="flex flex-col min-h-[140px] max-h-[280px] overflow-y-auto px-2 py-2 space-y-2 bg-[#060c08]/60">
+    <div className={containerClass}>
       {messages.map((msg) => {
         if (msg.isResult) {
           return <ResultBubble key={msg.id} msg={msg} />;

@@ -24,7 +24,7 @@ function CorpusGlideDescriptionEditorInner({
 
   return (
     <div
-      className="min-w-[280px] max-w-[640px] rounded border border-[#1a3a2a] bg-[#0a1510] p-3 shadow-xl"
+      className="min-w-[280px] max-w-[min(640px,90vw)] rounded border border-[#1a3a2a] bg-[#0a1510] p-3 shadow-xl"
       onMouseDown={(e) => {
         overlay.onMouseDown(e);
         e.stopPropagation();

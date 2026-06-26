@@ -25,6 +25,7 @@ export interface UseDictionaryEditSessionsResult {
   canSave: boolean;
   anyEditorDirty: boolean;
   getSession: (dictionaryId: string) => DictionaryEditSession | null;
+  getDirtyDictionaryIds: () => string[];
   getDictionaryMeta: (dictionaryId: string) => KbDictionary | null;
   syncSessionsFromLoaded: (dictionaries: KbDictionary[], preserveDirty: boolean) => void;
   syncOpenEditorsAfterReload: (
@@ -61,6 +62,14 @@ export function useDictionaryEditSessions(
 
   const getSession = useCallback(
     (dictionaryId: string) => sessions.get(dictionaryId) ?? null,
+    [sessions],
+  );
+
+  const getDirtyDictionaryIds = useCallback(
+    () => [...sessions.entries()]
+      .filter(([, session]) => session.dirty)
+      .map(([id]) => id)
+      .sort((a, b) => a.localeCompare(b)),
     [sessions],
   );
 
@@ -261,6 +270,7 @@ export function useDictionaryEditSessions(
     canSave: dirty && !!activeDictionaryId,
     anyEditorDirty,
     getSession,
+    getDirtyDictionaryIds,
     getDictionaryMeta,
     syncSessionsFromLoaded,
     syncOpenEditorsAfterReload,

@@ -140,4 +140,36 @@ describe('compileAgentBundle', () => {
     expect(adult?.sourceText).toBe('descrizione grezza adulto');
     expect(adult?.path).toBe(adultPath);
   });
+
+  it('uses one readable confirmation per path when several corpus lines collide', () => {
+    const analysis = buildAnalysis();
+    const adultPath = analysis.item_paths!.find((p) => p.includes('adulto'))!;
+    const bundle = compileAgentBundle({
+      documentName: 'Visite',
+      documentId: 'd1',
+      dictionary,
+      descriptions: [
+        'prima visita cardiologica adulto > 17 anni',
+        'prima visita cardiologica adulto > 17 anni',
+        'altra etichetta stesso path adulto > 17 anni',
+      ],
+      analysis: {
+        ...analysis,
+        readable_catalog: {
+          'prima visita cardiologica adulto > 17 anni': {
+            text: 'Prima visita cardiologica per adulti',
+            status: 'approved',
+          },
+          'altra etichetta stesso path adulto > 17 anni': {
+            text: 'Altra descrizione',
+            status: 'approved',
+          },
+        },
+      },
+    });
+
+    const adult = bundle.corpusItems.find((i) => i.path === adultPath);
+    expect(adult?.confirmationText).toBe('Prima visita cardiologica per adulti');
+    expect(adult?.confirmationText).not.toContain(';');
+  });
 });

@@ -50,6 +50,7 @@ export interface UseProjectDictionariesResult {
   canSave: boolean;
   anyEditorDirty: boolean;
   getSession: ReturnType<typeof useDictionaryEditSessions>['getSession'];
+  getDirtyDictionaryIds: ReturnType<typeof useDictionaryEditSessions>['getDirtyDictionaryIds'];
   getDictionaryMeta: ReturnType<typeof useDictionaryEditSessions>['getDictionaryMeta'];
   openDictionaryEditor: (dictionaryId: string, metaOverride?: KbDictionary) => void;
   closeDictionaryEditor: (dictionaryId: string, options?: { force?: boolean }) => boolean;
@@ -80,6 +81,8 @@ export interface UseProjectDictionariesResult {
   ) => Promise<{ source: KbDictionary; target: KbDictionary }>;
   saveEditingDictionary: () => Promise<KbDictionary>;
   saveDictionary: (dictionaryId: string) => Promise<KbDictionary>;
+  /** Persists every dictionary edit session marked dirty (project + linked library). */
+  saveAllDirtyDictionaries: () => Promise<KbDictionary[]>;
   savingDictionaryId: string | null;
   discardEditingDictionary: () => void;
   discardDictionary: (dictionaryId: string) => void;
@@ -168,17 +171,15 @@ export function useProjectDictionaries(
       setHydratingLinked(false);
 
       const loaded = [...projectList, ...linked.map((l) => l.dictionary)];
-      window.setTimeout(() => {
-        editSessions.syncSessionsFromLoaded(loaded, true);
-        const allLoadedIds = new Set(loaded.map((d) => d.id));
-        const defaultId = defaultDictionaryEditorId(loaded);
-        editSessions.syncOpenEditorsAfterReload(
-          allLoadedIds,
-          defaultId,
-          loaded,
-          options?.focusDictionaryId,
-        );
-      }, 0);
+      editSessions.syncSessionsFromLoaded(loaded, true);
+      const allLoadedIds = new Set(loaded.map((d) => d.id));
+      const defaultId = defaultDictionaryEditorId(loaded);
+      editSessions.syncOpenEditorsAfterReload(
+        allLoadedIds,
+        defaultId,
+        loaded,
+        options?.focusDictionaryId,
+      );
 
       return buildLoadedRefs(projectList, linked);
     } catch (err) {
@@ -233,6 +234,15 @@ export function useProjectDictionaries(
       setSavingDictionaryId((current) => (current === dictionaryId ? null : current));
     }
   }, [editSessions.getSession, applySavedDictionaryToState]);
+
+  const saveAllDirtyDictionaries = useCallback(async () => {
+    const dirtyIds = editSessions.getDirtyDictionaryIds();
+    const saved: KbDictionary[] = [];
+    for (const dictionaryId of dirtyIds) {
+      saved.push(await saveDictionary(dictionaryId));
+    }
+    return saved;
+  }, [editSessions.getDirtyDictionaryIds, saveDictionary]);
 
   const saveEditingDictionary = useCallback(async () => {
     if (!editSessions.activeDictionaryId) throw new Error('Nessun dizionario in modifica');
@@ -360,6 +370,7 @@ export function useProjectDictionaries(
     canSave: editSessions.canSave,
     anyEditorDirty: editSessions.anyEditorDirty,
     getSession: editSessions.getSession,
+    getDirtyDictionaryIds: editSessions.getDirtyDictionaryIds,
     getDictionaryMeta: editSessions.getDictionaryMeta,
     openDictionaryEditor: editSessions.openDictionaryEditor,
     closeDictionaryEditor: editSessions.closeDictionaryEditor,
@@ -372,6 +383,7 @@ export function useProjectDictionaries(
     moveCategoryToLibrary: moveCategoryToLibraryAction,
     saveEditingDictionary,
     saveDictionary,
+    saveAllDirtyDictionaries,
     savingDictionaryId,
     discardEditingDictionary: editSessions.discardEditingDictionary,
     discardDictionary: editSessions.discardDictionary,

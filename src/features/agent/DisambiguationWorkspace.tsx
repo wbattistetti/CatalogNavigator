@@ -61,7 +61,9 @@ import type { DisambiguationPlanStorage } from '../../lib/disambiguationPlanType
 
 import { applyDisambiguationComputeResultAsync } from '../../lib/applyDisambiguationComputeResult';
 
+import { AgentGlobalMessagesStrip } from './AgentGlobalMessagesStrip';
 import { DisambiguationMessagePanel } from './DisambiguationMessagePanel';
+import { DisambiguationMessagesSplitPane } from './DisambiguationMessagesSplitPane';
 import type { DisambiguationNavRequest } from '../document-editor/useDocumentEditorController';
 import { DisambiguationComputeProgressOverlay, type DisambiguationComputePhase } from '../document-editor/DisambiguationProgressBar';
 import { yieldToUi } from '../../lib/yieldToUi';
@@ -139,6 +141,11 @@ interface DisambiguationWorkspaceProps {
   navRequest?: DisambiguationNavRequest | null;
 
   onNavRequestHandled?: () => void;
+
+  onUpdateAgentConfig?: (updates: {
+    start_question?: string | null;
+    confirmation_preamble?: string | null;
+  }) => void;
 
 }
 
@@ -262,6 +269,8 @@ export function DisambiguationWorkspace({
   navRequest = null,
 
   onNavRequestHandled,
+
+  onUpdateAgentConfig,
 
 }: DisambiguationWorkspaceProps) {
 
@@ -803,7 +812,14 @@ export function DisambiguationWorkspace({
 
       </div>
 
-
+      {onUpdateAgentConfig && (
+        <AgentGlobalMessagesStrip
+          startQuestion={analysis?.start_question ?? null}
+          confirmationPreamble={analysis?.confirmation_preamble ?? null}
+          disabled={!analysis}
+          onUpdate={onUpdateAgentConfig}
+        />
+      )}
 
       {error && (
 
@@ -835,121 +851,120 @@ export function DisambiguationWorkspace({
 
       {plan && !computing && (
 
-        <div className="flex flex-1 min-h-0 overflow-hidden">
+        <DisambiguationMessagesSplitPane
+          list={(
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
 
-          <div className="flex flex-col flex-1 min-h-0 w-[55%] min-w-0 border-r border-[#1a3a2a]">
+                <p className="font-mono text-sm uppercase tracking-wide text-emerald-300/80 flex-shrink-0">
 
-            <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[#1a3a2a] bg-[#0a1510]">
-
-              <p className="font-mono text-sm uppercase tracking-wide text-emerald-300/80 flex-shrink-0">
-
-                Messaggi
-
-              </p>
-
-              <input
-
-                type="search"
-
-                value={messageFilter}
-
-                onChange={(e) => setMessageFilter(e.target.value)}
-
-                onKeyDown={(e) => e.stopPropagation()}
-
-                placeholder="Filtra per parola…"
-
-                aria-label="Filtra messaggi disambiguazione"
-
-                className={`${DICT_INPUT_FIELD} flex-1 min-w-0 py-1.5 text-sm bg-[#080e0a] placeholder:text-emerald-400/55`}
-
-              />
-
-              {messageFilter.trim() && (
-
-                <span className="font-mono text-sm text-emerald-300/75 tabular-nums flex-shrink-0">
-
-                  {filteredRows.length}/{editorRows.length}
-
-                </span>
-
-              )}
-
-            </div>
-
-
-
-            <div className="flex-1 min-h-0 overflow-y-auto">
-
-              {filteredRows.length === 0 ? (
-
-                <p className="px-3 py-4 font-mono text-sm text-emerald-300/75 italic">
-
-                  {editorRows.length === 0
-                    ? 'Nessun messaggio nel piano.'
-                    : 'Nessun messaggio corrisponde al filtro.'}
+                  Messaggi
 
                 </p>
 
-              ) : (
+                <input
 
-              <ul className="divide-y divide-[#1a3a2a]/50">
+                  type="search"
 
-                {filteredRows.map((row) => {
+                  value={messageFilter}
 
-                  const selected = row.signature === selectedSignature;
+                  onChange={(e) => setMessageFilter(e.target.value)}
 
-                  const hasQuestion = !!row.question?.trim();
+                  onKeyDown={(e) => e.stopPropagation()}
 
-                  return (
+                  placeholder="Filtra per parola…"
 
-                    <li key={row.signature} className="group">
+                  aria-label="Filtra messaggi disambiguazione"
 
-                      <div
+                  className={`${DICT_INPUT_FIELD} flex-1 min-w-0 py-1.5 text-sm bg-[#080e0a] placeholder:text-emerald-400/55`}
 
-                        role="button"
+                />
 
-                        tabIndex={0}
+                {messageFilter.trim() && (
 
-                        onClick={() => {
-                          setFocusGrammar(false);
-                          setSelectedSignature(row.signature);
-                        }}
+                  <span className="font-mono text-sm text-emerald-300/75 tabular-nums flex-shrink-0">
 
-                        onKeyDown={(e) => {
+                    {filteredRows.length}/{editorRows.length}
 
-                          if (e.key === 'Enter' || e.key === ' ') {
+                  </span>
 
-                            e.preventDefault();
+                )}
 
+              </div>
+
+
+
+              <div className="flex-1 min-h-0 overflow-y-auto">
+
+                {filteredRows.length === 0 ? (
+
+                  <p className="px-3 py-4 font-mono text-sm text-emerald-300/75 italic">
+
+                    {editorRows.length === 0
+                      ? 'Nessun messaggio nel piano.'
+                      : 'Nessun messaggio corrisponde al filtro.'}
+
+                  </p>
+
+                ) : (
+
+                <ul className="divide-y divide-[#1a3a2a]/50">
+
+                  {filteredRows.map((row) => {
+
+                    const selected = row.signature === selectedSignature;
+
+                    const hasQuestion = !!row.question?.trim();
+
+                    return (
+
+                      <li key={row.signature} className="group">
+
+                        <div
+
+                          role="button"
+
+                          tabIndex={0}
+
+                          onClick={() => {
                             setFocusGrammar(false);
                             setSelectedSignature(row.signature);
+                          }}
 
-                          }
+                          onKeyDown={(e) => {
 
-                        }}
+                            if (e.key === 'Enter' || e.key === ' ') {
 
-                        className={`flex items-start gap-2 w-full text-left px-3 py-2.5 font-mono text-sm transition-colors cursor-pointer ${
+                              e.preventDefault();
 
-                          selected
+                              setFocusGrammar(false);
+                              setSelectedSignature(row.signature);
 
-                            ? 'bg-emerald-400/10'
+                            }
 
-                            : 'hover:bg-emerald-400/5'
+                          }}
 
-                        }`}
+                          className={`flex items-start gap-2 w-full text-left px-3 py-2.5 font-mono text-sm transition-colors cursor-pointer ${
 
-                      >
+                            selected
 
-                        <span className={`flex-1 min-w-0 line-clamp-3 transition-colors ${
+                              ? 'bg-emerald-400/10'
 
-                          hasQuestion ? messageListTextColor(row.status) : 'text-amber-300/90 italic'
+                              : 'hover:bg-emerald-400/5'
 
-                        }`}>
+                          }`}
 
-                          {hasQuestion ? row.question : '— da scrivere'}
+                        >
 
-                        </span>
+                          <span className={`flex-1 min-w-0 break-words whitespace-normal leading-relaxed transition-colors ${
+
+                            hasQuestion ? messageListTextColor(row.status) : 'text-amber-300/90 italic'
+
+                          }`}>
+
+                            {hasQuestion ? row.question : '— da scrivere'}
+
+                          </span>
 
                         {hasQuestion && (
 
@@ -969,57 +984,57 @@ export function DisambiguationWorkspace({
 
                               title="Validato"
 
-                              onMouseDown={(e) => e.preventDefault()}
+                                  onMouseDown={(e) => e.preventDefault()}
 
-                              onClick={() => handleSaveRow(row.signature, {
+                                  onClick={() => handleSaveRow(row.signature, {
 
-                                status: row.status === 'approved' ? null : 'approved',
+                                    status: row.status === 'approved' ? null : 'approved',
 
-                              })}
+                                  })}
 
-                              className={`p-0.5 rounded transition-colors ${
+                                  className={`p-0.5 rounded transition-colors ${
 
-                                row.status === 'approved'
+                                    row.status === 'approved'
 
-                                  ? 'text-emerald-400'
+                                      ? 'text-emerald-400'
 
-                                  : 'text-emerald-400/40 hover:text-emerald-400'
+                                      : 'text-emerald-400/40 hover:text-emerald-400'
 
-                              }`}
+                                  }`}
 
-                            >
+                                >
 
-                              <ThumbsUp className="w-3.5 h-3.5" />
+                                  <ThumbsUp className="w-3.5 h-3.5" />
 
-                            </button>
+                                </button>
 
-                            <button
+                                <button
 
-                              type="button"
+                                  type="button"
 
-                              title="Da aggiustare"
+                                  title="Da aggiustare"
 
-                              onMouseDown={(e) => e.preventDefault()}
+                                  onMouseDown={(e) => e.preventDefault()}
 
-                              onClick={() => handleSaveRow(row.signature, {
+                                  onClick={() => handleSaveRow(row.signature, {
 
-                                status: row.status === 'rejected' ? null : 'rejected',
+                                    status: row.status === 'rejected' ? null : 'rejected',
 
-                              })}
+                                  })}
 
-                              className={`p-0.5 rounded transition-colors ${
+                                  className={`p-0.5 rounded transition-colors ${
 
-                                row.status === 'rejected'
+                                    row.status === 'rejected'
 
-                                  ? 'text-red-400'
+                                      ? 'text-red-400'
 
-                                  : 'text-red-400/40 hover:text-red-400'
+                                      : 'text-red-400/40 hover:text-red-400'
 
-                              }`}
+                                  }`}
 
-                            >
+                                >
 
-                              <ThumbsDown className="w-3.5 h-3.5" />
+                                  <ThumbsDown className="w-3.5 h-3.5" />
 
                             </button>
 
@@ -1027,17 +1042,17 @@ export function DisambiguationWorkspace({
 
                         )}
 
-                      </div>
+                        </div>
 
-                    </li>
+                      </li>
 
-                  );
+                    );
 
                 })}
 
               </ul>
 
-              )}
+            )}
 
             </div>
 
@@ -1063,23 +1078,19 @@ export function DisambiguationWorkspace({
 
             )}
 
-          </div>
-
-
-
-          <div className="flex-1 min-w-0 min-h-0 bg-[#0a0f0c]">
-
+            </div>
+          )}
+          detail={(
             <DisambiguationMessagePanel
               row={selectedRow}
+              categories={dictionaryCategories}
               vincoloCategory={selectedVincoloCategory}
               focusGrammar={focusGrammar}
               runtimeOptions={selectedRuntimeOptions}
               onSave={handleSaveRow}
             />
-
-          </div>
-
-        </div>
+          )}
+        />
 
       )}
 

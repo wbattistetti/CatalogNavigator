@@ -8,6 +8,7 @@ import { createSplitLayout, type EditorSplitLayout } from './documentEditorSplit
 import { EditorWorkspacePanel } from './EditorWorkspacePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
+import { CorpusOntologyStatusBanner } from './CorpusOntologyStatusBanner';
 
 type DropSide = 'left' | 'right';
 
@@ -141,6 +142,7 @@ export function DocumentEditorWorkspace() {
       onDrop={onDrop}
     >
       <SplitDropOverlay visible={dragOver != null} side={dragOver} />
+      <CorpusOntologyStatusBanner />
 
       {splitLayout.type === 'split' ? (
         <SplitWorkspace
@@ -172,6 +174,15 @@ export function DocumentEditorWorkspace() {
           )}
 
           {showOntologyTab && (
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.readableCatalog}>
+              <EditorWorkspacePanel
+                tabId={EDITOR_TAB_IDS.readableCatalog}
+                mounted={mountedTabs.has(EDITOR_TAB_IDS.readableCatalog) || activeTab === EDITOR_TAB_IDS.readableCatalog}
+              />
+            </WorkspacePanel>
+          )}
+
+          {showOntologyTab && (
             <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.disambiguation}>
               <EditorWorkspacePanel
                 tabId={EDITOR_TAB_IDS.disambiguation}
@@ -181,10 +192,10 @@ export function DocumentEditorWorkspace() {
           )}
 
           {showOntologyTab && (
-            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.testPlan}>
+            <WorkspacePanel active={activeTab === EDITOR_TAB_IDS.savedChatTests}>
               <EditorWorkspacePanel
-                tabId={EDITOR_TAB_IDS.testPlan}
-                mounted={mountedTabs.has(EDITOR_TAB_IDS.testPlan) || activeTab === EDITOR_TAB_IDS.testPlan}
+                tabId={EDITOR_TAB_IDS.savedChatTests}
+                mounted
               />
             </WorkspacePanel>
           )}

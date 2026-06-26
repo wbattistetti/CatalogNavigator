@@ -19,6 +19,7 @@ export interface OntologyCorpusSegmentationValue {
   loadingPersisted: boolean;
   building: boolean;
   stale: boolean;
+  layoutStabilizing: boolean;
 }
 
 const OntologyCorpusSegmentationContext = createContext<OntologyCorpusSegmentationValue | null>(null);

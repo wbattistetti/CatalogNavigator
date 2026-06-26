@@ -17,6 +17,7 @@ function item(
   return {
     path,
     sourceText,
+    confirmationText: sourceText,
     segments,
     unmatched: [],
     constraints: [],

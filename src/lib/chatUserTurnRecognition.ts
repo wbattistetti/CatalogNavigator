@@ -5,6 +5,7 @@ import type { AgentBundle, AgentSessionState } from './agentBundleTypes';
 import type { DisambiguationPlanStorage } from './disambiguationPlanTypes';
 import { isNoneOption, matchTurnAnswerGrammar, type TurnAnswerMatch } from './turnAnswerGrammar';
 import type { NormalizedVbParsedConcept } from './vbParsedNormalize';
+import { parseCorrectionIntent } from './correctionIntent';
 
 export interface PendingDisambiguationContext {
   signature?: string;
@@ -23,6 +24,9 @@ export interface UserTurnRecognition {
   grammarMapsToRuntimeToken: boolean;
   pendingWasActive: boolean;
   aligned: boolean;
+  correctionIntent?: {
+    payloadText: string;
+  };
 }
 
 export function resolvePendingDisambiguationContext(
@@ -126,6 +130,8 @@ export function buildUserTurnRecognition(params: {
   const pendingWasActive = pendingSlot?.valueKind === 'canonical_token'
     && pendingSlot.categoryName?.trim().toLowerCase() === pending.categoryName.toLowerCase();
 
+  const correction = parseCorrectionIntent(params.userText);
+
   return {
     signature: pending.signature,
     categoryName: pending.categoryName,
@@ -137,11 +143,15 @@ export function buildUserTurnRecognition(params: {
     grammarMapsToRuntimeToken,
     pendingWasActive,
     aligned: grammarMatch == null ? vbForCategory == null : aligned,
+    ...(correction.isCorrection ? { correctionIntent: { payloadText: correction.payloadText } } : {}),
   };
 }
 
 export function formatUserTurnRecognitionSummary(recognition: UserTurnRecognition): string {
   const parts: string[] = [];
+  if (recognition.correctionIntent?.payloadText) {
+    parts.push(`Correzione → «${recognition.correctionIntent.payloadText}»`);
+  }
   if (recognition.grammarMatch?.selectedOption) {
     parts.push(`Grammar → ${formatOptionLabel(recognition.grammarMatch.selectedOption)}`);
   }
@@ -163,6 +173,7 @@ export function shouldAutoExpandUserTurnRecognition(
   recognition: UserTurnRecognition | undefined,
 ): boolean {
   if (!recognition) return false;
+  if (recognition.correctionIntent?.payloadText) return true;
   if (recognition.grammarMatch?.selectedOption && !recognition.grammarMapsToRuntimeToken) return true;
   if (!recognition.pendingWasActive) return true;
   const vbHit = recognition.vbParsed.find(

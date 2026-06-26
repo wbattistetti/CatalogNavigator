@@ -9,6 +9,15 @@ import {
   type CustomCell,
   type CustomRenderer,
 } from '@glideapps/glide-data-grid';
+import {
+  GLIDE_WRAP_LINE_HEIGHT,
+  GLIDE_WRAP_PILL_HEIGHT,
+  GLIDE_WRAP_PILL_PAD_X,
+  layoutDescriptionRuns,
+  lineTextBaselineY,
+  pillTextBaselineY,
+  pillTopY,
+} from './glideWrapLayout';
 import type { GlideChipPaint } from './glideChipRenderer';
 
 export const GLIDE_DESC_CELL = 'glide-desc' as const;
@@ -23,9 +32,8 @@ export interface GlideDescCellData {
   runs: GlideDescRun[];
 }
 
-const PILL_HEIGHT = 18;
-const PILL_PAD_X = 6;
-const RUN_GAP = 2;
+const PILL_HEIGHT = GLIDE_WRAP_PILL_HEIGHT;
+const PILL_PAD_X = GLIDE_WRAP_PILL_PAD_X;
 
 export function isGlideDescCell(
   cell: CustomCell,
@@ -40,43 +48,54 @@ function drawDescriptionRuns(
 ): void {
   const { ctx, rect, theme } = args;
   const { x, y, width: w, height: h } = rect;
-  const maxX = x + w - theme.cellHorizontalPadding;
-  let renderX = x + theme.cellHorizontalPadding;
+  const padX = theme.cellHorizontalPadding;
+  const maxWidth = w - padX * 2;
+  const startX = x + padX;
+  const startY = y + theme.cellVerticalPadding;
   ctx.font = theme.baseFontFull;
+
+  const measure = (text: string) => measureTextCached(text, ctx, theme.baseFontFull).width;
 
   if (data.runs.length === 0) {
     ctx.fillStyle = theme.textDark;
-    ctx.fillText(data.sourceText, renderX, y + h / 2 + getMiddleCenterBias(ctx, theme));
+    const { items, lineCount } = layoutDescriptionRuns(
+      data.sourceText.length > 0 ? [{ kind: 'text', text: data.sourceText }] : [],
+      startX,
+      startY,
+      maxWidth,
+      measure,
+    );
+    for (const item of items) {
+      if (item.run.kind !== 'text') continue;
+      ctx.fillText(
+        item.run.text,
+        item.x,
+        lineTextBaselineY(item.y, ctx, theme),
+      );
+    }
+    if (items.length === 0) {
+      ctx.fillText(data.sourceText, startX, y + h / 2 + getMiddleCenterBias(ctx, theme));
+    }
+    void lineCount;
     return;
   }
 
-  for (const run of data.runs) {
-    if (renderX >= maxX) break;
-
-    if (run.kind === 'text') {
-      const textWidth = measureTextCached(run.text, ctx, theme.baseFontFull).width;
-      if (renderX + textWidth > maxX) {
-        const slice = truncateToWidth(run.text, ctx, theme.baseFontFull, maxX - renderX);
-        if (slice) {
-          ctx.fillStyle = theme.textDark;
-          ctx.fillText(slice, renderX, y + h / 2 + getMiddleCenterBias(ctx, theme));
-        }
-        break;
-      }
+  const { items } = layoutDescriptionRuns(data.runs, startX, startY, maxWidth, measure);
+  for (const item of items) {
+    if (item.run.kind === 'text') {
       ctx.fillStyle = theme.textDark;
-      ctx.fillText(run.text, renderX, y + h / 2 + getMiddleCenterBias(ctx, theme));
-      renderX += textWidth + RUN_GAP;
+      ctx.fillText(
+        item.run.text,
+        item.x,
+        lineTextBaselineY(item.y, ctx, theme),
+      );
       continue;
     }
 
-    const seg = run.paint;
-    const textWidth = measureTextCached(seg.text, ctx, theme.baseFontFull).width;
-    const pillW = textWidth + PILL_PAD_X * 2;
-    if (renderX + pillW > maxX) break;
-
-    const pillY = y + (h - PILL_HEIGHT) / 2;
+    const seg = item.run.paint;
+    const pillY = pillTopY(item.y);
     ctx.beginPath();
-    roundedRect(ctx, renderX, pillY, pillW, PILL_HEIGHT, 6);
+    roundedRect(ctx, item.x, pillY, item.maxWidth, PILL_HEIGHT, 6);
     ctx.fillStyle = seg.bgColor;
     ctx.fill();
     ctx.strokeStyle = seg.borderColor;
@@ -85,28 +104,10 @@ function drawDescriptionRuns(
     ctx.fillStyle = seg.fgColor;
     ctx.fillText(
       seg.text,
-      renderX + PILL_PAD_X,
-      y + h / 2 + getMiddleCenterBias(ctx, theme),
+      item.x + PILL_PAD_X,
+      pillTextBaselineY(item.y, ctx, theme),
     );
-    renderX += pillW + RUN_GAP;
   }
-}
-
-function truncateToWidth(
-  text: string,
-  ctx: CanvasRenderingContext2D,
-  font: string,
-  maxWidth: number,
-): string {
-  if (maxWidth <= 0) return '';
-  let slice = text;
-  while (slice.length > 0 && measureTextCached(slice, ctx, font).width > maxWidth) {
-    slice = slice.slice(0, -1);
-  }
-  if (slice.length < text.length && slice.length > 0) {
-    return `${slice.slice(0, -1)}…`;
-  }
-  return slice;
 }
 
 export const glideDescriptionRenderer: CustomRenderer<CustomCell<GlideDescCellData>> = {

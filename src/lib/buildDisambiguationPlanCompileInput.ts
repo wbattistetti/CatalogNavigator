@@ -1,7 +1,7 @@
 /**
  * Builds compile input for the disambiguation plan without blocking the UI on live re-segmentation.
  */
-import type { Analysis } from './analysisTypes';
+import { normalizeConfirmationPreamble } from './confirmationPrompts';
 import type { AgentBundleCompileInput } from './agentBundleTypes';
 import type { CompileDisambiguationPlanInput } from './compileDisambiguationPlan';
 import { compileAgentBundle } from './compileAgentBundle';
@@ -42,7 +42,7 @@ export function createAnalysisWithItemPathsForCompute(
     rows: existing?.rows ?? [],
     item_paths: itemPaths,
     start_question: existing?.start_question ?? null,
-    confirmation_preamble: existing?.confirmation_preamble ?? 'Quindi confermo:',
+    confirmation_preamble: normalizeConfirmationPreamble(existing?.confirmation_preamble),
     disambiguation_plan: existing?.disambiguation_plan ?? null,
     created_at: existing?.created_at ?? now,
     updated_at: now,

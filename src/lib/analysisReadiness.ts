@@ -6,6 +6,7 @@ import type { DisambiguationPlanStorage } from './disambiguationPlanTypes';
 import { isCategoryGrammarsLayerReady } from './categoryGrammar';
 import type { TokenCategory } from './dictionaryTree';
 import { hasSavedDisambiguationContent } from './disambiguationPlanMessages';
+import { hasSavedChatTests } from './savedChatTests';
 
 /** True when analysis has segmented catalog paths. */
 export function hasOntologyItemPaths(analysis: Analysis | null | undefined): boolean {
@@ -15,7 +16,9 @@ export function hasOntologyItemPaths(analysis: Analysis | null | undefined): boo
 /** True when analysis has ontology paths and/or a disambiguation plan worth persisting. */
 export function hasPersistableAnalysisState(analysis: Analysis | null | undefined): boolean {
   if (!analysis) return false;
-  return hasOntologyItemPaths(analysis) || hasSavedDisambiguationContent(analysis.disambiguation_plan);
+  return hasOntologyItemPaths(analysis)
+    || hasSavedDisambiguationContent(analysis.disambiguation_plan)
+    || hasSavedChatTests(analysis.saved_chat_tests);
 }
 
 function planHasUsableMessages(plan: DisambiguationPlanStorage | null | undefined): boolean {

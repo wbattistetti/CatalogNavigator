@@ -26,7 +26,7 @@ function CorpusGlideSegmentationEditorInner({
 
   return (
     <div
-      className="min-w-[280px] max-w-[520px] rounded border border-[#1a3a2a] bg-[#0a1510] p-3 shadow-xl"
+      className="min-w-[280px] max-w-[min(520px,90vw)] rounded border border-[#1a3a2a] bg-[#0a1510] p-3 shadow-xl"
       onMouseDown={(e) => e.stopPropagation()}
     >
       <p className="mb-2 font-mono text-[10px] text-emerald-400/50 line-clamp-2" title={sourceText}>

@@ -7,7 +7,9 @@ import {
   categoryTokenAssignmentChanged,
   clearCategoryGrammars,
   compileCategoryGrammar,
+  ensureCategoryGrammarsCoverDictionaryAliases,
   findCategoriesMissingGrammar,
+  categoryGrammarCoversDictionaryAliases,
   matchAllCategoryGrammarValues,
   matchCategoryGrammar,
   reconcileCategoryGrammarsWithTokens,
@@ -61,6 +63,91 @@ describe('compileCategoryGrammar', () => {
       specialita,
       tokens,
     )).toEqual(['cardiologica', 'dermatologica']);
+  });
+
+  it('includes dictionary aliases in category grammar and matching', () => {
+    const surgicalTokens: TokenEntry[] = [
+      { text: 'chirurgia', enabled: true },
+      { text: 'chirurgica', enabled: true, aliasOf: 'chirurgia' },
+    ];
+    const surgicalCategory: TokenCategory = {
+      id: 'c-surg',
+      name: 'specialità',
+      order: 0,
+      tokenTexts: ['chirurgia'],
+      type: 'attributo',
+    };
+    const grammar = compileCategoryGrammar(surgicalCategory, surgicalTokens);
+    expect(grammar?.regex).toContain('chirurgica');
+
+    const withGrammar = applyCategoryGrammars([surgicalCategory], surgicalTokens, true);
+    const match = matchCategoryGrammar('visita chirurgica', withGrammar[0]!, surgicalTokens);
+    expect(match?.canonicalValue).toBe('chirurgia');
+  });
+});
+
+describe('ensureCategoryGrammarsCoverDictionaryAliases', () => {
+  it('recompiles only categories whose stored grammar misses dictionary aliases', () => {
+    const tokens: TokenEntry[] = [
+      { text: 'chirurgia', enabled: true },
+      { text: 'chirurgica', enabled: true, aliasOf: 'chirurgia' },
+    ];
+    const staleCategory: TokenCategory = {
+      id: 'c-surg',
+      name: 'specialità',
+      order: 0,
+      tokenTexts: ['chirurgia'],
+      type: 'attributo',
+      grammar: {
+        regex: '(?<chirurgia>chirurgia)',
+        mappings: { chirurgia: 'chirurgia' },
+      },
+    };
+
+    const next = ensureCategoryGrammarsCoverDictionaryAliases([staleCategory], tokens);
+    expect(next[0]?.grammar?.regex).toContain('chirurgica');
+    expect(
+      matchCategoryGrammar('visita chirurgica', next[0]!, tokens)?.canonicalValue,
+    ).toBe('chirurgia');
+  });
+
+  it('preserves stored grammar when aliases are already covered', () => {
+    const tokens: TokenEntry[] = [
+      { text: 'chirurgia', enabled: true },
+      { text: 'chirurgica', enabled: true, aliasOf: 'chirurgia' },
+    ];
+    const fresh = applyCategoryGrammars([{
+      id: 'c-surg',
+      name: 'specialità',
+      order: 0,
+      tokenTexts: ['chirurgia'],
+      type: 'attributo',
+    }], tokens, true)[0]!;
+
+    const input = [fresh];
+    const next = ensureCategoryGrammarsCoverDictionaryAliases(input, tokens);
+    expect(categoryGrammarCoversDictionaryAliases(fresh, tokens)).toBe(true);
+    expect(next[0]?.grammar?.regex).toBe(fresh.grammar?.regex);
+    expect(next).toBe(input);
+    expect(next[0]).toBe(fresh);
+  });
+
+  it('preserves manual category grammar when no dictionary aliases are missing', () => {
+    const tokens: TokenEntry[] = [{ text: 'cardiologica', enabled: true }];
+    const manual: TokenCategory = {
+      id: 'c1',
+      name: 'specialità',
+      order: 0,
+      tokenTexts: ['cardiologica'],
+      type: 'attributo',
+      grammar: {
+        regex: '(?<cardiologica>cardiologica|cardio)',
+        mappings: { cardiologica: 'cardiologica' },
+      },
+    };
+
+    const next = ensureCategoryGrammarsCoverDictionaryAliases([manual], tokens);
+    expect(next[0]?.grammar?.regex).toBe('(?<cardiologica>cardiologica|cardio)');
   });
 });
 

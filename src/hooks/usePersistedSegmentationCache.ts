@@ -36,6 +36,8 @@ export interface SegmentationCacheProgress {
 export interface UsePersistedSegmentationCacheOptions {
   /** When false, skips load/build (no tabular ontology). */
   enabled?: boolean;
+  /** When false, dictionary/corpus layout may still be loading — defer invalidation. */
+  layoutStable?: boolean;
 }
 
 export type CorpusSegmentationBuildMode = 'resume' | 'fresh';
@@ -54,6 +56,8 @@ export interface UsePersistedSegmentationCacheResult {
   building: boolean;
   /** Saved signature differs from current corpus + dictionary layout. */
   stale: boolean;
+  /** True while linked dictionaries / sessions are still settling after reopen. */
+  layoutStabilizing: boolean;
   /** Partial segmentation saved for the current layout (can resume). */
   partialSegmentationAvailable: boolean;
   currentSignature: string;
@@ -91,6 +95,7 @@ export function usePersistedSegmentationCache(
   options?: UsePersistedSegmentationCacheOptions,
 ): UsePersistedSegmentationCacheResult {
   const enabled = options?.enabled ?? true;
+  const layoutStable = options?.layoutStable ?? true;
   const [cache, setCache] = useState<Map<string, CorpusSegmentationEntry>>(() => new Map());
   const [progress, setProgress] = useState<SegmentationCacheProgress>({
     processed: 0,
@@ -131,9 +136,12 @@ export function usePersistedSegmentationCache(
     [texts],
   );
 
-  const stale = progress.ready
+  const stale = layoutStable
+    && !loadingPersisted
     && persistedRow !== null
     && persistedRow.signature !== currentSignature;
+
+  const layoutStabilizing = enabled && !layoutStable;
 
   const partialSegmentationAvailable = useMemo(() => {
     if (uniqueTextCount === 0 || progress.ready || building) return false;
@@ -152,17 +160,23 @@ export function usePersistedSegmentationCache(
     cache.size,
   ]);
 
-  // Load persisted row once per document.
+  // Reset only when switching documents — not when dictionaries briefly unload.
+  useEffect(() => {
+    setPersistedRow(null);
+    setCache(new Map());
+    setProgress({ processed: 0, total: 0, ready: false, phase: 'segmenting' });
+    setPersistError(null);
+  }, [documentId]);
+
+  // Load persisted row once per document while segmentation is enabled.
   useEffect(() => {
     if (!enabled) {
-      setPersistedRow(null);
       setLoadingPersisted(false);
       return undefined;
     }
 
     let cancelled = false;
     setLoadingPersisted(true);
-    setPersistedRow(null);
 
     void loadPersistedCorpusSegmentation(documentId)
       .then((row) => {
@@ -183,6 +197,22 @@ export function usePersistedSegmentationCache(
   // Hydrate in-memory cache when persisted signature matches current layout.
   useEffect(() => {
     if (!enabled || loadingPersisted || building) return;
+
+    if (!layoutStable) {
+      if (persistedRow && persistedRow.signature === currentSignature) {
+        const hydrated = corpusSegmentationCacheFromEntries(persistedRow.entries);
+        const entryCount = hydrated.size;
+        const isComplete = isPersistedSegmentationComplete(entryCount, uniqueTextCount);
+        setCache(hydrated);
+        setProgress({
+          processed: entryCount,
+          total: uniqueTextCount,
+          ready: isComplete,
+          phase: 'segmenting',
+        });
+      }
+      return;
+    }
 
     if (persistedRow && persistedRow.signature === currentSignature) {
       const hydrated = corpusSegmentationCacheFromEntries(persistedRow.entries);
@@ -221,6 +251,7 @@ export function usePersistedSegmentationCache(
     setProgress({ processed: 0, total: uniqueTextCount, ready: false, phase: 'segmenting' });
   }, [
     enabled,
+    layoutStable,
     loadingPersisted,
     building,
     persistedRow,
@@ -330,10 +361,12 @@ export function usePersistedSegmentationCache(
         return { cache: result, cancelled: true };
       }
 
-      void persistToSupabase(result).catch((err) => {
+      try {
+        await persistToSupabase(result);
+      } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setPersistError(message);
-      });
+      }
       return { cache: result, cancelled: false };
     } catch (err) {
       throw err instanceof Error ? err : new Error(String(err));
@@ -354,6 +387,7 @@ export function usePersistedSegmentationCache(
     loadingPersisted,
     building,
     stale,
+    layoutStabilizing,
     partialSegmentationAvailable,
     currentSignature,
     buildCorpusSegmentation,

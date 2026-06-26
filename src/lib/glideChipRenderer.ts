@@ -9,6 +9,16 @@ import {
   type CustomCell,
   type CustomRenderer,
 } from '@glideapps/glide-data-grid';
+import {
+  GLIDE_WRAP_LINE_HEIGHT,
+  GLIDE_WRAP_PILL_HEIGHT,
+  GLIDE_WRAP_PILL_PAD_X,
+  GLIDE_WRAP_PILL_GAP,
+  layoutChipPills,
+  lineTextBaselineY,
+  pillTextBaselineY,
+  pillTopY,
+} from './glideWrapLayout';
 
 export const GLIDE_CHIP_CELL = 'glide-chip' as const;
 
@@ -26,9 +36,9 @@ export interface GlideChipCellData {
   unmatched: string[];
 }
 
-const PILL_HEIGHT = 18;
-const PILL_PAD_X = 6;
-const PILL_GAP = 4;
+const PILL_HEIGHT = GLIDE_WRAP_PILL_HEIGHT;
+const PILL_PAD_X = GLIDE_WRAP_PILL_PAD_X;
+const PILL_GAP = GLIDE_WRAP_PILL_GAP;
 
 export function isGlideChipCell(
   cell: CustomCell,
@@ -42,47 +52,57 @@ export function drawGlideChipPills(
   data: GlideChipCellData,
 ): void {
   const { ctx, rect, theme } = args;
-  const { x, y, width: w, height: h } = rect;
+  const { x, y, width: w } = rect;
+  const padX = theme.cellHorizontalPadding;
+  const startX = x + padX;
+  const startY = y + theme.cellVerticalPadding;
+  const maxWidth = w - padX * 2;
 
   if (data.segments.length === 0 && data.unmatched.length === 0) {
     ctx.fillStyle = theme.textLight;
     ctx.font = theme.baseFontFull;
-    ctx.fillText('—', x + theme.cellHorizontalPadding, y + h / 2 + getMiddleCenterBias(ctx, theme));
+    ctx.fillText('—', startX, lineTextBaselineY(startY, ctx, theme));
     return;
   }
 
-  let renderX = x + theme.cellHorizontalPadding;
-  const maxX = x + w - theme.cellHorizontalPadding;
   ctx.font = theme.baseFontFull;
+  const measure = (text: string) => measureTextCached(text, ctx, theme.baseFontFull).width;
+  const { pills, unmatchedX, unmatchedY } = layoutChipPills(
+    data.segments,
+    startX,
+    startY,
+    maxWidth,
+    measure,
+  );
 
-  for (const seg of data.segments) {
-    const textWidth = measureTextCached(seg.text, ctx, theme.baseFontFull).width;
-    const pillW = textWidth + PILL_PAD_X * 2;
-    if (renderX + pillW > maxX) break;
-
-    const pillY = y + (h - PILL_HEIGHT) / 2;
+  for (const pill of pills) {
+    const pillY = pillTopY(pill.y);
     ctx.beginPath();
-    roundedRect(ctx, renderX, pillY, pillW, PILL_HEIGHT, 6);
-    ctx.fillStyle = seg.bgColor;
+    roundedRect(ctx, pill.x, pillY, pill.width, PILL_HEIGHT, 6);
+    ctx.fillStyle = pill.paint.bgColor;
     ctx.fill();
-    ctx.strokeStyle = seg.borderColor;
+    ctx.strokeStyle = pill.paint.borderColor;
     ctx.lineWidth = 1;
     ctx.stroke();
-
-    ctx.fillStyle = seg.fgColor;
+    ctx.fillStyle = pill.paint.fgColor;
     ctx.fillText(
-      seg.text,
-      renderX + PILL_PAD_X,
-      y + h / 2 + getMiddleCenterBias(ctx, theme),
+      pill.paint.text,
+      pill.x + PILL_PAD_X,
+      pillTextBaselineY(pill.y, ctx, theme),
     );
-
-    renderX += pillW + PILL_GAP;
   }
 
-  if (data.unmatched.length > 0 && renderX < maxX) {
+  if (data.unmatched.length > 0) {
     const label = `+${data.unmatched.length} unmatched`;
+    const labelWidth = measure(label);
+    let ux = unmatchedX;
+    let uy = unmatchedY;
+    if (pills.length > 0 && ux - startX + labelWidth > maxWidth) {
+      ux = startX;
+      uy += GLIDE_WRAP_LINE_HEIGHT;
+    }
     ctx.fillStyle = theme.textLight;
-    ctx.fillText(label, renderX, y + h / 2 + getMiddleCenterBias(ctx, theme));
+    ctx.fillText(label, ux, lineTextBaselineY(uy, ctx, theme));
   }
 }
 
@@ -103,6 +123,7 @@ export function buildGlideChipCell(data: GlideChipCellData): CustomCell<GlideChi
     copyData: copy,
     allowOverlay: true,
     readonly: true,
+    allowWrapping: true,
     activationBehaviorOverride: 'single-click',
   };
 }

@@ -8,9 +8,10 @@ import { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { DICT_FORM_TEXTAREA } from '../../features/dictionaries/dictionaryFormStyles';
 import type { DisambiguationEditorRow } from '../../lib/disambiguationPlanMessages';
+import { buildDisambiguationContextAccordionLabel } from '../../lib/disambiguationContextDisplay';
 import {
   buildDisambiguationPathsLabel,
-  formatDisambiguationParentLines,
+  resolveDisambiguationContextVariants,
 } from '../../lib/disambiguationParents';
 
 import type { TokenCategory } from '../../lib/dictionaryTree';
@@ -31,6 +32,8 @@ interface DisambiguationMessagePanelProps {
 
   row: DisambiguationEditorRow | null;
 
+  categories?: TokenCategory[];
+
   vincoloCategory?: TokenCategory | null;
 
   focusGrammar?: boolean;
@@ -46,6 +49,8 @@ interface DisambiguationMessagePanelProps {
 export function DisambiguationMessagePanel({
 
   row,
+
+  categories = [],
 
   vincoloCategory = null,
 
@@ -106,7 +111,7 @@ export function DisambiguationMessagePanel({
               className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${contextOpen ? '' : '-rotate-90'}`}
             />
             <span className="text-emerald-200/80 break-words min-w-0">
-              {buildContextAccordionLabel(row)}
+              {buildContextAccordionLabel(row, categories)}
             </span>
           </button>
           {contextOpen && (
@@ -118,6 +123,9 @@ export function DisambiguationMessagePanel({
                 candidatePaths={row.candidatePaths}
                 options={row.options}
                 style={row.style}
+                sampleAcquired={row.sampleAcquired}
+                categories={categories}
+                hideAcquiredContext
                 defaultPathsOpen={row.parentInfo.scope === 'multiple'}
               />
             </div>
@@ -445,14 +453,20 @@ function Field({
 
 }
 
-function buildContextAccordionLabel(row: DisambiguationEditorRow): string {
-  const contextLines = formatDisambiguationParentLines(row.parentInfo);
-  if (contextLines?.value) {
-    return `${contextLines.label}: ${contextLines.value}`;
-  }
-  const category = row.categoryName.trim();
-  if (category) {
-    return buildDisambiguationPathsLabel(category);
-  }
-  return 'Contesto disambiguazione';
+function buildContextAccordionLabel(
+  row: DisambiguationEditorRow,
+  categories: TokenCategory[],
+): string {
+  const variants = resolveDisambiguationContextVariants(
+    row.parentInfo,
+    row.contextVariants,
+    row.candidatePaths,
+    row.sampleAcquired,
+  );
+  return buildDisambiguationContextAccordionLabel({
+    categoryName: row.categoryName,
+    variant: variants[0] ?? null,
+    categories,
+    fallbackLabel: buildDisambiguationPathsLabel(row.categoryName),
+  });
 }

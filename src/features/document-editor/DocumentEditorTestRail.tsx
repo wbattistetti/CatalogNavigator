@@ -4,6 +4,7 @@
 import { useCallback } from 'react';
 import {
   ChatPanel,
+  type ChatPanelSavePayload,
   type DisambiguationPlanMessagePatch,
 } from '../../components/DocumentViewer/ChatPanel';
 import { patchDisambiguationPlanMessage } from '../../lib/disambiguationPlanMessages';
@@ -21,9 +22,16 @@ export function DocumentEditorTestRail() {
     updateDisambiguationPlan(next);
   }, [analysis?.disambiguation_plan, updateDisambiguationPlan]);
 
-  const onOpenDisambiguationFromChat = useCallback((signature: string) => {
-    openDisambiguationMessage(signature, { focusGrammar: true });
+  const onOpenDisambiguationFromChat = useCallback((
+    signature: string,
+    opts?: { focusGrammar?: boolean },
+  ) => {
+    openDisambiguationMessage(signature, opts ?? { focusGrammar: true });
   }, [openDisambiguationMessage]);
+
+  const onSaveChat = useCallback((payload: ChatPanelSavePayload) => {
+    analysisApi.saveChatTest(payload.messages, payload.selectedPath);
+  }, [analysisApi]);
 
   return (
     <ChatPanel
@@ -31,6 +39,7 @@ export function DocumentEditorTestRail() {
       onClose={() => setTestOpen(false)}
       onPatchDisambiguationMessage={onPatchDisambiguationMessage}
       onOpenDisambiguationMessage={onOpenDisambiguationFromChat}
+      onSaveChat={onSaveChat}
     />
   );
 }

@@ -19,6 +19,8 @@ import {
   resolveNextSlotNavigation,
   scorePathsBySlots,
 } from './slotExtract';
+import { crossSlotSlotsDuringPending } from './crossSlotDuringPending';
+import { formatReadableLeafConfirmation } from './readableCatalog';
 
 export interface TestMessage {
   id: string;
@@ -61,8 +63,7 @@ export function formatLeafConfirmation(
 ): string {
   const text = targetRow.confirmation_text?.trim();
   if (text) {
-    const pre = preamble?.trim() || 'Quindi confermo:';
-    return `${pre} ${text}`;
+    return formatReadableLeafConfirmation(targetPath, text, preamble);
   }
   return `Selezionato: ${targetPath}`;
 }
@@ -80,7 +81,7 @@ export function initTest(rows: AnalysisRow[], config?: AgentTestConfig): TestSta
       messages: [{
         id: '0',
         role: 'agent',
-        text: 'Imposta la Domanda di start (apertura generale) nella barra in alto, poi salva.',
+        text: 'Imposta la Domanda di apertura nel pannello Messaggi (sezione globale in alto), poi salva.',
       }],
       currentPath: null,
       noMatchCount: 0,
@@ -318,27 +319,32 @@ function processSlotInput(
   // extract only that category's token from the answer first.
   const newSlots = matchTextToSlots(input.toLowerCase(), tokens, categories);
 
-  // If there's a pending category and the user answered it, accept that.
-  // If the answer contains slots for OTHER categories too, accept them all.
   const pendingKey = state.pendingCategoryKey;
 
-  // Merge new slots into existing resolved slots
-  const merged = { ...state.resolvedSlots, ...newSlots };
+  let merged = { ...state.resolvedSlots, ...newSlots };
 
-  // If we had a pending category and the user's answer didn't contain it,
-  // treat as a no-match for the current disambiguation question.
   const pendingNotAnswered = pendingKey != null && newSlots[pendingKey] == null;
-
   if (pendingNotAnswered) {
-    const idx = state.noMatchCount;
-    // Find the last agent question to use as fallback re-prompt
-    const lastAgentMsg = [...state.messages].reverse().find((m) => m.role === 'agent');
-    const fallback = lastAgentMsg?.text ?? (config.start_question?.trim() || 'Non ho capito. Può ripetere?');
-    return {
-      ...state,
-      messages: [...state.messages, userMsg, { id: uid + '-a', role: 'agent', text: fallback }],
-      noMatchCount: Math.min(idx + 1, 2),
-    };
+    const crossOnly = crossSlotSlotsDuringPending(
+      input,
+      pendingKey,
+      state.resolvedSlots,
+      tokens,
+      categories,
+      itemPaths,
+      corpusItems,
+    );
+    if (crossOnly == null) {
+      const idx = state.noMatchCount;
+      const lastAgentMsg = [...state.messages].reverse().find((m) => m.role === 'agent');
+      const fallback = lastAgentMsg?.text ?? (config.start_question?.trim() || 'Non ho capito. Può ripetere?');
+      return {
+        ...state,
+        messages: [...state.messages, userMsg, { id: uid + '-a', role: 'agent', text: fallback }],
+        noMatchCount: Math.min(idx + 1, 2),
+      };
+    }
+    merged = { ...state.resolvedSlots, ...crossOnly };
   }
 
   // ── Phase 2: score candidates ──────────────────────────────────────────────

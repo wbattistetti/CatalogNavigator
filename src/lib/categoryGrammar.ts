@@ -15,6 +15,7 @@ import {
   sortSynonymsAlphabetically,
   type GrammarEditorPanel,
 } from './grammarSynonyms';
+import { listAliasesForCanonical } from './tokenConceptEditor';
 import { isCanonicalToken, type TokenEntry } from './tokenDictionary';
 import { matchGrammarInput } from './grammarMatch';
 import {
@@ -74,13 +75,18 @@ export function synonymsForCanonicalValue(
   tokens: TokenEntry[],
 ): string[] {
   const entry = tokens.find((t) => isCanonicalToken(t) && t.text === canonicalText);
+  const dictionaryAliases = listAliasesForCanonical(tokens, canonicalText);
   if (entry?.grammar?.regex?.trim()) {
     const fromGrammar = extractSimpleSynonyms(entry.grammar, entry.text);
     if (fromGrammar.length > 0) {
-      return normalizeSynonymList([canonicalText, ...fromGrammar]);
+      return normalizeSynonymList([canonicalText, ...fromGrammar, ...dictionaryAliases]);
     }
   }
-  return normalizeSynonymList(defaultSynonymsForSlot(canonicalText));
+  return normalizeSynonymList([
+    canonicalText,
+    ...defaultSynonymsForSlot(canonicalText),
+    ...dictionaryAliases,
+  ]);
 }
 
 /** Builds recognition grammar for attributo categories only. */
@@ -214,12 +220,14 @@ export function buildCategoryGrammarEditorState(
   }));
   panels = hydratePanelsFromGrammar(panels, grammar);
   panels = panels.map((panel) => {
-    if (panel.synonyms.length > 0) {
-      return { ...panel, synonyms: sortSynonymsAlphabetically(panel.synonyms) };
-    }
+    const fromTokens = synonymsForCanonicalValue(panel.targetPath, tokens);
+    const merged =
+      panel.synonyms.length > 0
+        ? normalizeSynonymList([...panel.synonyms, ...fromTokens])
+        : fromTokens;
     return {
       ...panel,
-      synonyms: sortSynonymsAlphabetically(synonymsForCanonicalValue(panel.targetPath, tokens)),
+      synonyms: sortSynonymsAlphabetically(merged),
     };
   });
   return { interactive: true, panels, simpleSynonyms: [] };
@@ -307,6 +315,86 @@ function canonicalMatchesInCategory(
     status: null,
   });
   return categoryMatch.targetPath === canonical;
+}
+
+function storedCategoryGrammarMatchesCanonical(
+  text: string,
+  category: TokenCategory,
+  canonical: string,
+): boolean {
+  if (!category.grammar?.regex?.trim()) return false;
+  const match = matchGrammarInput(text.trim().toLowerCase(), {
+    slot_filling: category.name,
+    grammar: category.grammar,
+    answer_grammar: null,
+    question: null,
+    no_match_1: null,
+    no_match_2: null,
+    no_match_3: null,
+    confirmation_text: null,
+    status: null,
+  });
+  return match.targetPath === canonical;
+}
+
+/**
+ * True when every dictionary alias for tokens in the category is recognized
+ * by the stored category grammar (not by a would-be recompile).
+ */
+export function categoryGrammarCoversDictionaryAliases(
+  category: TokenCategory,
+  tokens: TokenEntry[],
+): boolean {
+  if (category.type === 'vincolo') return true;
+  if (!category.grammar?.regex?.trim()) return true;
+
+  for (const canonical of category.tokenTexts ?? []) {
+    for (const alias of listAliasesForCanonical(tokens, canonical)) {
+      if (storedCategoryGrammarMatchesCanonical(alias, category, canonical)) continue;
+      try {
+        const compiled = compileCategoryGrammar(category, tokens);
+        if (!compiled) continue;
+        if (storedCategoryGrammarMatchesCanonical(alias, { ...category, grammar: compiled }, canonical)) {
+          return false;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Recompiles only categories whose stored grammar does not cover dictionary aliases.
+ * Preserves grammars that already recognize all aliases (including manual edits).
+ */
+export function ensureCategoryGrammarsCoverDictionaryAliases(
+  categories: TokenCategory[],
+  tokens: TokenEntry[],
+): TokenCategory[] {
+  let anyChanged = false;
+  const next = categories.map((category) => {
+    if (categoryGrammarCoversDictionaryAliases(category, tokens)) {
+      return category;
+    }
+    try {
+      const grammar = compileCategoryGrammar(category, tokens);
+      if (!grammar) return category;
+      const prev = category.grammar;
+      if (
+        prev?.regex === grammar.regex
+        && JSON.stringify(prev.mappings) === JSON.stringify(grammar.mappings)
+      ) {
+        return category;
+      }
+      anyChanged = true;
+      return { ...category, grammar };
+    } catch {
+      return category;
+    }
+  });
+  return anyChanged ? next : categories;
 }
 
 /**

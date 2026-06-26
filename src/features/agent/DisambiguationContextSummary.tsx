@@ -8,24 +8,26 @@ import {
   DISAMBIGUATION_MULTI_CHOICE_THRESHOLD,
 } from '../../lib/disambiguationPlanTypes';
 import {
-  formatAcquiredContext,
   formatHumanOptions,
   isVincoloAskSignature,
 } from '../../lib/disambiguationPlanMessages';
 import type { DisambiguationQuestionStyle } from '../../lib/disambiguationPlanTypes';
 import {
   buildDisambiguationPathsLabel,
-  formatDisambiguationParentLines,
   hasMultipleDisambiguationContexts,
   resolveDisambiguationContextVariants,
   type DisambiguationContextVariant,
   type DisambiguationParentInfo,
 } from '../../lib/disambiguationParents';
+import {
+  resolveDisambiguationDisplayContext,
+  type DisambiguationDisplayContext,
+} from '../../lib/disambiguationContextDisplay';
+import type { TokenCategory } from '../../lib/dictionaryTree';
 
 const META = 'font-mono text-sm leading-relaxed';
 const CONTEXT_LABEL = `${META} text-emerald-300/80`;
 const CONTEXT_VALUE = `${META} text-emerald-200/85 break-all`;
-const CONTEXT_ACQUIRED = `${META} text-emerald-300/75 break-words pl-4`;
 const PATHS_LABEL = `${META} text-emerald-300/80`;
 const PATHS_ITEM = `${META} text-emerald-200/80 break-all`;
 const OPTIONS_LABEL = `${META} text-sky-300/85`;
@@ -60,6 +62,12 @@ export interface DisambiguationContextSummaryProps {
   style?: DisambiguationQuestionStyle;
   signature?: string;
   defaultPathsOpen?: boolean;
+  /** Example acquired dialog slots for this signature (editor). */
+  sampleAcquired?: Record<string, string>;
+  /** Dictionary categories for labeled slot display. */
+  categories?: TokenCategory[];
+  /** Hide acquired-context block when the parent header already shows it (editor panel). */
+  hideAcquiredContext?: boolean;
   /** Collapsed debug metadata (editor panel). */
   technicalMeta?: {
     styleLabel: string;
@@ -78,43 +86,55 @@ export function DisambiguationContextSummary({
   style,
   signature,
   defaultPathsOpen = false,
+  sampleAcquired,
+  categories = [],
+  hideAcquiredContext = false,
   technicalMeta,
 }: DisambiguationContextSummaryProps) {
-  const contextLines = parentInfo ? formatDisambiguationParentLines(parentInfo) : null;
-  const variants = resolveDisambiguationContextVariants(parentInfo, contextVariants);
+  const variants = resolveDisambiguationContextVariants(
+    parentInfo,
+    contextVariants,
+    candidatePaths,
+    sampleAcquired,
+  );
   const multipleContexts = hasMultipleDisambiguationContexts(parentInfo, variants);
   const sortedPaths = sortPaths(candidatePaths.filter((p) => p.trim()));
   const resolvedStyle = inferOptionsStyle(signature, style);
-  const visible = visibleOptions(options);
   const isOpenMulti = !!signature && isMultiChoiceCopySignature(signature);
-  const showOptionBullets = visible.length > 0
-    && visible.length <= DISAMBIGUATION_MULTI_CHOICE_THRESHOLD
+  const showOptionBullets = visibleOptions(options).length > 0
+    && visibleOptions(options).length <= DISAMBIGUATION_MULTI_CHOICE_THRESHOLD
     && resolvedStyle !== 'ask_age';
+
+  const showTriggerBlock = variants.length > 0
+    && (!hideAcquiredContext || variants.length > 1);
 
   return (
     <div className="space-y-2 mt-2">
-      {(contextLines || multipleContexts) && (
-        <DisambiguationContextBlock
-          contextLines={contextLines}
+      {showTriggerBlock && (
+        <DisambiguationTriggerBlock
           variants={variants}
-          multipleContexts={multipleContexts}
-        />
-      )}
-
-      {sortedPaths.length > 0 && (
-        <DisambiguationPathsList
-          categoryName={categoryName}
-          paths={sortedPaths}
-          defaultOpen={defaultPathsOpen}
+          multipleContexts={multipleContexts || variants.length > 1}
+          categories={categories}
+          compactOnly={hideAcquiredContext}
         />
       )}
 
       {options.length > 0 && resolvedStyle !== 'ask_age' && (
-        <DisambiguationOptionsList
-          options={options}
-          style={resolvedStyle}
-          isOpenMulti={isOpenMulti}
-          showBullets={showOptionBullets}
+        <>
+          <p className={OPTIONS_LABEL}>{buildDisambiguationPathsLabel(categoryName)}</p>
+          <DisambiguationOptionsList
+            options={options}
+            style={resolvedStyle}
+            isOpenMulti={isOpenMulti}
+            showBullets={showOptionBullets}
+          />
+        </>
+      )}
+
+      {sortedPaths.length > 0 && (
+        <DisambiguationPathsList
+          paths={sortedPaths}
+          defaultOpen={defaultPathsOpen}
         />
       )}
 
@@ -133,31 +153,33 @@ export function DisambiguationContextSummary({
   );
 }
 
-function DisambiguationContextBlock({
-  contextLines,
+function DisambiguationTriggerBlock({
   variants,
   multipleContexts,
+  categories,
+  compactOnly = false,
 }: {
-  contextLines: { label: string; value: string } | null;
   variants: DisambiguationContextVariant[];
   multipleContexts: boolean;
+  categories: TokenCategory[];
+  compactOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const primary = variants[0] ?? (contextLines ? { pathPrefix: contextLines.value, acquired: {} } : null);
+  const showAccordion = multipleContexts && variants.length > 3;
 
-  if (!primary) return null;
-
-  const label = contextLines?.label ?? 'Contesto';
-  const diverseCount = variants.length > 1 ? variants.length : 0;
+  if (!multipleContexts || variants.length === 1) {
+    if (compactOnly) return null;
+    const display = resolveDisambiguationDisplayContext(variants[0]!, categories);
+    return <DisambiguationAcquiredContextCompact display={display} />;
+  }
 
   return (
     <div className="space-y-0.5">
       <p className={CONTEXT_LABEL}>
-        {label}:{' '}
-        <span className={CONTEXT_VALUE}>{primary.pathPrefix}</span>
+        Contesti ({variants.length})
       </p>
 
-      {multipleContexts && diverseCount > 1 && (
+      {showAccordion ? (
         <>
           <button
             type="button"
@@ -168,47 +190,99 @@ function DisambiguationContextBlock({
             <ChevronDown
               className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? '' : '-rotate-90'}`}
             />
-            Contesti diversi ({diverseCount})
+            Mostra contesti
           </button>
           {open && (
-            <div className="space-y-2 mt-1 pl-[18px]">
-              <p className={HINT}>
-                Stessa disambiguazione in situazioni diverse: evita un riferimento fisso nel testo
-                o usa formulazione generica.
-              </p>
-              <ul className={`space-y-2 ${CONTEXT_VALUE} list-none`}>
-                {variants.map((variant) => {
-                  const acquiredLabel = formatAcquiredContext(variant.acquired);
-                  const hasAcquired = acquiredLabel !== '—';
-                  return (
-                    <li key={`${variant.pathPrefix}||${acquiredLabel}`} className="space-y-0.5">
-                      <p>{variant.pathPrefix}</p>
-                      {hasAcquired && (
-                        <p className={CONTEXT_ACQUIRED}>{acquiredLabel}</p>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+            <DisambiguationTriggerVariantList variants={variants} categories={categories} />
           )}
         </>
+      ) : (
+        <DisambiguationTriggerVariantList variants={variants} categories={categories} />
+      )}
+
+      <p className={HINT}>
+        Stessa disambiguazione in situazioni diverse: evita un riferimento fisso nel testo
+        o usa formulazione generica.
+      </p>
+    </div>
+  );
+}
+
+/** One-line acquired summary for chat / standalone views (no parent header). */
+function DisambiguationAcquiredContextCompact({
+  display,
+}: {
+  display: DisambiguationDisplayContext;
+}) {
+  const [pathOpen, setPathOpen] = useState(false);
+  const hasInline = display.inlineLabel !== '—';
+  const hasPath = !!display.pathPrefix;
+
+  if (!hasInline && !hasPath) return null;
+
+  return (
+    <div className="space-y-1">
+      {hasInline && (
+        <p className={CONTEXT_LABEL}>
+          Già acquisito:{' '}
+          <span className={CONTEXT_VALUE}>{display.inlineLabel}</span>
+        </p>
+      )}
+
+      {hasPath && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setPathOpen((v) => !v)}
+            className={`flex items-center gap-1.5 ${TECH} hover:text-emerald-200 w-full text-left`}
+            aria-expanded={pathOpen}
+          >
+            <ChevronDown
+              className={`w-3 h-3 flex-shrink-0 transition-transform ${pathOpen ? '' : '-rotate-90'}`}
+            />
+            Percorso catalogo
+          </button>
+          {pathOpen && (
+            <p className={`${TECH} mt-1 pl-[18px] break-all`}>{display.pathPrefix}</p>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
+function DisambiguationTriggerVariantList({
+  variants,
+  categories,
+}: {
+  variants: DisambiguationContextVariant[];
+  categories: TokenCategory[];
+}) {
+  return (
+    <ul className={`space-y-1 ${CONTEXT_VALUE} list-disc pl-[18px]`}>
+      {variants.map((variant) => {
+        const display = resolveDisambiguationDisplayContext(variant, categories);
+        const label = display.inlineLabel !== '—'
+          ? display.inlineLabel
+          : (display.pathPrefix ?? '—');
+        return (
+          <li key={`${variant.pathPrefix}||${label}`} className="break-words">
+            {label}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function DisambiguationPathsList({
-  categoryName,
   paths,
   defaultOpen,
 }: {
-  categoryName: string;
   paths: string[];
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const label = buildDisambiguationPathsLabel(categoryName);
 
   return (
     <div>
@@ -222,7 +296,7 @@ function DisambiguationPathsList({
           className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
         />
         <span>
-          {label}
+          Path candidati nel catalogo
           {' '}
           <span className="text-emerald-300/70">({paths.length})</span>
         </span>
@@ -250,28 +324,81 @@ function DisambiguationOptionsList({
   showBullets: boolean;
 }) {
   const visible = visibleOptions(options);
+  const sorted = [...visible].sort((a, b) => a.localeCompare(b, 'it'));
+  const hasNone = options.includes('none');
 
-  return (
-    <div className="space-y-1">
-      <p className={OPTIONS_LABEL}>
-        {showBullets
-          ? `Opzioni tra cui scegliere (${visible.length})`
-          : formatHumanOptions(options, style)}
-      </p>
-      {showBullets && (
+  if (showBullets) {
+    return (
+      <div className="space-y-1">
+        <p className={OPTIONS_LABEL}>
+          Opzioni tra cui scegliere ({visible.length})
+        </p>
         <ul className={`space-y-0.5 ${OPTIONS_ITEM} list-disc pl-4`}>
-          {visible.map((opt) => (
+          {sorted.map((opt) => (
             <li key={opt}>{opt}</li>
           ))}
-          {options.includes('none') && (
+          {hasNone && (
             <li className="text-sky-400/45">none (assente nel path)</li>
           )}
         </ul>
-      )}
-      {isOpenMulti && (
-        <p className={HINT}>
-          Scelta aperta: puoi decidere se citare tutte le opzioni nel testo o lasciare una domanda generica.
-        </p>
+        {isOpenMulti && <OpenMultiChoiceHint />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <OpenMultiChoiceOptionsAccordion
+        options={sorted}
+        hasNone={hasNone}
+        summaryLabel={formatHumanOptions(options, style)}
+      />
+      {isOpenMulti && <OpenMultiChoiceHint />}
+    </div>
+  );
+}
+
+function OpenMultiChoiceHint() {
+  return (
+    <p className={HINT}>
+      Scelta aperta: puoi decidere se citare tutte le opzioni nel testo o lasciare una domanda generica.
+    </p>
+  );
+}
+
+function OpenMultiChoiceOptionsAccordion({
+  options,
+  hasNone,
+  summaryLabel,
+}: {
+  options: string[];
+  hasNone: boolean;
+  summaryLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-start gap-1.5 ${OPTIONS_LABEL} hover:text-sky-400/90 w-full text-left`}
+        aria-expanded={open}
+      >
+        <ChevronDown
+          className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
+        />
+        <span>{summaryLabel}</span>
+      </button>
+      {open && (
+        <ul className={`mt-1 max-h-36 overflow-y-auto space-y-0.5 ${OPTIONS_ITEM} list-disc pl-[18px]`}>
+          {options.map((opt) => (
+            <li key={opt}>{opt}</li>
+          ))}
+          {hasNone && (
+            <li className="text-sky-400/45">none (assente nel path)</li>
+          )}
+        </ul>
       )}
     </div>
   );

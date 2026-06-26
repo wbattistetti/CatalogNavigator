@@ -74,7 +74,7 @@ export const SelectableCorpusChip = memo(function SelectableCorpusChip({
       data-source-end={sourceEnd}
       onClick={categorizable ? (e) => onChipClick(e, canonical) : undefined}
       onMouseDown={categorizable ? (e) => onChipMouseDown(e, canonical) : undefined}
-      className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-tight whitespace-nowrap group/chip select-text ${
+      className={`inline-flex items-center gap-0.5 px-2 py-1 rounded-md border font-mono text-[11px] leading-none whitespace-nowrap group/chip select-text ${
         muted
           ? 'bg-[#0f1a12] border-[#1a3a2a] text-emerald-300/75'
           : isAlias

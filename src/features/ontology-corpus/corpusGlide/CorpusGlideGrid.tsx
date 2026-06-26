@@ -43,6 +43,12 @@ import type { CorpusRow } from '../corpusRowModel';
 import type { CorpusGlideRow } from './buildCorpusGlideRows';
 import { CorpusGlideDescriptionEditor } from './CorpusGlideDescriptionEditor';
 import { CorpusGlideSegmentationEditor } from './CorpusGlideSegmentationEditor';
+import {
+  corpusGlideColumnWidths,
+  estimateCorpusGlideRowHeight,
+} from '../../../lib/glideWrapLayout';
+
+const CORPUS_GLIDE_MIN_ROW_HEIGHT = 48;
 
 export const CORPUS_GLIDE_COL_INDEX = 0;
 export const CORPUS_GLIDE_COL_DESCRIPTION = 1;
@@ -158,6 +164,27 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
   );
 
   const gridReady = size.width > 0 && size.height > 0;
+  const columnWidths = useMemo(
+    () => corpusGlideColumnWidths(size.width),
+    [size.width],
+  );
+
+  const getRowHeight = useCallback((row: number) => {
+    const corpusRow = visibleRowsRef.current[row];
+    if (!corpusRow) return CORPUS_GLIDE_MIN_ROW_HEIGHT;
+    const glideRow = glideRowMapRef.current.get(corpusRow.rowIndex);
+    return estimateCorpusGlideRowHeight({
+      sourceText: corpusRow.text,
+      descriptionRuns: glideRow?.descriptionRuns ?? (
+        corpusRow.text.length > 0 ? [{ kind: 'text', text: corpusRow.text }] : []
+      ),
+      segmentTexts: glideRow?.segPaints.map((p) => p.text) ?? [],
+      unmatchedCount: glideRow?.segmentation.unmatched.length ?? 0,
+      descriptionColWidth: columnWidths.description,
+      segmentationColWidth: columnWidths.segmentation,
+      minHeight: CORPUS_GLIDE_MIN_ROW_HEIGHT,
+    });
+  }, [columnWidths.description, columnWidths.segmentation]);
 
   useEffect(() => {
     if (!gridReady) return;
@@ -194,7 +221,8 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
           provideEditor={provideEditor}
           customRenderers={customRenderers}
           onVisibleRegionChanged={onVisibleRegionChanged}
-          rowHeight={48}
+          getRowHeight={getRowHeight}
+          rowHeight={CORPUS_GLIDE_MIN_ROW_HEIGHT}
           headerHeight={36}
           width={size.width}
           height={size.height}

@@ -2,7 +2,12 @@
  * HTTP client for the VB.NET DialogEngine (sole runtime for agent turns).
  */
 import type { AgentBundle, AgentSessionState } from '../../src/lib/agentBundleTypes';
-import { parseValueSetKey } from './valueSet';
+import {
+  convertAgentBundleToVb,
+  convertSessionStateFromVb,
+  convertSessionStateToVb,
+} from '../../src/lib/convertAgentBundleToVb';
+import { parseValueSetKey } from '../../src/lib/valueSet';
 import type { AgentDialogStepHttpResponse } from '../../src/lib/agentDialogStepResponse';
 
 const VB_ENGINE_URL = process.env.DIALOG_ENGINE_URL ?? 'http://127.0.0.1:5190';

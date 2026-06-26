@@ -19,6 +19,7 @@ const categories = [
 const item: BundleCorpusItem = {
   path: 'ecodoppler.aorta.venoso',
   sourceText: 'ECODOPPLER AORTA VENOSO',
+  confirmationText: 'ECODOPPLER AORTA VENOSO',
   segments: [
     { text: 'venoso', categoryName: 'distretto', categoryType: 'attributo' },
     { text: 'ecodoppler', categoryName: 'specialità', categoryType: 'attributo' },

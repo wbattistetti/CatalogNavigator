@@ -10,6 +10,7 @@ import type {
   ExpectedSlotValueKind,
   PendingSlotContract,
 } from './agentBundleTypes';
+import { ensureCategoryGrammarsCoverDictionaryAliases } from './categoryGrammar';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import { compileVincoloResolutionPipeline } from './vincoloResolutionPipeline';
 import {
@@ -20,6 +21,9 @@ import {
   valueSetContainsAll,
   valueSetKey,
 } from './valueSet';
+import { normalizeConfirmationPreamble } from './confirmationPrompts';
+import { compileDisambiguationAnswerGrammar } from './disambiguationPlanMessages';
+import type { DisambiguationMessageRecord } from './disambiguationPlanTypes';
 
 function canonicalConceptValue(value: string): string {
   return value.trim().toLowerCase();
@@ -97,14 +101,32 @@ export interface VbAgentBundlePayload {
   };
 }
 
+/** Resolves answer grammar from storage or compiles from plan options at export time. */
+function resolveDisambiguationAnswerGrammar(
+  message: DisambiguationMessageRecord,
+): { regex: string; mappings: Record<string, string> } | null {
+  if (message.style === 'ask_age') return null;
+  const stored = message.answer_grammar;
+  if (stored?.regex?.trim()) {
+    return { regex: stored.regex, mappings: stored.mappings };
+  }
+  const compiled = compileDisambiguationAnswerGrammar(message.options ?? []);
+  if (!compiled?.regex?.trim()) return null;
+  return { regex: compiled.regex, mappings: compiled.mappings };
+}
+
 /** Maps editor bundle → VB-native bundle JSON for DialogEngine.Api. */
 export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayload {
   const analysis = bundle.ontology ?? bundle.analysis;
-  const categories = normalizeCategoryOrders(bundle.dictionary.categories ?? []);
+  const categories = ensureCategoryGrammarsCoverDictionaryAliases(
+    normalizeCategoryOrders(bundle.dictionary.categories ?? []),
+    bundle.dictionary.tokens ?? [],
+  );
 
   const confirmationForPath = (path: string): string | null => {
     const item = bundle.corpusItems.find((i) => i.path === path);
-    return item?.sourceText?.trim() ?? null;
+    const text = item?.confirmationText?.trim() ?? item?.sourceText?.trim();
+    return text || null;
   };
 
   const vbCategories = categories.map((cat) => {
@@ -139,11 +161,10 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
 
   const categoryByName = new Map(vbCategories.map((cat) => [cat.name, cat]));
 
-  const nodes = bundle.itemPaths.flatMap((path) => {
-    const confirmationText = confirmationForPath(path);
-    if (!confirmationText) return [];
-    return [{ path, confirmationText }];
-  });
+  const nodes = bundle.itemPaths.map((path) => ({
+    path,
+    confirmationText: confirmationForPath(path),
+  }));
 
   const plan = analysis.disambiguation_plan;
   const disambiguationPlan = plan?.messages?.length
@@ -152,14 +173,14 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
       messages: plan.messages
         .filter((m) => m.question?.trim() || (m.options?.length ?? 0) > 0)
         .map((m) => {
-          if (m.style !== 'ask_age' && !m.answer_grammar?.regex?.trim()) {
+          const ag = resolveDisambiguationAnswerGrammar(m);
+          if (m.style !== 'ask_age' && !ag) {
             throw new Error(
               `[convertAgentBundleToVb] Messaggio di disambiguazione senza answer_grammar: ` +
               `signature="${m.signature ?? m.categoryName}". ` +
               `Ricalcola il piano di disambiguazione per generare le grammar.`,
             );
           }
-          const ag = m.answer_grammar;
           return {
             signature: m.signature,
             categoryName: m.categoryName,
@@ -168,9 +189,7 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
             noMatch2: m.no_match_2,
             noMatch3: m.no_match_3,
             style: m.style,
-            answerGrammar: ag?.regex?.trim()
-              ? { regex: ag.regex, mappings: ag.mappings }
-              : undefined,
+            answerGrammar: ag ?? undefined,
           };
         }),
     }
@@ -198,7 +217,7 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
       id: analysis.id,
       documentId: analysis.document_id ?? bundle.meta.documentId,
       startQuestion: analysis.start_question,
-      confirmationPreamble: analysis.confirmation_preamble,
+      confirmationPreamble: normalizeConfirmationPreamble(analysis.confirmation_preamble),
       categories: vbCategories,
       nodes,
       disambiguationPlan,

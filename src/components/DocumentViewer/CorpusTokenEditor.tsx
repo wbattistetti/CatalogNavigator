@@ -68,6 +68,7 @@ export function CorpusTokenEditor({
     cancelOntologyRefresh,
     segmentationPersistError,
     dismissSegmentationPersistError,
+    corpusOntologyStatus,
   } = useDocumentEditorController();
   const projectDictionaryId = editingDictionaryId;
 
@@ -167,11 +168,11 @@ export function CorpusTokenEditor({
       );
     }
 
-    if (segmentation.loadingPersisted) {
+    if (segmentation.loadingPersisted || segmentation.layoutStabilizing) {
       return (
         <div className="flex-1 flex items-center justify-center gap-2 px-4 py-8 font-mono text-xs text-emerald-400/45">
           <Loader2 className="w-4 h-4 animate-spin" />
-          Caricamento segmentazione…
+          {corpusOntologyStatus.message || 'Caricamento segmentazione…'}
         </div>
       );
     }
@@ -192,11 +193,17 @@ export function CorpusTokenEditor({
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4 py-8 text-center font-mono text-xs text-emerald-400/45">
           <p>
-            {partialSaved
-              ? `Segmentazione parziale salvata (${segmentation.progress.processed.toLocaleString('it-IT')} / ${segmentation.progress.total.toLocaleString('it-IT')} testi unici).`
-              : segmentation.stale
-                ? 'Il corpus o i dizionari sono cambiati rispetto alla segmentazione salvata.'
-                : 'Segmentazione corpus non disponibile.'}
+            {corpusOntologyStatus.phase === 'partial'
+              ? corpusOntologyStatus.message
+              : corpusOntologyStatus.phase === 'stale'
+                ? corpusOntologyStatus.message
+                : corpusOntologyStatus.phase === 'missing'
+                  ? corpusOntologyStatus.message
+                  : partialSaved
+                    ? `Segmentazione parziale salvata (${segmentation.progress.processed.toLocaleString('it-IT')} / ${segmentation.progress.total.toLocaleString('it-IT')} testi unici).`
+                    : segmentation.stale
+                      ? 'Il corpus o i dizionari sono cambiati rispetto alla segmentazione salvata.'
+                      : 'Segmentazione corpus non disponibile.'}
           </p>
           <p className="text-emerald-400/30">
             Esegui{' '}
