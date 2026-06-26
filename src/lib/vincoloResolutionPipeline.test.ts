@@ -25,6 +25,10 @@ describe('normalizeAgeUtterance', () => {
   it('expands vent\'anni', () => {
     expect(normalizeAgeUtterance("mio figlio ha vent'anni")).toBe('mio figlio ha venti anni');
   });
+
+  it('expands trent\'anni', () => {
+    expect(normalizeAgeUtterance("trent'anni")).toBe('trenta anni');
+  });
 });
 
 describe('compileAgeVincoloResolutionPipeline', () => {
@@ -106,6 +110,21 @@ describe('compileAgeVincoloResolutionPipeline', () => {
       value: 1,
       unit: 'years',
     });
+  });
+
+  it('resolves trent\'anni as 30 years', () => {
+    const pipeline = compileAgeVincoloResolutionPipeline();
+    expect(runResolutionPipelineForTest(pipeline, "trent'anni")).toEqual({
+      value: 30,
+      unit: 'years',
+    });
+  });
+
+  it('resolves days and weeks', () => {
+    const pipeline = compileAgeVincoloResolutionPipeline();
+    expect(runResolutionPipelineForTest(pipeline, '2 giorni')).toEqual({ value: 2, unit: 'days' });
+    expect(runResolutionPipelineForTest(pipeline, '5 settimane')).toEqual({ value: 5, unit: 'weeks' });
+    expect(runResolutionPipelineForTest(pipeline, 'due giorni')).toEqual({ value: 2, unit: 'days' });
   });
 });
 

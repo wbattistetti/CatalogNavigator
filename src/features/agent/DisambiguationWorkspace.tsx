@@ -162,9 +162,9 @@ function PlanHeaderSubtitle({
 }) {
   if (!plan || editorRows.length === 0) {
     return (
-      <p className="font-mono text-sm text-emerald-300/80 mt-0.5">
+      <span className="font-mono text-sm text-emerald-300/80">
         Calcola il piano, poi genera o modifica i messaggi
-      </p>
+      </span>
     );
   }
 
@@ -173,7 +173,7 @@ function PlanHeaderSubtitle({
   const droppedObsolete = mergeStats?.droppedObsolete ?? 0;
 
   return (
-    <p className="font-mono text-sm text-emerald-300/80 mt-0.5">
+    <span className="font-mono text-sm text-emerald-300/80">
       <span>{editorRows.length} messaggi</span>
       {needsRewrite > 0 && (
         <>
@@ -187,7 +187,7 @@ function PlanHeaderSubtitle({
           <span className="text-emerald-300/75">{droppedObsolete} obsoleti rimossi</span>
         </>
       )}
-    </p>
+    </span>
   );
 }
 
@@ -736,25 +736,21 @@ export function DisambiguationWorkspace({
 
     <div className="relative flex flex-col h-full min-h-0 bg-[#0a0f0c]">
 
-      <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[#1a3a2a] bg-[#0a1510]">
+      <div className="flex-shrink-0 border-b border-[#1a3a2a] bg-[#0a1510]">
+        <div className="flex items-center justify-between gap-3 px-4 py-2">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+            <h2 className="font-mono text-sm font-bold text-emerald-300 tracking-wide uppercase flex-shrink-0">
+              Messaggi dialogo
+            </h2>
+            <span className="text-emerald-400/40 flex-shrink-0" aria-hidden>·</span>
+            <PlanHeaderSubtitle
+              plan={plan}
+              editorRows={editorRows}
+              mergeStats={mergeStats}
+            />
+          </div>
 
-        <div>
-
-          <h2 className="font-mono text-sm font-bold text-emerald-300 tracking-wide uppercase">
-
-            Messaggi dialogo
-
-          </h2>
-
-          <PlanHeaderSubtitle
-            plan={plan}
-            editorRows={editorRows}
-            mergeStats={mergeStats}
-          />
-
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-shrink-0">
 
           <button
 
@@ -808,18 +804,18 @@ export function DisambiguationWorkspace({
 
           )}
 
+          </div>
         </div>
 
+        {onUpdateAgentConfig && (
+          <AgentGlobalMessagesStrip
+            startQuestion={analysis?.start_question ?? null}
+            confirmationPreamble={analysis?.confirmation_preamble ?? null}
+            disabled={!analysis}
+            onUpdate={onUpdateAgentConfig}
+          />
+        )}
       </div>
-
-      {onUpdateAgentConfig && (
-        <AgentGlobalMessagesStrip
-          startQuestion={analysis?.start_question ?? null}
-          confirmationPreamble={analysis?.confirmation_preamble ?? null}
-          disabled={!analysis}
-          onUpdate={onUpdateAgentConfig}
-        />
-      )}
 
       {error && (
 

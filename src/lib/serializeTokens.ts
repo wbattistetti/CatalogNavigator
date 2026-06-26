@@ -1,6 +1,7 @@
 /**
  * Serializes token dictionary for dirty-state comparison.
  */
+import { serializeCategoryForStorage } from './categoryCardinality';
 import type { TokenCategory } from './dictionaryTree';
 import type { TokenEntry } from './tokenDictionary';
 
@@ -20,8 +21,6 @@ export function serializeDictionarySnapshot(
     tokens: tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
       text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
     })),
-    categories: categories.map(({ id, name, order, tokenTexts, type }) => ({
-      id, name, order, tokenTexts, type,
-    })),
+    categories: categories.map((cat) => serializeCategoryForStorage(cat)),
   });
 }

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDisambiguationAnswerGrammarPanels,
   compileDisambiguationAnswerGrammarFromPanels,
+  evaluateDisambiguationTestPhrase,
   matchDisambiguationAnswerDraft,
 } from './disambiguationAnswerGrammarEditor';
 import { extractSynonymsForTarget } from './grammarSynonyms';
@@ -47,5 +48,19 @@ describe('matchDisambiguationAnswerDraft', () => {
 
     expect(extracted.map((s) => s.toLowerCase())).not.toContain('anche');
     expect(extracted.length).toBeGreaterThan(0);
+  });
+
+  it('evaluates ok when phrase matches expected option', () => {
+    const panels = buildDisambiguationAnswerGrammarPanels(['ecg', 'none'], null, 'optional_include');
+    const result = evaluateDisambiguationTestPhrase(panels, 'sì', 'ecg');
+    expect(result.status).toBe('ok');
+    expect(result.recognized).toBe('ecg');
+  });
+
+  it('evaluates mismatch when another option is recognized', () => {
+    const panels = buildDisambiguationAnswerGrammarPanels(['ecg', 'none'], null, 'optional_include');
+    const result = evaluateDisambiguationTestPhrase(panels, 'no', 'ecg');
+    expect(result.status).toBe('mismatch');
+    expect(result.recognized).toBe('none');
   });
 });

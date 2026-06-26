@@ -27,13 +27,121 @@ Public Module GrammarMatcher
 
             If category.Grammar Is Nothing OrElse String.IsNullOrWhiteSpace(category.Grammar.Regex) Then Continue For
 
-            Dim canonical = MatchGrammar(text, category)
-            If String.IsNullOrWhiteSpace(canonical) Then Continue For
+            Dim rawMatches = MatchAllGrammarValues(text, category)
+            If rawMatches.Count = 0 Then Continue For
 
-            concepts.Add(ValueSetOps.CreateAttributoConcept(category.Name, New List(Of String) From {canonical}))
+            Dim resolved = CategoryValueResolution.ResolveAttributoValues(category, rawMatches)
+            If resolved.Count = 0 Then Continue For
+
+            concepts.Add(ValueSetOps.CreateAttributoConcept(category.Name, resolved))
         Next
 
         Return concepts
+    End Function
+
+    ''' <summary>
+    ''' Returns every canonical value in the category that matches the utterance.
+    ''' Each grammar mapping group is tested independently (aligned with TS matchAllCategoryGrammarValues).
+    ''' </summary>
+    Public Function MatchAllGrammarValues(
+        text As String,
+        category As Models.CategoryDefinition
+    ) As List(Of String)
+        Dim values As New List(Of String)()
+        If category Is Nothing Then Return values
+
+        Dim grammar = category.Grammar
+        If grammar Is Nothing OrElse String.IsNullOrWhiteSpace(grammar.Regex) Then Return values
+
+        Dim seen As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+        If grammar.Mappings IsNot Nothing AndAlso grammar.Mappings.Count > 0 Then
+            Dim orderedCanonicals = If(category.AllowedValues, New List(Of String)())
+            If orderedCanonicals.Count > 0 Then
+                For Each canonical In orderedCanonicals
+                    If String.IsNullOrWhiteSpace(canonical) Then Continue For
+                    Dim groupName = FindMappingGroupName(grammar.Mappings, canonical)
+                    If String.IsNullOrWhiteSpace(groupName) Then Continue For
+                    TryAddGrammarMatch(text, grammar.Regex, groupName, canonical, category, seen, values)
+                Next
+            Else
+                For Each kvp In grammar.Mappings
+                    TryAddGrammarMatch(text, grammar.Regex, kvp.Key, kvp.Value, category, seen, values)
+                Next
+            End If
+        Else
+            Dim matched = MatchGrammar(text, category)
+            If Not String.IsNullOrWhiteSpace(matched) AndAlso seen.Add(matched) Then
+                values.Add(matched)
+            End If
+        End If
+
+        Return values
+    End Function
+
+    Private Function FindMappingGroupName(
+        mappings As Dictionary(Of String, String),
+        canonical As String
+    ) As String
+        For Each kvp In mappings
+            If String.Equals(kvp.Value, canonical, StringComparison.OrdinalIgnoreCase) Then
+                Return kvp.Key
+            End If
+        Next
+        Return Nothing
+    End Function
+
+    Private Function TryAddGrammarMatch(
+        text As String,
+        combinedRegex As String,
+        groupName As String,
+        canonical As String,
+        category As Models.CategoryDefinition,
+        seen As HashSet(Of String),
+        values As List(Of String)
+    ) As Boolean
+        Dim groupPattern = TryExtractNamedGroupPattern(combinedRegex, groupName)
+        If String.IsNullOrWhiteSpace(groupPattern) Then Return False
+
+        Try
+            If Not Regex.IsMatch(text, groupPattern, RegexOptions.IgnoreCase) Then Return False
+        Catch
+            Return False
+        End Try
+
+        Dim resolved = CategoryNormalization.ResolveCatalogValue(canonical, category)
+        If String.IsNullOrWhiteSpace(resolved) Then Return False
+        If Not seen.Add(resolved) Then Return False
+        values.Add(resolved)
+        Return True
+    End Function
+
+    ''' <summary>Extracts one named group's sub-pattern from a combined alternation regex.</summary>
+    Public Function TryExtractNamedGroupPattern(combinedRegex As String, groupName As String) As String
+        If String.IsNullOrWhiteSpace(combinedRegex) OrElse String.IsNullOrWhiteSpace(groupName) Then
+            Return Nothing
+        End If
+
+        Dim marker = "(?<" & groupName & ">"
+        Dim start = combinedRegex.IndexOf(marker, StringComparison.Ordinal)
+        If start < 0 Then Return Nothing
+
+        Dim contentStart = start + marker.Length
+        Dim depth = 1
+        Dim index = contentStart
+        While index < combinedRegex.Length AndAlso depth > 0
+            Dim ch = combinedRegex(index)
+            If ch = "("c Then
+                depth += 1
+            ElseIf ch = ")"c Then
+                depth -= 1
+            End If
+            index += 1
+        End While
+
+        If depth <> 0 Then Return Nothing
+        Dim inner = combinedRegex.Substring(contentStart, index - contentStart - 1)
+        Return "(?<" & groupName & ">" & inner & ")"
     End Function
 
     Private Function MatchVincoloResolution(text As String, category As Models.CategoryDefinition) As Models.Concept

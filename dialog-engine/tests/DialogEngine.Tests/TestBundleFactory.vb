@@ -360,6 +360,56 @@ Public Module TestBundleFactory
         }
     End Function
 
+    Public Function BuildAngiologicaWinnerBundle() As AgentBundle
+        Return New AgentBundle With {
+            .Meta = New AgentBundleMeta With {.DocumentName = "Angiologica winner"},
+            .Ontology = New Ontology With {
+                .StartQuestion = "Come posso aiutarla?",
+                .Categories = New List(Of CategoryDefinition) From {
+                    New CategoryDefinition With {
+                        .Id = "c1",
+                        .Name = "specialità",
+                        .Order = 0,
+                        .Kind = ConceptKind.Attributo,
+                        .AllowedValues = New List(Of String) From {"angiologica"}
+                    },
+                    New CategoryDefinition With {
+                        .Id = "c2",
+                        .Name = "tipo visita",
+                        .Order = 1,
+                        .Kind = ConceptKind.Attributo,
+                        .Cardinality = CategoryValueResolution.CardinalitySingle,
+                        .Winner = "controllo",
+                        .AllowedValues = New List(Of String) From {"prima", "controllo"}
+                    }
+                },
+                .Nodes = New List(Of DialogNode)()
+            },
+            .Catalog = New Catalog With {.Items = New List(Of CatalogItem)()}
+        }
+    End Function
+
+    Public Sub AddAngiologicaWinnerGrammars(bundle As AgentBundle)
+        Dim specialita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "specialità")
+        If specialita IsNot Nothing Then
+            specialita.Grammar = New CategoryGrammar With {
+                .Regex = "(?<angiologica>angiologica|visita angiologica)",
+                .Mappings = New Dictionary(Of String, String) From {{"angiologica", "angiologica"}}
+            }
+        End If
+
+        Dim tipoVisita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "tipo visita")
+        If tipoVisita IsNot Nothing Then
+            tipoVisita.Grammar = New CategoryGrammar With {
+                .Regex = "(?<prima>visita specialistica|prima(?:\s+visita)?)|(?<controllo>di\s+controllo|controllo)",
+                .Mappings = New Dictionary(Of String, String) From {
+                    {"prima", "prima"},
+                    {"controllo", "controllo"}
+                }
+            }
+        End If
+    End Sub
+
     Public Sub AddChirurgicaCrossSlotGrammars(bundle As AgentBundle)
         Dim specialita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "specialità")
         If specialita IsNot Nothing Then

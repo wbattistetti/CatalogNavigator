@@ -64,7 +64,16 @@ Public Module ConceptOps
             normalized.Add(canonical)
         Next
 
-        Return ValueSetOps.NormalizeAttributoValues(normalized)
+        Return ApplyCardinalityResolution(normalized, kind, category)
+    End Function
+
+    Private Function ApplyCardinalityResolution(
+        values As List(Of String),
+        kind As Models.ConceptKind,
+        category As Models.CategoryDefinition
+    ) As List(Of String)
+        If kind = Models.ConceptKind.Vincolo Then Return values
+        Return CategoryValueResolution.ResolveAttributoValues(category, values)
     End Function
 
     Private Function ResolveKind(concept As Models.Concept, ontology As Models.Ontology) As Models.ConceptKind

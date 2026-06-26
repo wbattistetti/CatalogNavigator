@@ -38,22 +38,7 @@ Public Module ResolutionRunner
     End Function
 
     Public Function NormalizeAgeUtterance(text As String) As String
-        Dim normalized = If(text, String.Empty).Trim().ToLowerInvariant()
-        If normalized.Length = 0 Then Return String.Empty
-
-        normalized = normalized.Normalize(NormalizationForm.FormD)
-        Dim builder As New StringBuilder()
-        For Each ch In normalized
-            Dim category = CharUnicodeInfo.GetUnicodeCategory(ch)
-            If category <> UnicodeCategory.NonSpacingMark Then builder.Append(ch)
-        Next
-        normalized = builder.ToString().Normalize(NormalizationForm.FormC)
-        normalized = Regex.Replace(normalized, "\s+", " ")
-        normalized = Regex.Replace(normalized, "vent'\s*anni", "venti anni", RegexOptions.IgnoreCase)
-        normalized = Regex.Replace(normalized, "vent'anni", "venti anni", RegexOptions.IgnoreCase)
-        normalized = Regex.Replace(normalized, "(\w)'(\w)", "$1$2")
-        normalized = Regex.Replace(normalized, "\bvent'\b", "venti", RegexOptions.IgnoreCase)
-        Return normalized.Trim()
+        Return AgeUtteranceNormalize.NormalizeAgeUtterance(text)
     End Function
 
     Private Function RunRegexCapture(resolutionStep As Models.ResolutionStep, text As String) As Models.ResolvedQuantity

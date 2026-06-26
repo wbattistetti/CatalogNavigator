@@ -2,7 +2,10 @@
  * Design-time resolution pipeline for vincolo categories (executed by VB ResolutionRunner v1).
  */
 import type { TokenCategory } from './dictionaryTree';
+import { normalizeAgeUtterance } from './ageUtteranceNormalize';
 import { isAgeVincoloCategoryName } from './vincoloResolutionGrammar';
+
+export { expandTruncatedAgeStem, normalizeAgeUtterance } from './ageUtteranceNormalize';
 
 /** Supported age units — must stay in sync with VB AgeUnitConverter. */
 export type AgeUnit = 'years' | 'months' | 'weeks' | 'days';
@@ -171,21 +174,6 @@ export function buildItalianAgeWordLexicon(): Record<string, number> {
   }
 
   return lexicon;
-}
-
-/** Normalizes Italian age utterances (apostrophes, accents) before pipeline execution. */
-export function normalizeAgeUtterance(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/\s+/g, ' ')
-    .replace(/vent'\s*anni/g, 'venti anni')
-    .replace(/vent'anni/g, 'venti anni')
-    .replace(/(\w)'(\w)/g, '$1$2')
-    .replace(/\bvent'\b/g, 'venti')
-    .trim();
 }
 
 function escapeRegexLiteral(value: string): string {

@@ -19,6 +19,9 @@ function countOpenIssues(
   for (const row of report.repeatedTokens) {
     if (!itemExclusions.has(row.sourceText.trim())) open += 1;
   }
+  for (const row of report.cardinalityViolations ?? []) {
+    if (!itemExclusions.has(row.sourceText.trim())) open += 1;
+  }
   return open;
 }
 
@@ -55,6 +58,7 @@ export function CatalogReportWorkspace() {
   const openIssues = countOpenIssues(catalogSanityReport, corpusItemExclusions);
   const duplicateGroups = catalogSanityReport.duplicates.length;
   const repeatedRows = catalogSanityReport.repeatedTokens.length;
+  const cardinalityRows = catalogSanityReport.cardinalityViolations?.length ?? 0;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden bg-[#0a0f0c]">
@@ -78,6 +82,11 @@ export function CatalogReportWorkspace() {
               <span className="inline-flex items-center px-2.5 py-1 rounded border border-amber-400/40 font-mono text-sm text-amber-50 bg-amber-400/10">
                 {repeatedRows} token ripetuti
               </span>
+              {cardinalityRows > 0 && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded border border-amber-400/40 font-mono text-sm text-amber-50 bg-amber-400/10">
+                  {cardinalityRows} cardinalità
+                </span>
+              )}
             </div>
           </div>
         </div>

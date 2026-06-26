@@ -227,6 +227,25 @@ Public Class AgentTurnEngineTests
     End Sub
 
     <Fact>
+    Public Sub ProcessFromText_ResolvesTrentAnni_WhenPendingAge()
+        Dim bundle = TestBundleFactory.BuildCardioBundle()
+        TestBundleFactory.AddSpecialitaGrammar(bundle)
+        TestBundleFactory.AddAgeVincoloResolution(bundle)
+        Dim state = AgentTurnEngine.ProcessAgentTurnFromText(
+            bundle,
+            AgentTurnEngine.InitAgentSession(),
+            "cardiologica prima"
+        ).NextState
+        Assert.NotNull(state.PendingConstraint)
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "trent'anni")
+        Dim ageConcept = result.NextState.AcquiredConcepts.FirstOrDefault(
+            Function(c) c.Category = "fascia di età")
+        Assert.NotNull(ageConcept)
+        Assert.Equal("30", ValueSetOps.ScalarValue(ageConcept))
+        Assert.Equal("years", ageConcept.Unit)
+    End Sub
+
+    <Fact>
     Public Sub Disambiguates_WithNone_WhenOptionalCategoryMissingOnShorterPath()
         Dim bundle = TestBundleFactory.BuildOptionalEcgBundle()
         Dim result = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {

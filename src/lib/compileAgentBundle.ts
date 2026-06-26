@@ -152,7 +152,7 @@ export function compileAgentBundle(input: AgentBundleCompileInput): AgentBundle 
     };
   });
 
-  const catalogSanity = analyzeCatalogSanity(corpusItems);
+  const catalogSanity = analyzeCatalogSanity(corpusItems, pathCategories);
   compileWarnings.push(...catalogSanityWarnings(catalogSanity));
 
   if (input.mode === 'published') {

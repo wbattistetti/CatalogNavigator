@@ -122,6 +122,56 @@ Public Class ResolutionRunnerTests
     End Sub
 
     <Fact>
+    Public Sub NormalizeAgeUtterance_ExpandsTrentAnni()
+        Dim normalized = ResolutionRunner.NormalizeAgeUtterance("trent'anni")
+        Assert.Equal("trenta anni", normalized)
+    End Sub
+
+    <Fact>
+    Public Sub NormalizeAgeUtterance_StripsTrailingPunctuation()
+        Dim normalized = ResolutionRunner.NormalizeAgeUtterance("Trent'anni.")
+        Assert.Equal("trenta anni", normalized)
+    End Sub
+
+    <Fact>
+    Public Sub ResolvesApostrophe_TrentAnni()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim result = ResolutionRunner.Run(pipeline, "trent'anni")
+        Assert.NotNull(result)
+        Assert.Equal(30, result.Value)
+        Assert.Equal("years", result.Unit)
+    End Sub
+
+    <Fact>
+    Public Sub ResolvesNumericDaysAndWeeks()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim days = ResolutionRunner.Run(pipeline, "2 giorni")
+        Assert.NotNull(days)
+        Assert.Equal(2, days.Value)
+        Assert.Equal("days", days.Unit)
+
+        Dim weeks = ResolutionRunner.Run(pipeline, "5 settimane")
+        Assert.NotNull(weeks)
+        Assert.Equal(5, weeks.Value)
+        Assert.Equal("weeks", weeks.Unit)
+    End Sub
+
+    <Fact>
+    Public Sub ResolvesWordDays_DueGiorni()
+        Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
+        Dim result = ResolutionRunner.Run(pipeline, "due giorni")
+        Assert.NotNull(result)
+        Assert.Equal(2, result.Value)
+        Assert.Equal("days", result.Unit)
+    End Sub
+
+    <Fact>
+    Public Sub ExtractAgeYearsFromText_TrentAnni()
+        Dim age = ConstraintValidation.ExtractAgeYearsFromText("trent'anni")
+        Assert.Equal(30, age)
+    End Sub
+
+    <Fact>
     Public Sub DoesNotTreatArticleUna_InBookingPhrase_AsAge()
         Dim pipeline = TestBundleFactory.BuildAgeVincoloResolutionPipeline()
         Dim result = ResolutionRunner.Run(

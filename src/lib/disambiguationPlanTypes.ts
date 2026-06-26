@@ -58,6 +58,13 @@ export interface DisambiguationPlanResult {
   warnings: string[];
 }
 
+/** One design-time utterance used to validate answer grammar (not a synonym). */
+export interface DisambiguationTestPhrase {
+  phrase: string;
+  /** Technical option token expected when the patient says phrase. */
+  expected: string;
+}
+
 /** Editable copy for one disambiguation signature (reused across contexts). */
 export interface DisambiguationMessageRecord {
   signature: string;
@@ -74,6 +81,8 @@ export interface DisambiguationMessageRecord {
   contextCount?: number;
   /** Maps utterance → canonical option token (includes "none" when applicable). */
   answer_grammar?: GrammarEntry | null;
+  /** Saved test utterances for grammar validation in the editor. */
+  test_phrases?: DisambiguationTestPhrase[];
 }
 
 /** Persisted with analysis — messages keyed by signature. */

@@ -1,8 +1,7 @@
 /**
- * Builds ElevenLabs conversation_config for slot-filling + webhook-controlled dialog.
+ * Builds ElevenLabs conversation_config for dumb voice relay (STT/TTS + webhook).
  */
 import type { AgentBundle } from '../agentBundleTypes';
-import { normalizeCategoryOrders } from '../dictionaryTree';
 import { buildAgentDialogStepTool } from './buildAgentDialogStepTool';
 
 export interface ConvaiConversationConfigInput {
@@ -14,54 +13,35 @@ export interface ConvaiConversationConfigInput {
   gatewayOrigin?: string;
 }
 
-function buildCategoryCatalogForVoiceAgent(bundle: AgentBundle): string {
-  const categories = normalizeCategoryOrders(bundle.dictionary.categories ?? [])
-    .filter((c) => c.tokenTexts.length > 0);
-  const lines = categories.map((c) => {
-    const type = c.type === 'vincolo' ? 'vincolo' : 'attributo';
-    if (type === 'vincolo') {
-      return `- ${c.name} (${type}): il backend chiede il dato necessario (es. età in anni); NON usare questi token come risposta utente`;
-    }
-    return `- ${c.name} (${type}): ${c.tokenTexts.join(', ')}`;
-  });
-  return lines.join('\n');
-}
-
-function compileVoiceAgentPrompt(bundle: AgentBundle): string {
-  const catalog = buildCategoryCatalogForVoiceAgent(bundle);
+/** System prompt: ConvAI relays transcript to backend and speaks spokenHint verbatim. */
+export function compileVoiceRelayPrompt(bundle: AgentBundle): string {
   return [
-    'Sei un assistente vocale per prenotazione prestazioni mediche.',
+    'Sei un ponte vocale per prenotazione prestazioni mediche.',
     `Dominio: ${bundle.meta.documentName}. Lingua: italiano.`,
     '',
-    'RUOLO: estrai slot dalla frase utente e chiama SEMPRE il tool agent_dialog_step.',
-    'NON scegliere prestazioni, NON applicare vincoli, NON disambiguare da solo.',
+    'NON ragioni, NON estrai informazioni, NON decidi nulla, NON parafrasi.',
     '',
-    'CATALOGO CATEGORIE (usa etichette esatte + token canonici):',
-    catalog,
+    'A ogni turno in cui l\'utente parla:',
+    '1. Trascrivi fedelmente ciò che dice l\'utente.',
+    '2. Chiama SEMPRE il tool agent_dialog_step con conversationId e transcript.',
+    '   (conversationId è iniettato automaticamente da ElevenLabs; non inventarlo.)',
+    '3. Dalla risposta del tool, pronuncia ESATTAMENTE il campo spokenHint.',
+    '   Non aggiungere, non omettere, non riformulare.',
+    '4. Ignora instruction, debug, parsedBlock, candidateCount e expectedInput.',
     '',
-    'OUTPUT TOOL (ogni turno):',
-    '- incomingSlots: [{ categoryName: "NOME CATEGORIA", value: "token" }]',
-    '- transcript: frase utente (opzionale)',
-    '(conversationId è iniettato automaticamente da ElevenLabs; non inventarlo.)',
-    '',
-    'DOPO OGNI RISPOSTA DEL TOOL agent_dialog_step:',
-    '- Leggi spokenHint: indizio per cosa DIRE (parafrasalo in italiano naturale).',
-    '- Leggi instruction.expectedInput: contratto per cosa INVIARE nel prossimo tool call.',
-    '- Compila incomingSlots secondo expectedInput.slots (categoryName + valueKind).',
-    '- Se c\'è pendingExpectedInput dal turno precedente, invia SOLO quelle categorie — nessun altro slot.',
-    '- Per valueKind age_years: value = solo numero intero anni (es. "30"), MAI token fascia/vincolo.',
-    '- Per valueKind canonical_token: value = token esatto da options o catalogo attributo.',
-    '- Usa instruction.action solo come riferimento; expectedInput ha priorità su incomingSlots.',
-    '- IGNORA debug, log, parsedBlock, nextState e candidateCount nel parlato.',
+    'Se spokenHint è vuoto, chiedi brevemente di ripetere.',
   ].join('\n');
 }
 
 /** Default EU voice used when none is configured (matches common Omnia deploy). */
 export const DEFAULT_CONVAI_VOICE_ID = 'JfznbVXrGXYh0gZo9Lcp';
 
-/** Assembles full conversation_config for create/patch agent. */
+/** Default LLM for relay mode — minimal orchestration (tool call + read response). */
+export const DEFAULT_CONVAI_RELAY_LLM = 'gpt-4o-mini';
+
+/** Assembles full conversation_config for create/patch agent (dumb relay). */
 export function buildConvaiConversationConfig(input: ConvaiConversationConfigInput) {
-  const prompt = compileVoiceAgentPrompt(input.bundle);
+  const prompt = compileVoiceRelayPrompt(input.bundle);
   const tool = buildAgentDialogStepTool(input.documentId, input.gatewayOrigin);
   const voiceId = input.voiceId?.trim() || DEFAULT_CONVAI_VOICE_ID;
 
@@ -73,7 +53,7 @@ export function buildConvaiConversationConfig(input: ConvaiConversationConfigInp
       language: 'it',
       prompt: {
         prompt,
-        llm: input.llm ?? 'gpt-4o',
+        llm: input.llm ?? DEFAULT_CONVAI_RELAY_LLM,
         tools: [tool],
         knowledge_base: [] as Array<{ type: string; name: string; id: string; usage_mode: string }>,
       },

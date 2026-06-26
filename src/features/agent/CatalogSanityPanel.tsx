@@ -133,7 +133,10 @@ export function CatalogSanityPanel({
   variant = 'compact',
 }: CatalogSanityPanelProps) {
   if (!report) return null;
-  const hasIssues = report.duplicates.length > 0 || report.repeatedTokens.length > 0;
+  const cardinalityViolations = report.cardinalityViolations ?? [];
+  const hasIssues = report.duplicates.length > 0
+    || report.repeatedTokens.length > 0
+    || cardinalityViolations.length > 0;
   if (!hasIssues) return null;
 
   const isPage = variant === 'page';
@@ -148,6 +151,9 @@ export function CatalogSanityPanel({
           </span>
           <span className="font-mono text-xs text-amber-200/90">
             {report.duplicates.length} duplicati · {report.repeatedTokens.length} token ripetuti
+            {(report.cardinalityViolations?.length ?? 0) > 0
+              ? ` · ${report.cardinalityViolations!.length} cardinalità`
+              : ''}
           </span>
         </div>
       )}
@@ -341,6 +347,64 @@ export function CatalogSanityPanel({
                   title={rowTitle}
                   subtitle={rowSubtitle}
                   defaultOpen={rowIndex === 0 && report.duplicates.length === 0}
+                >
+                  {rowBody}
+                </ReportAccordion>
+              );
+            })}
+          </section>
+        )}
+
+        {(report.cardinalityViolations?.length ?? 0) > 0 && (
+          <section className={isPage ? 'space-y-5' : 'space-y-3'}>
+            {isPage && (
+              <h3 className="text-base font-bold uppercase tracking-wide text-amber-100 border-b border-amber-400/35 pb-2">
+                Cardinalità singola violata ({report.cardinalityViolations!.length})
+              </h3>
+            )}
+            {report.cardinalityViolations!.map((row, rowIndex) => {
+              const rowKey = `${row.path}:${row.categoryName}:${row.values.join('+')}`;
+              const excluded = itemExclusions.has(row.sourceText.trim());
+              const rowTitle = `${row.categoryName}: ${row.values.join(', ')}`;
+              const rowBody = (
+                <>
+                  <p className="text-sm leading-relaxed text-amber-100/95">
+                    Più valori incompatibili sulla stessa categoria a cardinalità singola.
+                    Imposta un winner o correggi alias / segmentazione.
+                  </p>
+                  <SourceLine text={row.sourceText} excluded={excluded} isPage={isPage} />
+                  <PathLine path={row.path} isPage={isPage} />
+                  {!excluded && (
+                    <button
+                      type="button"
+                      onClick={() => onExcludeItem(row.sourceText)}
+                      className={`self-start ${isPage ? actionBtnPage : actionBtnCompact} border-amber-400/50 text-amber-50 hover:bg-amber-400/15`}
+                    >
+                      <Ban className={isPage ? 'w-4 h-4' : 'w-3 h-3'} />
+                      Escludi item
+                    </button>
+                  )}
+                </>
+              );
+
+              if (!isPage) {
+                return (
+                  <div key={rowKey} className="space-y-1">
+                    <p className={`text-amber-200/85 ${excluded ? 'line-through opacity-60' : ''}`}>
+                      {rowTitle}
+                    </p>
+                    {rowBody}
+                  </div>
+                );
+              }
+
+              return (
+                <ReportAccordion
+                  key={rowKey}
+                  id={rowKey}
+                  title={rowTitle}
+                  subtitle={row.path}
+                  defaultOpen={rowIndex === 0 && report.duplicates.length === 0 && report.repeatedTokens.length === 0}
                 >
                   {rowBody}
                 </ReportAccordion>

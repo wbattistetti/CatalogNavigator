@@ -106,6 +106,11 @@ Public Module ConceptExtraction
 
             If values.Count = 0 Then Continue For
 
+            If kind = Models.ConceptKind.Attributo AndAlso category IsNot Nothing Then
+                values = CategoryValueResolution.ResolveAttributoValues(category, values)
+                If values.Count = 0 Then Continue For
+            End If
+
             result.Add(ValueSetOps.CreateAttributoConcept(
                 If(category IsNot Nothing, category.Name, concept.Category.Trim()),
                 values))

@@ -80,7 +80,8 @@ Public Module ConstraintValidation
 
     Public Function ExtractAgeYearsFromText(text As String) As Integer?
         If String.IsNullOrWhiteSpace(text) Then Return Nothing
-        Dim normalized = text.Trim().ToLowerInvariant()
+        Dim normalized = AgeUtteranceNormalize.NormalizeAgeUtterance(text)
+        If String.IsNullOrWhiteSpace(normalized) Then Return Nothing
 
         Dim explicitMatch = Regex.Match(normalized, "(?:ho|ha|sono|è|e|di)\s*(\d{1,3})\s*anni?")
         If explicitMatch.Success Then

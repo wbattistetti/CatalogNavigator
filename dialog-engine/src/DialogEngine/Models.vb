@@ -21,6 +21,10 @@ Namespace Models
         Public Property Name As String
         Public Property Order As Integer
         Public Property Kind As ConceptKind = ConceptKind.Attributo
+        ''' <summary>attributo only: single (default) or multi.</summary>
+        Public Property Cardinality As String
+        ''' <summary>attributo + single: canonical token that wins on conflict.</summary>
+        Public Property Winner As String
         Public Property ValueKind As String
         Public Property AllowedValues As List(Of String) = New List(Of String)()
         Public Property Grammar As CategoryGrammar

@@ -51,6 +51,7 @@ describe('segmentDescriptionGrammarAware', () => {
         order: 0,
         tokenTexts: ['ecg', 'ecocolordoppler cardiaco'],
         type: 'attributo',
+        cardinality: 'multi',
       },
       {
         id: 'c2',
@@ -94,6 +95,35 @@ describe('segmentDescriptionGrammarAware', () => {
     expect(result.path).toBe(
       'ecg.ecocolordoppler cardiaco.cardiologica.pediatrica.specialistica.prima',
     );
+  });
+
+  it('resolves tipo visita conflict when winner is controllo', () => {
+    const categories: TokenCategory[] = [
+      { id: 'c1', name: 'specialità', order: 0, tokenTexts: ['angiologica'], type: 'attributo' },
+      {
+        id: 'c2',
+        name: 'tipo visita',
+        order: 1,
+        tokenTexts: ['prima', 'controllo'],
+        type: 'attributo',
+        cardinality: 'single',
+        winner: 'controllo',
+      },
+    ];
+    const tokens: TokenEntry[] = [
+      { text: 'angiologica', enabled: true },
+      { text: 'prima', enabled: true },
+      { text: 'controllo', enabled: true },
+      { text: 'visita specialistica', enabled: true, aliasOf: 'prima' },
+    ];
+    const withGrammar = applyCategoryGrammars(categories, tokens, true);
+    const result = segmentDescriptionGrammarAware(
+      'VISITA SPECIALISTICA ANGIOLOGICA DI CONTROLLO',
+      tokens,
+      withGrammar,
+    );
+    expect(result.segments).toEqual(['angiologica', 'controllo']);
+    expect(result.path).toBe('angiologica.controllo');
   });
 
   it('does not grammar-supplement agonistica when non agonistica already matched', () => {

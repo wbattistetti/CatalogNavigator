@@ -1,7 +1,10 @@
 /**
- * Catalog integrity checks: duplicate concept fingerprints and repeated path tokens.
+ * Catalog integrity checks: duplicate concept fingerprints, repeated path tokens, cardinality conflicts.
  */
 import type { BundleCorpusItem, BundleCorpusSegment, CompiledConstraint } from './agentBundleTypes';
+import type { CategoryResolutionViolation } from './categoryValueResolution';
+import { findCardinalityViolationsForSegments } from './categoryValueResolution';
+import type { TokenCategory } from './dictionaryTree';
 import { normalizeSlotCategoryKey } from './slotExtract';
 import { normalizeValueList, valueSetKey } from './valueSet';
 
@@ -25,9 +28,17 @@ export interface CatalogSanityRepeatedToken {
   collapsedCatalogKey: string;
 }
 
+export interface CatalogSanityCardinalityViolation {
+  sourceText: string;
+  path: string;
+  categoryName: string;
+  values: string[];
+}
+
 export interface CatalogSanityReport {
   duplicates: CatalogSanityDuplicateGroup[];
   repeatedTokens: CatalogSanityRepeatedToken[];
+  cardinalityViolations: CatalogSanityCardinalityViolation[];
 }
 
 interface GroupedConcept {
@@ -137,24 +148,55 @@ function findDuplicateGroups(items: readonly BundleCorpusItem[]): CatalogSanityD
     .sort((a, b) => b.items.length - a.items.length);
 }
 
+function findCardinalityViolations(
+  items: readonly BundleCorpusItem[],
+  categories: readonly TokenCategory[],
+): CatalogSanityCardinalityViolation[] {
+  if (categories.length === 0) return [];
+  const out: CatalogSanityCardinalityViolation[] = [];
+  for (const item of items) {
+    const violations: CategoryResolutionViolation[] = findCardinalityViolationsForSegments(
+      item.segments,
+      [...categories],
+    );
+    for (const v of violations) {
+      out.push({
+        sourceText: item.sourceText,
+        path: item.path,
+        categoryName: v.categoryName,
+        values: v.values,
+      });
+    }
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path, 'it'));
+}
+
 /** Analyzes compiled corpus items for catalog integrity issues. */
-export function analyzeCatalogSanity(items: readonly BundleCorpusItem[]): CatalogSanityReport {
+export function analyzeCatalogSanity(
+  items: readonly BundleCorpusItem[],
+  categories: readonly TokenCategory[] = [],
+): CatalogSanityReport {
   const duplicates = findDuplicateGroups(items);
   const repeatedTokens = items.flatMap(findRepeatedTokens);
+  const cardinalityViolations = findCardinalityViolations(items, categories);
 
-  return { duplicates, repeatedTokens };
+  return { duplicates, repeatedTokens, cardinalityViolations };
 }
 
 /** True when the report lists duplicate fingerprints or repeated path tokens. */
 export function hasCatalogSanityIssues(report: CatalogSanityReport | null | undefined): boolean {
   if (!report) return false;
-  return report.duplicates.length > 0 || report.repeatedTokens.length > 0;
+  return report.duplicates.length > 0
+    || report.repeatedTokens.length > 0
+    || report.cardinalityViolations.length > 0;
 }
 
 /** Badge count for the Report tab (groups + repeated-token rows). */
 export function catalogSanityIssueCount(report: CatalogSanityReport | null | undefined): number {
   if (!report) return 0;
-  return report.duplicates.length + report.repeatedTokens.length;
+  return report.duplicates.length
+    + report.repeatedTokens.length
+    + report.cardinalityViolations.length;
 }
 
 /** Human-readable warnings for bundle meta.warnings. */
@@ -172,6 +214,13 @@ export function catalogSanityWarnings(report: CatalogSanityReport): string[] {
     warnings.push(
       `Token ripetuto "${row.segmentText}" (${row.categoryName}) in ${row.path} `
       + `[${row.occurrenceIndices.join(', ')}] → catalogo: "${row.collapsedCatalogKey}"`,
+    );
+  }
+
+  for (const row of report.cardinalityViolations) {
+    warnings.push(
+      `Cardinalità singola violata (${row.categoryName}) in ${row.path}: `
+      + `${row.values.join(', ')}`,
     );
   }
 

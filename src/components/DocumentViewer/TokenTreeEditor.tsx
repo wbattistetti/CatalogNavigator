@@ -21,9 +21,15 @@ import {
   reorderCategory,
   reorderCategoryToIndex,
   rootTokenTexts,
-  setCategoryType,
   tokenTextsForCategoryView,
+  type CategoryType,
 } from '../../lib/dictionaryTree';
+import {
+  categorySettingBadges,
+  updateCategorySettings,
+  type CategoryCardinality,
+  type CategorySettingsPatch,
+} from '../../lib/categoryCardinality';
 import {
   aliasCanonicalHint,
   getSelectionOffsetsInElement,
@@ -339,13 +345,16 @@ function CategoryRow({
   iconKey,
   iconColor,
   categoryType,
+  cardinality,
+  winner,
+  tokenTexts,
   active,
   dropHighlight,
   grammarEditActive,
   draggable,
   onSelect,
   onGrammarEdit,
-  onTypeChange,
+  onSettingsChange,
   onDelete,
   onMoveToLibrary,
   onMoveUp,
@@ -364,13 +373,16 @@ function CategoryRow({
   iconKey: string;
   iconColor: string;
   categoryType?: CategoryType;
+  cardinality?: CategoryCardinality;
+  winner?: string;
+  tokenTexts?: string[];
   active: boolean;
   dropHighlight: boolean;
   grammarEditActive?: boolean;
   draggable: boolean;
   onSelect: () => void;
   onGrammarEdit?: () => void;
-  onTypeChange?: (type: CategoryType) => void;
+  onSettingsChange?: (patch: CategorySettingsPatch) => void;
   onDelete?: () => void;
   onMoveToLibrary?: () => void;
   onMoveUp?: () => void;
@@ -384,6 +396,23 @@ function CategoryRow({
   onDragEnd: () => void;
 }) {
   const isNoCategory = id === NO_CATEGORY_SENTINEL;
+  const type = normalizeCategoryType(categoryType);
+  const isVincolo = type === 'vincolo';
+  const isMulti = cardinality === 'multi';
+  const settingBadges = isNoCategory
+    ? []
+    : categorySettingBadges({
+      id,
+      name,
+      order: 0,
+      tokenTexts: tokenTexts ?? [],
+      type,
+      cardinality,
+      winner,
+    });
+
+  const toolbarSelectClass =
+    `flex-shrink-0 bg-[#080e0a] border border-[#1a3a2a] rounded px-1 py-0 ${TREE_LABEL} text-emerald-200/90 focus:outline-none focus:border-sky-400/40`;
 
   return (
     <div
@@ -426,56 +455,107 @@ function CategoryRow({
         size="lg"
         title={name}
       />
-      <span
-        className={`flex-1 min-w-0 truncate ${TREE_LABEL} ${
-          isNoCategory ? 'text-emerald-300/80 italic' : 'font-semibold'
-        }`}
-        style={isNoCategory ? undefined : { color: iconColor }}
-        title={name}
-      >
-        {name}
-      </span>
-      {categoryType === 'vincolo' && (
+      <div className="flex-1 min-w-0 flex items-center gap-1 flex-wrap">
         <span
-          className="inline-flex items-center gap-0.5 flex-shrink-0 rounded px-1 py-px"
-          style={{
-            backgroundColor: `${VINCOLO_CATEGORY_BADGE.iconColor}18`,
-            boxShadow: `inset 0 0 0 1px ${VINCOLO_CATEGORY_BADGE.iconColor}44`,
-          }}
-          title="Categoria vincolo: regola di ammissibilità (es. fascia d'età)"
-        >
-          <DictionaryIcon
-            iconKey={VINCOLO_CATEGORY_BADGE.iconKey}
-            iconColor={VINCOLO_CATEGORY_BADGE.iconColor}
-            size="xs"
-            title="Vincolo"
-          />
-          <span
-            className={`${TREE_LABEL} font-semibold uppercase tracking-wide`}
-            style={{ color: VINCOLO_CATEGORY_BADGE.iconColor }}
-          >
-            Vincolo
-          </span>
-        </span>
-      )}
-      <span className={`${TREE_LABEL} text-emerald-400/80 tabular-nums`}>{count}</span>
-      {onTypeChange && categoryType && (
-        <select
-          value={categoryType}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onTypeChange(e.target.value as CategoryType)}
-          className={`flex-shrink-0 max-w-[6.5rem] opacity-0 group-hover:opacity-100 bg-[#080e0a] border border-[#1a3a2a] rounded px-1 py-0 ${TREE_LABEL} text-emerald-200/90 focus:outline-none focus:border-sky-400/40 ${
-            categoryType === 'vincolo' ? 'text-amber-300/90' : ''
+          className={`min-w-0 truncate ${TREE_LABEL} ${
+            isNoCategory ? 'text-emerald-300/80 italic' : 'font-semibold'
           }`}
-          title="Tipo categoria: attributo = disambiguazione, vincolo = regola (es. età)"
+          style={isNoCategory ? undefined : { color: iconColor }}
+          title={`${name} (${count})`}
         >
-          <option value="attributo">attributo</option>
-          <option value="vincolo">vincolo</option>
-        </select>
-      )}
+          {name}
+          <span className="text-emerald-400/65 font-normal tabular-nums"> ({count})</span>
+        </span>
+        {settingBadges.map((badge) => (
+          <span
+            key={badge.key}
+            className={`inline-flex items-center gap-0.5 flex-shrink-0 rounded px-1 py-px ${
+              badge.variant === 'winner' ? 'group-hover:hidden' : ''
+            }`}
+            style={
+              badge.variant === 'vincolo'
+                ? {
+                  backgroundColor: `${VINCOLO_CATEGORY_BADGE.iconColor}18`,
+                  boxShadow: `inset 0 0 0 1px ${VINCOLO_CATEGORY_BADGE.iconColor}44`,
+                }
+                : badge.variant === 'multi'
+                  ? {
+                    backgroundColor: 'rgb(56 189 248 / 0.12)',
+                    boxShadow: 'inset 0 0 0 1px rgb(56 189 248 / 0.35)',
+                  }
+                  : {
+                    backgroundColor: 'rgb(251 191 36 / 0.12)',
+                    boxShadow: 'inset 0 0 0 1px rgb(251 191 36 / 0.35)',
+                  }
+            }
+            title={badge.title}
+          >
+            <span
+              className={`${TREE_LABEL} font-medium whitespace-nowrap`}
+              style={{
+                color: badge.variant === 'vincolo'
+                  ? VINCOLO_CATEGORY_BADGE.iconColor
+                  : badge.variant === 'multi'
+                    ? 'rgb(125 211 252)'
+                    : 'rgb(252 211 77)',
+              }}
+            >
+              {badge.label}
+            </span>
+          </span>
+        ))}
+        {onSettingsChange && categoryType && (
+          <div
+            className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <select
+              value={type}
+              onChange={(e) => onSettingsChange({ type: e.target.value as CategoryType })}
+              className={`${toolbarSelectClass} max-w-[5.5rem] ${
+                isVincolo ? 'text-amber-300/90' : ''
+              }`}
+              title="Tipo categoria: attributo = disambiguazione, vincolo = regola (es. età)"
+            >
+              <option value="attributo">attributo</option>
+              <option value="vincolo">vincolo</option>
+            </select>
+            {!isVincolo && (
+              <select
+                value={isMulti ? 'multi' : 'single'}
+                onChange={(e) => onSettingsChange({
+                  cardinality: e.target.value === 'multi' ? 'multi' : 'single',
+                })}
+                className={`${toolbarSelectClass} max-w-[5.5rem]`}
+                title="Cardinalità: singolo = un valore per item; multiplo = più valori ammessi"
+              >
+                <option value="single">singolo</option>
+                <option value="multi">multiplo</option>
+              </select>
+            )}
+            {!isVincolo && !isMulti && (tokenTexts?.length ?? 0) > 0 && (
+              <select
+                value={winner ?? ''}
+                onChange={(e) => onSettingsChange({
+                  winner: e.target.value.trim() || null,
+                })}
+                className={`${toolbarSelectClass} max-w-[6.5rem]`}
+                title="Winner: in caso di conflitto su questa categoria, prevale questo token"
+              >
+                <option value="">winner —</option>
+                {(tokenTexts ?? []).map((text) => (
+                  <option key={text} value={text}>{text}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+      </div>
+      {((draggable && (onMoveUp || onMoveDown)) || onMoveToLibrary || onDelete) && (
+      <div className="flex items-center flex-shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
       {draggable && (onMoveUp || onMoveDown) && (
-        <div className="flex items-center flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center flex-shrink-0">
           {onMoveUp && (
             <button
               type="button"
@@ -515,7 +595,7 @@ function CategoryRow({
             e.stopPropagation();
             onMoveToLibrary();
           }}
-          className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-sky-400/60 hover:text-sky-200 hover:bg-sky-400/10 transition-all"
+          className="flex-shrink-0 p-0.5 rounded text-sky-400/60 hover:text-sky-200 hover:bg-sky-400/10 transition-all"
           title="Sposta categoria in libreria"
         >
           <Library className="w-3 h-3" />
@@ -528,11 +608,13 @@ function CategoryRow({
             e.stopPropagation();
             onDelete();
           }}
-          className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-300 hover:bg-red-400/10 transition-all"
+          className="flex-shrink-0 p-0.5 rounded text-red-400/50 hover:text-red-300 hover:bg-red-400/10 transition-all"
           title="Elimina categoria"
         >
           <Trash2 className="w-3 h-3" />
         </button>
+      )}
+      </div>
       )}
     </div>
   );
@@ -827,8 +909,11 @@ export function TokenTreeEditor({
     tokens,
   ]);
 
-  const handleCategoryTypeChange = useCallback((categoryId: string, type: CategoryType) => {
-    onCategoriesChange(setCategoryType(categories, categoryId, type));
+  const handleCategorySettingsChange = useCallback((
+    categoryId: string,
+    patch: CategorySettingsPatch,
+  ) => {
+    onCategoriesChange(updateCategorySettings(categories, categoryId, patch));
   }, [categories, onCategoriesChange]);
 
   const handleDeleteCategory = useCallback((categoryId: string) => {
@@ -1295,6 +1380,9 @@ export function TokenTreeEditor({
                   iconKey={iconForCategory(cat).iconKey}
                   iconColor={iconForCategory(cat).iconColor}
                   categoryType={normalizeCategoryType(cat.type)}
+                  cardinality={cat.cardinality}
+                  winner={cat.winner}
+                  tokenTexts={cat.tokenTexts}
                   active={activeCategoryKey === cat.id}
                   dropHighlight={effectiveDropTarget === cat.id}
                   grammarEditActive={grammarPanelOpen && grammarEditCategoryId === cat.id}
@@ -1308,7 +1396,7 @@ export function TokenTreeEditor({
                       ? () => onGrammarEditCategoryChange(cat.id)
                       : undefined
                   }
-                  onTypeChange={(type) => handleCategoryTypeChange(cat.id, type)}
+                  onSettingsChange={(patch) => handleCategorySettingsChange(cat.id, patch)}
                   onDelete={
                     cat.tokenTexts.length === 0
                       ? () => handleDeleteCategory(cat.id)

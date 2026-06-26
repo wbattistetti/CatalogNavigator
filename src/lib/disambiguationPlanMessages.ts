@@ -17,6 +17,7 @@ import { deriveDisambiguationParents, type DisambiguationContextVariant, type Di
 import { defaultNoMatchReplies } from './messageAssembly';
 import { compileTurnAnswerGrammar } from './turnAnswerGrammar';
 import { AGE_YEARS_QUESTION } from './constraintValidation';
+import { normalizeTestPhrases } from './disambiguationTestPhrases';
 
 export interface DisambiguationEditorRow extends DisambiguationMessageRecord {
   nodeKeys: string[];
@@ -188,6 +189,7 @@ function buildEditorRowFromGroup(
       ? null
       : (savedRow?.answer_grammar
         ?? (deferGrammarCompile ? null : compileDisambiguationAnswerGrammar(options))),
+    test_phrases: normalizeTestPhrases(savedRow?.test_phrases),
     source: savedRow?.source,
     status: savedRow?.status ?? null,
     contextCount: nodeKeys.length,
@@ -358,6 +360,7 @@ export function editorRowsToStorage(
         ? null
         : (row.answer_grammar
           ?? (deferGrammarCompile ? null : compileDisambiguationAnswerGrammar(row.options))),
+      test_phrases: normalizeTestPhrases(row.test_phrases),
       source: row.source,
       status: row.status ?? null,
       contextCount: row.contextCount,

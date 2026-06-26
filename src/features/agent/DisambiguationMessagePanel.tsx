@@ -24,7 +24,7 @@ import { VincoloPipelinePanel } from './VincoloPipelinePanel';
 
 
 
-type DetailTab = 'messaggi' | 'grammatiche';
+type DetailTab = 'messaggi' | 'grammatiche' | 'test';
 
 
 
@@ -64,18 +64,25 @@ export function DisambiguationMessagePanel({
 
   const [activeTab, setActiveTab] = useState<DetailTab>('messaggi');
   const [contextOpen, setContextOpen] = useState(true);
+  const [focusExpectedOption, setFocusExpectedOption] = useState<string | null>(null);
 
   const showGrammatiche = row?.style !== 'ask_age';
 
   useEffect(() => {
     if (!row) return;
     setActiveTab(focusGrammar && row.style !== 'ask_age' ? 'grammatiche' : 'messaggi');
+    setFocusExpectedOption(null);
   }, [row?.signature, focusGrammar, row?.style]);
 
   useEffect(() => {
     if (!row) return;
     setContextOpen(activeTab === 'messaggi');
   }, [row?.signature, activeTab, row]);
+
+  const handleNavigateToGrammar = (expected: string) => {
+    setFocusExpectedOption(expected);
+    setActiveTab('grammatiche');
+  };
 
 
 
@@ -99,23 +106,24 @@ export function DisambiguationMessagePanel({
 
     <div className="flex flex-col h-full min-h-0">
 
-      <div className="flex-shrink-0 px-4 pt-4 pb-3">
+      {activeTab === 'messaggi' && (
+      <div className="flex-shrink-0 px-4 py-2">
         <div className="rounded border border-[#1a3a2a] bg-[#0d1510] overflow-hidden">
           <button
             type="button"
             onClick={() => setContextOpen((v) => !v)}
-            className="flex w-full items-start gap-1.5 px-3 py-2 font-mono text-sm text-emerald-300/85 hover:text-emerald-200 hover:bg-emerald-400/5 transition-colors text-left"
+            className="flex w-full items-center gap-1.5 px-2 py-1.5 font-mono text-sm text-emerald-300/85 hover:text-emerald-200 hover:bg-emerald-400/5 transition-colors text-left"
             aria-expanded={contextOpen}
           >
             <ChevronDown
-              className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${contextOpen ? '' : '-rotate-90'}`}
+              className={`w-3 h-3 flex-shrink-0 transition-transform ${contextOpen ? '' : '-rotate-90'}`}
             />
-            <span className="text-emerald-200/80 break-words min-w-0">
+            <span className="text-emerald-200/80 break-words min-w-0 line-clamp-2">
               {buildContextAccordionLabel(row, categories)}
             </span>
           </button>
           {contextOpen && (
-            <div className="px-3 pb-2 border-t border-[#1a3a2a]/60">
+            <div className="px-2 pb-2 border-t border-[#1a3a2a]/60">
               <DisambiguationContextSummary
                 categoryName={row.categoryName}
                 parentInfo={row.parentInfo}
@@ -132,6 +140,7 @@ export function DisambiguationMessagePanel({
           )}
         </div>
       </div>
+      )}
 
 
 
@@ -175,6 +184,20 @@ export function DisambiguationMessagePanel({
 
           </DetailTabButton>
 
+          <DetailTabButton
+
+            id="disambiguation-tab-test"
+
+            active={activeTab === 'test'}
+
+            onClick={() => setActiveTab('test')}
+
+          >
+
+            Test
+
+          </DetailTabButton>
+
         </div>
 
       )}
@@ -182,13 +205,19 @@ export function DisambiguationMessagePanel({
 
 
       <div
-        className={`flex-1 min-h-0 px-4 py-3 ${
-          activeTab === 'grammatiche' && showGrammatiche
+        className={`flex-1 min-h-0 px-4 py-2 ${
+          (activeTab === 'grammatiche' || activeTab === 'test') && showGrammatiche
             ? 'overflow-hidden flex flex-col'
             : 'overflow-auto'
         }`}
         role="tabpanel"
-        aria-labelledby={activeTab === 'grammatiche' ? 'disambiguation-tab-grammatiche' : 'disambiguation-tab-messaggi'}
+        aria-labelledby={
+          activeTab === 'test'
+            ? 'disambiguation-tab-test'
+            : activeTab === 'grammatiche'
+              ? 'disambiguation-tab-grammatiche'
+              : 'disambiguation-tab-messaggi'
+        }
       >
 
         {activeTab === 'messaggi' || !showGrammatiche ? (
@@ -207,19 +236,37 @@ export function DisambiguationMessagePanel({
 
           <DisambiguationAnswerGrammarEditor
 
+            viewMode={activeTab === 'test' ? 'test' : 'grammatiche'}
+
             options={row.options}
 
             style={row.style}
 
             grammar={row.answer_grammar}
 
+            testPhrases={row.test_phrases}
+
             runtimeOptions={runtimeOptions}
 
-            autoFocus={focusGrammar}
+            autoFocus={focusGrammar && activeTab === 'grammatiche'}
+
+            focusExpectedOption={focusExpectedOption}
+
+            onNavigateToGrammar={handleNavigateToGrammar}
 
             onSave={(grammar) => onSave(row.signature, {
 
               answer_grammar: grammar,
+
+              source: 'manual',
+
+              status: null,
+
+            })}
+
+            onSaveTestPhrases={(test_phrases) => onSave(row.signature, {
+
+              test_phrases,
 
               source: 'manual',
 

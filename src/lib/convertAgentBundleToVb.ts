@@ -11,6 +11,7 @@ import type {
   PendingSlotContract,
 } from './agentBundleTypes';
 import { ensureCategoryGrammarsCoverDictionaryAliases } from './categoryGrammar';
+import { tryResolveAttributoValuesForCategory } from './categoryValueResolution';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import { compileVincoloResolutionPipeline } from './vincoloResolutionPipeline';
 import {
@@ -86,6 +87,8 @@ export interface VbAgentBundlePayload {
       order: number;
       kind: ConceptKind;
       allowedValues: string[];
+      cardinality?: 'single' | 'multi';
+      winner?: string | null;
       valueKind?: string | null;
       grammar?: { regex: string; mappings: Record<string, string> } | null;
       resolution?: Record<string, unknown> | null;
@@ -151,6 +154,8 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
       order: cat.order,
       kind,
       allowedValues,
+      cardinality: cat.cardinality === 'multi' ? 'multi' : 'single',
+      winner: kind === 'attributo' && cat.cardinality !== 'multi' ? (cat.winner?.trim() || null) : null,
       valueKind,
       grammar: cat.grammar?.regex?.trim()
         ? { regex: cat.grammar.regex, mappings: grammarMappings ?? {} }
@@ -242,13 +247,26 @@ function buildGroupedCatalogConcepts(
     grouped.set(seg.categoryName, existing);
   }
 
-  return [...grouped.entries()].map(([category, entry]) => ({
-    category,
-    kind: entry.kind,
-    values: entry.kind === 'vincolo'
-      ? [entry.values[0] ?? '']
-      : normalizeValueList(entry.values),
-  }));
+  return [...grouped.entries()].map(([categoryName, entry]) => {
+    const category = categoryByName.get(categoryName);
+    const rawValues = normalizeValueList(entry.values);
+    if (entry.kind === 'vincolo') {
+      return { category: categoryName, kind: entry.kind, values: [rawValues[0] ?? ''] };
+    }
+    const resolved = category
+      ? tryResolveAttributoValuesForCategory(
+        {
+          name: category.name,
+          type: 'attributo',
+          cardinality: category.cardinality,
+          winner: category.winner ?? undefined,
+          tokenTexts: category.allowedValues,
+        },
+        rawValues,
+      ).values
+      : rawValues;
+    return { category: categoryName, kind: entry.kind, values: resolved };
+  });
 }
 
 function isExpectedSlotValueKind(value: string): value is ExpectedSlotValueKind {

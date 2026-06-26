@@ -52,6 +52,27 @@ describe('analyzeCatalogSanity', () => {
     expect(report.duplicates[0]?.items).toHaveLength(2);
   });
 
+  it('flags cardinality violations on single category without winner', () => {
+    const categories = [
+      {
+        id: 'tv',
+        name: 'tipo visita',
+        order: 0,
+        tokenTexts: ['prima', 'controllo'],
+        cardinality: 'single' as const,
+      },
+    ];
+    const report = analyzeCatalogSanity([
+      item('angiologica.prima.controllo', [
+        { text: 'angiologica', categoryName: 'specialità', categoryType: 'attributo' },
+        { text: 'prima', categoryName: 'tipo visita', categoryType: 'attributo' },
+        { text: 'controllo', categoryName: 'tipo visita', categoryType: 'attributo' },
+      ], 'VISITA SPECIALISTICA DI CONTROLLO'),
+    ], categories);
+    expect(report.cardinalityViolations).toHaveLength(1);
+    expect(report.cardinalityViolations[0]?.values).toEqual(['controllo', 'prima']);
+  });
+
   it('flags repeated segment tokens before catalog dedup', () => {
     const report = analyzeCatalogSanity([
       item('senologica.prima.prima.ecografia', [

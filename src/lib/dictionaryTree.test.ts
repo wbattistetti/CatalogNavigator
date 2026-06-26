@@ -82,15 +82,32 @@ describe('category type', () => {
     expect(normalizeCategoryType('other')).toBe('attributo');
   });
 
-  it('loads saved type and migrates legacy categories', () => {
+  it('loads saved type, cardinality, and winner', () => {
     const loaded = loadSavedCategories({
       categories: [
         { id: 'a', name: 'tipo', order: 0, tokenTexts: ['tac'] },
         { id: 'b', name: 'età', order: 1, tokenTexts: ['14-17'], type: 'vincolo' },
+        {
+          id: 'c',
+          name: 'tipo visita',
+          order: 2,
+          tokenTexts: ['prima', 'controllo'],
+          winner: 'controllo',
+          cardinality: 'single',
+        },
+        {
+          id: 'd',
+          name: 'esame',
+          order: 3,
+          tokenTexts: ['ecg', 'holter'],
+          cardinality: 'multi',
+        },
       ],
     });
     expect(loaded[0]?.type).toBe('attributo');
     expect(loaded[1]?.type).toBe('vincolo');
+    expect(loaded[2]?.winner).toBe('controllo');
+    expect(loaded[3]?.cardinality).toBe('multi');
   });
 
   it('resolves token category type', () => {

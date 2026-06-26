@@ -2,7 +2,8 @@
  * CRUD and project wiring for library / project-scoped dictionaries.
  */
 import type { TokenCategory } from './dictionaryTree';
-import { loadSavedCategories, normalizeCategoryType, syncCategoriesWithTokens } from './dictionaryTree';
+import { loadSavedCategories, syncCategoriesWithTokens } from './dictionaryTree';
+import { serializeCategoryForStorage } from './categoryCardinality';
 import {
   defaultIconForIndustry,
   validateDictionaryMeta,
@@ -278,18 +279,7 @@ export async function updateDictionary(
     payload.tokens = normalized.tokens.map(({ text, enabled, suppressedBy, aliasOf, grammar }) => ({
       text, enabled, suppressedBy, aliasOf, grammar: grammar ?? null,
     }));
-    payload.categories = normalized.categories.map((cat) => ({
-      id: cat.id,
-      name: cat.name,
-      order: cat.order,
-      tokenTexts: cat.tokenTexts,
-      type: normalizeCategoryType(cat.type),
-      grammar: cat.grammar?.regex?.trim() ? cat.grammar : null,
-      resolution: cat.resolution ?? null,
-      valueKind: cat.valueKind === 'age_years' ? 'age_years' : null,
-      iconKey: cat.iconKey,
-      iconColor: cat.iconColor,
-    }));
+    payload.categories = normalized.categories.map((cat) => serializeCategoryForStorage(cat));
   }
 
   const { data, error } = await supabase

@@ -8,6 +8,7 @@ import {
   type SegmentMatch,
   type TokenCategory,
 } from './dictionaryTree';
+import { applyCategoryResolutionToSegmentTexts } from './categoryValueResolution';
 import { normalizeCompactPath } from './analysisTree';
 import { matchAllCategoryGrammarValues } from './categoryGrammar';
 import {
@@ -217,10 +218,11 @@ function finishGrammarSegmentation(
   );
 
   const segments = orderSegmentsByCategories([...phraseKept, ...grammarMatches], ordered);
-  const path = normalizeCompactPath(segments.join('.'));
+  const { segments: resolvedSegments } = applyCategoryResolutionToSegmentTexts(segments, ordered);
+  const path = normalizeCompactPath(resolvedSegments.join('.'));
 
   return {
-    segments: path ? path.split('.') : segments,
+    segments: path ? path.split('.') : resolvedSegments,
     path,
     unmatched: [...new Set(unmatched)],
   };

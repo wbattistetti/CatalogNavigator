@@ -3,11 +3,15 @@
  * Categories are UI/ordering metadata only — they do not prefix paths.
  */
 import { enrichCategoryIcons } from './categoryIconCatalog';
+import { hydrateCategoryFromStorage, updateCategorySettings } from './categoryCardinality';
+import type { CategoryCardinality } from './categoryCardinality';
 import type { VincoloResolutionPipeline } from './vincoloResolutionPipeline';
 import type { TokenEntry } from './tokenDictionary';
 
 /** Catalog dimension (disambiguation) vs eligibility constraint (e.g. age rules). */
 export type CategoryType = 'attributo' | 'vincolo';
+
+export type { CategoryCardinality };
 
 export const DEFAULT_CATEGORY_TYPE: CategoryType = 'attributo';
 
@@ -23,6 +27,13 @@ export interface TokenCategory {
    * vincolo = eligibility rule (e.g. age band) — not a user choice among siblings.
    */
   type?: CategoryType;
+  /**
+   * attributo only: single = at most one value per item (winner resolves conflicts);
+   * multi = multiple values allowed (e.g. esame). Default single.
+   */
+  cardinality?: CategoryCardinality;
+  /** attributo + single only: canonical token that wins when multiple values match. */
+  winner?: string;
   /** Recognition grammar: one group per canonical value in this category. */
   grammar?: GrammarEntry | null;
   /** Vincolo only: resolution pipeline executed by VB at runtime (value + unit). */
@@ -83,15 +94,13 @@ export function getCategoryTypeForToken(
   return normalizeCategoryType(cat?.type);
 }
 
-/** Updates the semantic type of one category. */
+/** Updates the semantic type of one category (clears cardinality/winner when vincolo). */
 export function setCategoryType(
   categories: TokenCategory[],
   categoryId: string,
   type: CategoryType,
 ): TokenCategory[] {
-  return categories.map((cat) =>
-    cat.id === categoryId ? { ...cat, type: normalizeCategoryType(type) } : cat,
-  );
+  return updateCategorySettings(categories, categoryId, { type: normalizeCategoryType(type) });
 }
 
 export interface DictionaryLayout {
@@ -413,18 +422,20 @@ export function loadSavedCategories(
 ): TokenCategory[] {
   if (!saved?.categories?.length) return [];
   return normalizeCategoryOrders(
-    saved.categories.map((cat) => enrichCategoryIcons({
+    saved.categories.map((cat) => hydrateCategoryFromStorage(enrichCategoryIcons({
       id: cat.id || newCategoryId(),
       name: cat.name?.trim() || 'Categoria',
       order: typeof cat.order === 'number' ? cat.order : 0,
       tokenTexts: Array.isArray(cat.tokenTexts) ? [...cat.tokenTexts] : [],
       type: normalizeCategoryType(cat.type),
+      cardinality: cat.cardinality === 'multi' ? 'multi' : undefined,
+      winner: typeof cat.winner === 'string' ? cat.winner : undefined,
       grammar: cat.grammar?.regex?.trim() ? cat.grammar : null,
       resolution: cat.resolution ?? null,
       valueKind: cat.valueKind === 'age_years' ? 'age_years' : null,
       iconKey: cat.iconKey,
       iconColor: cat.iconColor,
-    })),
+    }))),
   );
 }
 
@@ -434,7 +445,7 @@ export function syncCategoriesWithTokens(
   tokens: TokenEntry[],
 ): TokenCategory[] {
   const valid = new Set(tokens.map((t) => t.text));
-  return categories.map((cat) => ({
+  return categories.map((cat) => hydrateCategoryFromStorage({
     ...cat,
     tokenTexts: cat.tokenTexts.filter((t) => valid.has(t)),
   }));
