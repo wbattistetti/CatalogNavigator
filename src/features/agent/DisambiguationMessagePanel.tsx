@@ -22,6 +22,8 @@ import { DisambiguationAnswerGrammarEditor } from './DisambiguationAnswerGrammar
 
 import { VincoloPipelinePanel } from './VincoloPipelinePanel';
 
+import type { ChatTurnReplayRequest } from '../../lib/grammarTuningFromChat';
+
 
 
 type DetailTab = 'messaggi' | 'grammatiche' | 'test';
@@ -39,6 +41,14 @@ interface DisambiguationMessagePanelProps {
   focusGrammar?: boolean;
 
   runtimeOptions?: string[];
+
+  grammarTuningFromChat?: {
+    proposedSynonym?: string;
+    focusExpectedOption?: string | null;
+    chatReplay?: ChatTurnReplayRequest;
+  } | null;
+
+  onGrammarTuningReplay?: (request: ChatTurnReplayRequest) => void;
 
   onSave: (signature: string, patch: Partial<DisambiguationEditorRow>) => void;
 
@@ -58,6 +68,10 @@ export function DisambiguationMessagePanel({
 
   runtimeOptions,
 
+  grammarTuningFromChat = null,
+
+  onGrammarTuningReplay,
+
   onSave,
 
 }: DisambiguationMessagePanelProps) {
@@ -71,8 +85,8 @@ export function DisambiguationMessagePanel({
   useEffect(() => {
     if (!row) return;
     setActiveTab(focusGrammar && row.style !== 'ask_age' ? 'grammatiche' : 'messaggi');
-    setFocusExpectedOption(null);
-  }, [row?.signature, focusGrammar, row?.style]);
+    setFocusExpectedOption(grammarTuningFromChat?.focusExpectedOption ?? null);
+  }, [row?.signature, focusGrammar, row?.style, grammarTuningFromChat?.focusExpectedOption]);
 
   useEffect(() => {
     if (!row) return;
@@ -242,7 +256,15 @@ export function DisambiguationMessagePanel({
 
             style={row.style}
 
+            categoryName={row.categoryName}
+
+            signature={row.signature}
+
             grammar={row.answer_grammar}
+
+            grammarGraph={row.answer_grammar_graph}
+
+            grammarMode={row.answer_grammar_mode}
 
             testPhrases={row.test_phrases}
 
@@ -252,11 +274,37 @@ export function DisambiguationMessagePanel({
 
             focusExpectedOption={focusExpectedOption}
 
+            proposedSynonym={grammarTuningFromChat?.proposedSynonym}
+
+            chatReplay={grammarTuningFromChat?.chatReplay}
+
+            onGrammarTuningReplay={onGrammarTuningReplay}
+
             onNavigateToGrammar={handleNavigateToGrammar}
 
             onSave={(grammar) => onSave(row.signature, {
 
               answer_grammar: grammar,
+
+              source: 'manual',
+
+              status: null,
+
+            })}
+
+            onSaveGraph={(answer_grammar_graph) => onSave(row.signature, {
+
+              answer_grammar_graph,
+
+              source: 'manual',
+
+              status: null,
+
+            })}
+
+            onSaveMode={(answer_grammar_mode) => onSave(row.signature, {
+
+              answer_grammar_mode,
 
               source: 'manual',
 

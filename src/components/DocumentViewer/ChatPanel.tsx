@@ -3,16 +3,20 @@ import {
   Bot,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   BookmarkPlus,
   Braces,
   ChevronDown,
   MessageSquareText,
   Pencil,
+  Play,
   RotateCcw,
   Send,
   X,
 } from 'lucide-react';
 import type { AgentBundle, AgentSessionState } from '../../lib/agentBundleTypes';
+import type { GrammarEntry } from '../../lib/analysisTypes';
+import { addSynonymToDisambiguationAnswerGrammar } from '../../lib/addSynonymToDisambiguationGrammar';
 import {
   buildChatTurnDebug,
   shouldAutoExpandTurnDebug,
@@ -36,10 +40,24 @@ import {
 import { pingVbEngine, postVbTextTurn, type VbTextTurnResponse } from '../../lib/vbTestEngineClient';
 import type { SavedChatMessageInput } from '../../lib/savedChatTests';
 import { resolveBubbleDisambiguationSignature } from '../../lib/resolveBubbleDisambiguationSignature';
+import type { OpenDisambiguationFromChatOptions, ChatTurnReplayRequest } from '../../lib/grammarTuningFromChat';
+import {
+  inferExpectedOptionFromUserText,
+  isUserTurnRecognitionFailure,
+  resolvePlanSignatureForChat,
+  resolveEditorSignatureForTuning,
+  findDisambiguationRowByCategoryOptions,
+} from '../../lib/grammarTuningFromChat';
+import type { DisambiguationPlanStorage } from '../../lib/disambiguationPlanTypes';
+import {
+  findUserMessageIndex,
+  pendingContextBeforeUserMessage,
+  rebuildVbSessionBeforeUserMessage,
+} from '../../lib/chatTurnReplay';
 
 export type OpenDisambiguationMessageHandler = (
   signature: string,
-  opts?: { focusGrammar?: boolean },
+  opts?: OpenDisambiguationFromChatOptions,
 ) => void;
 
 export interface DisambiguationPlanMessagePatch {
@@ -48,6 +66,7 @@ export interface DisambiguationPlanMessagePatch {
   no_match_1?: string | null;
   no_match_2?: string | null;
   no_match_3?: string | null;
+  answer_grammar?: GrammarEntry | null;
 }
 
 interface ChatPanelProps {
@@ -55,7 +74,10 @@ interface ChatPanelProps {
   onClose: () => void;
   onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
   onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+  onRequestChatTurnReplay?: (request: ChatTurnReplayRequest) => void;
   onSaveChat?: (payload: ChatPanelSavePayload) => void;
+  chatTurnReplayRequest?: ChatTurnReplayRequest | null;
+  onChatTurnReplayHandled?: () => void;
 }
 
 export interface ChatPanelSavePayload {
@@ -125,16 +147,18 @@ function resolveDisambiguationOptions(result: VbTextTurnResponse): {
 function DisambiguationNavButtons({
   signature,
   onOpen,
+  tuningContext,
 }: {
   signature: string;
   onOpen?: OpenDisambiguationMessageHandler;
+  tuningContext?: Omit<OpenDisambiguationFromChatOptions, 'focusGrammar'>;
 }) {
   if (!onOpen) return null;
   return (
     <div className="flex flex-wrap gap-2 mt-2">
       <button
         type="button"
-        onClick={() => onOpen(signature, { focusGrammar: false })}
+        onClick={() => onOpen(signature, { ...tuningContext, focusGrammar: false })}
         className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border border-sky-400/35 bg-sky-400/10 text-sky-200 font-mono ${CHAT_TEXT} hover:bg-sky-400/20 transition-colors`}
       >
         <MessageSquareText className="w-3 h-3 flex-shrink-0" />
@@ -142,7 +166,7 @@ function DisambiguationNavButtons({
       </button>
       <button
         type="button"
-        onClick={() => onOpen(signature, { focusGrammar: true })}
+        onClick={() => onOpen(signature, { ...tuningContext, focusGrammar: true })}
         className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border border-violet-400/35 bg-violet-400/10 text-violet-200 font-mono ${CHAT_TEXT} hover:bg-violet-400/20 transition-colors`}
       >
         <Braces className="w-3 h-3 flex-shrink-0" />
@@ -305,41 +329,188 @@ function TurnDebugPanel({
   );
 }
 
+function useUserTurnGrammarTuning(params: {
+  messageId: string;
+  userText: string;
+  recognition: UserTurnRecognition;
+  plan: DisambiguationPlanStorage | null | undefined;
+  synonymAdded: boolean;
+  onSynonymAdded: (messageId: string) => void;
+  onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+  onRequestChatTurnReplay?: (request: ChatTurnReplayRequest) => void;
+}) {
+  const {
+    messageId,
+    userText,
+    recognition,
+    plan,
+    synonymAdded,
+    onSynonymAdded,
+    onPatchDisambiguationMessage,
+    onOpenDisambiguationMessage,
+    onRequestChatTurnReplay,
+  } = params;
+  const [addError, setAddError] = useState<string | null>(null);
+  const failed = isUserTurnRecognitionFailure(recognition);
+  const signature = resolveEditorSignatureForTuning({
+    signature: resolvePlanSignatureForChat({
+      disambiguationSignature: recognition.signature,
+      disambiguationCategory: recognition.categoryName,
+      disambiguationOptions: recognition.options,
+    }, plan),
+    categoryName: recognition.categoryName,
+    options: recognition.options,
+    plan,
+  });
+  const focusExpectedOption = inferExpectedOptionFromUserText(userText, recognition.options);
+  const planRecord = useMemo(() => {
+    if (!plan?.messages.length) return undefined;
+    if (signature) {
+      const bySig = plan.messages.find((m) => m.signature === signature);
+      if (bySig) return bySig;
+    }
+    const altSig = findDisambiguationRowByCategoryOptions(
+      plan.messages,
+      recognition.categoryName,
+      recognition.options,
+    );
+    return altSig ? plan.messages.find((m) => m.signature === altSig) : undefined;
+  }, [plan, signature, recognition.categoryName, recognition.options]);
+  const openGrammarOpts = useMemo((): OpenDisambiguationFromChatOptions | null => (
+    signature
+      ? {
+        focusGrammar: true,
+        proposedSynonym: userText.trim(),
+        focusExpectedOption,
+        chatReplay: { userMessageId: messageId, userText: userText.trim() },
+        categoryName: recognition.categoryName,
+        options: [...recognition.options],
+      }
+      : null
+  ), [signature, userText, focusExpectedOption, messageId, recognition.categoryName, recognition.options]);
+  const tuningContext: Omit<OpenDisambiguationFromChatOptions, 'focusGrammar'> | undefined =
+    openGrammarOpts ?? undefined;
+  const synonymAlreadyPresent = useMemo(() => {
+    if (!planRecord || !focusExpectedOption) return false;
+    const result = addSynonymToDisambiguationAnswerGrammar({
+      options: planRecord.options,
+      style: planRecord.style,
+      grammar: planRecord.answer_grammar,
+      targetOption: focusExpectedOption,
+      synonym: userText,
+    });
+    return !result.added && !result.error;
+  }, [planRecord, focusExpectedOption, userText]);
+  const showReplay = synonymAdded || synonymAlreadyPresent;
+  const canTune = failed
+    && !!signature
+    && !!focusExpectedOption
+    && !!planRecord
+    && planRecord.answer_grammar_mode !== 'graph';
+
+  const handleAdd = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!signature || !focusExpectedOption || !planRecord || !openGrammarOpts) return;
+    const rowSignature = planRecord.signature;
+    setAddError(null);
+    onOpenDisambiguationMessage?.(rowSignature, openGrammarOpts);
+    if (!onPatchDisambiguationMessage) return;
+    const result = addSynonymToDisambiguationAnswerGrammar({
+      options: planRecord.options,
+      style: planRecord.style,
+      grammar: planRecord.answer_grammar,
+      targetOption: focusExpectedOption,
+      synonym: userText,
+    });
+    if (result.error) {
+      setAddError(result.error);
+      return;
+    }
+    onPatchDisambiguationMessage({
+      signature: rowSignature,
+      answer_grammar: result.grammar,
+    });
+    onSynonymAdded(messageId);
+  }, [
+    signature,
+    focusExpectedOption,
+    planRecord,
+    openGrammarOpts,
+    onOpenDisambiguationMessage,
+    onPatchDisambiguationMessage,
+    userText,
+    onSynonymAdded,
+    messageId,
+  ]);
+
+  const handleReplay = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRequestChatTurnReplay?.({
+      userMessageId: messageId,
+      userText: userText.trim(),
+    });
+  }, [messageId, onRequestChatTurnReplay, userText]);
+
+  return {
+    failed,
+    canTune,
+    showReplay,
+    addError,
+    handleAdd,
+    handleReplay,
+    tuningContext,
+    signature,
+    onRequestChatTurnReplay,
+  };
+}
+
 function UserTurnRecognitionPanel({
   recognition,
+  plan,
+  addError,
+  tuningContext,
+  signature,
   onOpenDisambiguationMessage,
 }: {
   recognition: UserTurnRecognition;
+  plan: DisambiguationPlanStorage | null | undefined;
+  addError: string | null;
+  tuningContext: Omit<OpenDisambiguationFromChatOptions, 'focusGrammar'> | undefined;
+  signature: string | null;
   onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
 }) {
-  const summary = formatUserTurnRecognitionSummary(recognition);
+  const failed = isUserTurnRecognitionFailure(recognition);
   const vbCategoryHit = recognition.vbParsed.find(
     (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
   );
   const showPlanRuntimeMismatch = recognition.planOptions
     && recognition.planOptions.length > 0
     && recognition.planOptions.join('\0') !== recognition.options.join('\0');
-  const signature = resolveBubbleDisambiguationSignature({
+  const navSignature = signature ?? resolvePlanSignatureForChat({
     disambiguationSignature: recognition.signature,
     disambiguationCategory: recognition.categoryName,
     disambiguationOptions: recognition.options,
-  });
+  }, plan);
 
   return (
     <div className="space-y-2">
-      <p className={`font-mono ${CHAT_TEXT} text-sky-300/85`}>
-        Riconoscimento: <span className="text-emerald-100/90">{summary}</span>
-      </p>
+      {!failed && (
+        <p className={`font-mono ${CHAT_TEXT} text-sky-300/85`}>
+          Riconoscimento:{' '}
+          <span className="text-emerald-100/90">{formatUserTurnRecognitionSummary(recognition)}</span>
+        </p>
+      )}
 
       {recognition.categoryName && (
         <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50`}>
-          Categoria attesa: <span className="text-emerald-200/75">{recognition.categoryName}</span>
+          Categoria: <span className="text-emerald-200/75">{recognition.categoryName}</span>
         </p>
       )}
 
       {recognition.options.length > 0 && (
         <p className={`font-mono ${CHAT_TEXT} text-emerald-400/50 break-words`}>
-          Opzioni: <span className="text-emerald-200/70">{formatTechnicalOptions(recognition.options)}</span>
+          Opzioni: <span className="text-emerald-200/75">{formatTechnicalOptions(recognition.options)}</span>
         </p>
       )}
 
@@ -370,8 +541,16 @@ function UserTurnRecognitionPanel({
         </p>
       )}
 
-      {signature && onOpenDisambiguationMessage && (
-        <DisambiguationNavButtons signature={signature} onOpen={onOpenDisambiguationMessage} />
+      {addError && (
+        <p className={`font-mono ${CHAT_TEXT} text-red-300/90`}>{addError}</p>
+      )}
+
+      {navSignature && onOpenDisambiguationMessage && (
+        <DisambiguationNavButtons
+          signature={navSignature}
+          onOpen={onOpenDisambiguationMessage}
+          tuningContext={tuningContext}
+        />
       )}
     </div>
   );
@@ -379,50 +558,126 @@ function UserTurnRecognitionPanel({
 
 function UserMessageBubble({
   msg,
+  plan,
+  synonymAdded,
+  onSynonymAdded,
+  onPatchDisambiguationMessage,
   onOpenDisambiguationMessage,
+  onRequestChatTurnReplay,
 }: {
   msg: ChatMessage;
+  plan: DisambiguationPlanStorage | null | undefined;
+  synonymAdded: boolean;
+  onSynonymAdded: (messageId: string) => void;
+  onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
   onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+  onRequestChatTurnReplay?: (request: ChatTurnReplayRequest) => void;
 }) {
-  const recognition = msg.turnRecognition;
+  if (!msg.turnRecognition) {
+    return <p className={`font-sans ${CHAT_TEXT} text-emerald-200`}>{msg.text}</p>;
+  }
+
+  return (
+    <UserMessageBubbleWithRecognition
+      msg={msg}
+      recognition={msg.turnRecognition}
+      plan={plan}
+      synonymAdded={synonymAdded}
+      onSynonymAdded={onSynonymAdded}
+      onPatchDisambiguationMessage={onPatchDisambiguationMessage}
+      onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+      onRequestChatTurnReplay={onRequestChatTurnReplay}
+    />
+  );
+}
+
+function UserMessageBubbleWithRecognition({
+  msg,
+  recognition,
+  plan,
+  synonymAdded,
+  onSynonymAdded,
+  onPatchDisambiguationMessage,
+  onOpenDisambiguationMessage,
+  onRequestChatTurnReplay,
+}: {
+  msg: ChatMessage;
+  recognition: UserTurnRecognition;
+  plan: DisambiguationPlanStorage | null | undefined;
+  synonymAdded: boolean;
+  onSynonymAdded: (messageId: string) => void;
+  onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
+  onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+  onRequestChatTurnReplay?: (request: ChatTurnReplayRequest) => void;
+}) {
   const [open, setOpen] = useState(() => shouldAutoExpandUserTurnRecognition(recognition));
-  const hasPanel = !!recognition;
+  const tuning = useUserTurnGrammarTuning({
+    messageId: msg.id,
+    userText: msg.text,
+    recognition,
+    plan,
+    synonymAdded,
+    onSynonymAdded,
+    onPatchDisambiguationMessage,
+    onOpenDisambiguationMessage,
+    onRequestChatTurnReplay,
+  });
+  const failed = tuning.failed;
 
   useEffect(() => {
     if (shouldAutoExpandUserTurnRecognition(recognition)) {
       setOpen(true);
     }
-  }, [recognition?.signature, recognition?.grammarMatch?.selectedOption, recognition?.vbParsed.length]);
-
-  if (!hasPanel) {
-    return <p className={`font-sans ${CHAT_TEXT} text-emerald-200`}>{msg.text}</p>;
-  }
+  }, [recognition.signature, recognition.grammarMatch?.selectedOption, recognition.vbParsed.length]);
 
   return (
     <div className="w-full">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-start gap-1.5 text-left text-emerald-200 hover:text-emerald-100 transition-colors"
-        aria-expanded={open}
-      >
-        <ChevronDown
-          className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
-        />
-        {(recognition.grammarMatch?.selectedOption && !recognition.grammarMapsToRuntimeToken)
-          || !recognition.pendingWasActive
-          || (!recognition.grammarMatch?.selectedOption && !recognition.vbParsed.some(
-            (p) => p.category.toLowerCase() === recognition.categoryName?.toLowerCase(),
-          ))
-          || (recognition.grammarMatch?.selectedOption && !recognition.aligned) ? (
-          <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-amber-400/80" aria-hidden />
-        ) : null}
-        <span className={`font-sans ${CHAT_TEXT} flex-1 min-w-0`}>{msg.text}</span>
-      </button>
-      {open && recognition && (
+      <div className="flex w-full items-start gap-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className={`flex flex-1 min-w-0 items-start gap-1.5 text-left transition-colors ${
+            failed ? 'text-red-300 hover:text-red-200' : 'text-emerald-200 hover:text-emerald-100'
+          }`}
+          aria-expanded={open}
+        >
+          <ChevronDown
+            className={`w-3 h-3 flex-shrink-0 mt-0.5 transition-transform ${open ? '' : '-rotate-90'}`}
+          />
+          {failed ? (
+            <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400" aria-hidden />
+          ) : null}
+          <span className={`font-sans ${CHAT_TEXT} flex-1 min-w-0`}>{msg.text}</span>
+        </button>
+        {tuning.canTune && (
+          tuning.showReplay && tuning.onRequestChatTurnReplay ? (
+            <button
+              type="button"
+              onClick={tuning.handleReplay}
+              className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded border border-sky-400/45 bg-sky-400/10 text-sky-100 font-mono text-xs hover:bg-sky-400/20 transition-colors`}
+            >
+              <Play className="w-3 h-3 flex-shrink-0" />
+              Replay
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={tuning.handleAdd}
+              className="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded border border-amber-400/45 bg-amber-400/10 text-amber-100 font-mono text-xs hover:bg-amber-400/20 transition-colors"
+            >
+              Add
+            </button>
+          )
+        )}
+      </div>
+      {open && (
         <div className="mt-2 pt-2 border-t border-emerald-400/15 pl-[18px]">
           <UserTurnRecognitionPanel
             recognition={recognition}
+            plan={plan}
+            addError={tuning.addError}
+            tuningContext={tuning.tuningContext}
+            signature={tuning.signature}
             onOpenDisambiguationMessage={onOpenDisambiguationMessage}
           />
         </div>
@@ -589,16 +844,24 @@ function AgentMessageBubble({
 function ChatMessageList({
   messages,
   selectedPath,
+  plan,
+  grammarTuningAddedIds,
+  onGrammarTuningAdded,
   onPatchDisambiguationMessage,
   onAgentMessageSave,
   onOpenDisambiguationMessage,
+  onRequestChatTurnReplay,
 }: {
   messages: readonly ChatMessage[];
   selectedPath?: string | null;
+  plan: DisambiguationPlanStorage | null | undefined;
+  grammarTuningAddedIds: ReadonlySet<string>;
+  onGrammarTuningAdded: (messageId: string) => void;
   onPatchDisambiguationMessage?: (patch: DisambiguationPlanMessagePatch) => void;
   /** Live chat: patch plan + update local bubble text. */
   onAgentMessageSave?: (msg: ChatMessage, text: string) => void;
   onOpenDisambiguationMessage?: OpenDisambiguationMessageHandler;
+  onRequestChatTurnReplay?: (request: ChatTurnReplayRequest) => void;
 }) {
   const handleAgentSave = useCallback((msg: ChatMessage, newText: string) => {
     if (onAgentMessageSave) {
@@ -649,10 +912,19 @@ function ChatMessageList({
         }
         return (
           <div key={msg.id} className="flex justify-end">
-            <div className="max-w-[92%] px-3 py-2 rounded-lg bg-emerald-400/15 border border-emerald-400/18">
+            <div className={`max-w-[92%] px-3 py-2 rounded-lg border ${
+              msg.turnRecognition && isUserTurnRecognitionFailure(msg.turnRecognition)
+                ? 'bg-red-950/30 border-red-400/35'
+                : 'bg-emerald-400/15 border-emerald-400/18'
+            }`}>
               <UserMessageBubble
                 msg={msg}
+                plan={plan}
+                synonymAdded={grammarTuningAddedIds.has(msg.id)}
+                onSynonymAdded={onGrammarTuningAdded}
+                onPatchDisambiguationMessage={onPatchDisambiguationMessage}
                 onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+                onRequestChatTurnReplay={onRequestChatTurnReplay}
               />
             </div>
           </div>
@@ -746,11 +1018,15 @@ export function ChatPanel({
   onClose,
   onPatchDisambiguationMessage,
   onOpenDisambiguationMessage,
+  onRequestChatTurnReplay,
   onSaveChat,
+  chatTurnReplayRequest = null,
+  onChatTurnReplayHandled,
 }: ChatPanelProps) {
   const [state, setState] = useState<ChatUiState>(() => (
     agentBundle ? initChatState(agentBundle) : { messages: [], selectedPath: null, candidatePaths: null }
   ));
+  const [grammarTuningAddedIds, setGrammarTuningAddedIds] = useState<Set<string>>(() => new Set());
   const [vbSession, setVbSession] = useState<AgentSessionState | null>(null);
   const [vbOnline, setVbOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
@@ -760,8 +1036,21 @@ export function ChatPanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const msgId = useRef(1);
   const sessionResetKeyRef = useRef<string | null>(null);
+  const messagesRef = useRef(state.messages);
+  messagesRef.current = state.messages;
 
   const nextMsgId = () => String(++msgId.current);
+
+  const handleGrammarTuningAdded = useCallback((messageId: string) => {
+    setGrammarTuningAddedIds((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev);
+      next.add(messageId);
+      return next;
+    });
+  }, []);
+
+  const disambiguationPlan = agentBundle?.analysis.disambiguation_plan ?? null;
 
   const focusInput = useCallback(() => {
     if (inputRef.current && !state.selectedPath) {
@@ -774,6 +1063,7 @@ export function ChatPanel({
     if (agentBundle) setState(initChatState(agentBundle));
     setInput('');
     setSaveFlash(false);
+    setGrammarTuningAddedIds(new Set());
   }, [agentBundle]);
 
   const saveChat = useCallback(() => {
@@ -813,6 +1103,176 @@ export function ChatPanel({
       )),
     }));
   }, [onPatchDisambiguationMessage]);
+
+  const applyVbTurnResult = useCallback((
+    prev: ChatUiState,
+    params: {
+      userText: string;
+      result: VbTextTurnResponse;
+      priorSession: AgentSessionState | null;
+      pendingContext: ReturnType<typeof resolvePendingDisambiguationContext>;
+      sessionPendingMismatch: string | null;
+      userMessageId: string;
+    },
+  ): ChatUiState => {
+    const {
+      userText,
+      result,
+      priorSession,
+      pendingContext,
+      sessionPendingMismatch,
+      userMessageId,
+    } = params;
+
+    const spoken = result.spokenHint?.trim() ?? '';
+    const selectedPath = result.selectedPath ?? result.nextState?.selectedPath ?? null;
+    const isConfirm = result.instruction?.action === 'confirm' && !!selectedPath;
+    const { hintSource, editablePlanField } = resolveHintMeta(result);
+    const { categoryName: disambiguationCategory, options: disambiguationOptions } =
+      resolveDisambiguationOptions(result);
+    const disambiguationParentInfo = disambiguationCategory
+      && (result.candidatePaths?.length ?? 0) > 0
+      && agentBundle
+      ? deriveDisambiguationParents(
+        disambiguationCategory,
+        result.candidatePaths ?? [],
+        agentBundle.dictionary.categories ?? [],
+      )
+      : undefined;
+    const disambiguationCandidatePaths = (result.candidatePaths ?? [])
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const turnDebug = buildChatTurnDebug(result, agentBundle!);
+    const turnRecognition = buildUserTurnRecognition({
+      userText,
+      bundle: agentBundle!,
+      vbParsed: result.parsed,
+      pending: pendingContext,
+      priorSession,
+    });
+
+    let turnStuckReasons: string[] | undefined;
+    if (result.instruction?.action === 'no_match' && turnRecognition) {
+      turnStuckReasons = buildChatStuckDiagnosis({
+        recognition: turnRecognition,
+        priorSession,
+        vbResult: result,
+        planOptions: turnRecognition.planOptions,
+      }).reasons;
+      if (sessionPendingMismatch) {
+        turnStuckReasons = [sessionPendingMismatch, ...turnStuckReasons];
+      }
+    }
+
+    const userIndex = prev.messages.findIndex((m) => m.id === userMessageId);
+    const nextMessages = userIndex >= 0
+      ? prev.messages.slice(0, userIndex + 1)
+      : [...prev.messages];
+
+    const lastUserIdx = nextMessages.length - 1;
+    if (lastUserIdx >= 0 && nextMessages[lastUserIdx]?.role === 'user') {
+      nextMessages[lastUserIdx] = {
+        ...nextMessages[lastUserIdx],
+        text: userText,
+        turnRecognition,
+      };
+    }
+
+    if (spoken) {
+      nextMessages.push({
+        id: nextMsgId(),
+        role: 'agent',
+        text: spoken,
+        isResult: isConfirm,
+        hintSource,
+        disambiguationSignature: result.disambiguationSignature,
+        disambiguationCategory,
+        disambiguationOptions,
+        disambiguationParentInfo,
+        disambiguationCandidatePaths: disambiguationCandidatePaths.length > 0
+          ? disambiguationCandidatePaths
+          : undefined,
+        editablePlanField,
+        turnDebug,
+        turnStuckReasons: turnStuckReasons?.length ? turnStuckReasons : undefined,
+      });
+    }
+
+    return {
+      ...prev,
+      messages: nextMessages,
+      selectedPath,
+      candidatePaths: result.candidatePaths ?? prev.candidatePaths,
+    };
+  }, [agentBundle]);
+
+  useEffect(() => {
+    if (!chatTurnReplayRequest || !agentBundle) return;
+
+    let cancelled = false;
+    const request = chatTurnReplayRequest;
+
+    void (async () => {
+      setLoading(true);
+      try {
+        const userIndex = findUserMessageIndex(messagesRef.current, request.userMessageId);
+        if (userIndex < 0) return;
+
+        const prefixMessages = messagesRef.current.slice(0, userIndex + 1);
+        const session = await rebuildVbSessionBeforeUserMessage({
+          messages: prefixMessages,
+          targetUserIndex: userIndex,
+          bundle: agentBundle,
+        });
+        if (cancelled) return;
+
+        const pending = pendingContextBeforeUserMessage(prefixMessages, userIndex);
+        const answerContext = buildAnswerContextFromPending(pending);
+        const sessionPendingMismatch = describePendingSessionMismatch(session, answerContext);
+
+        const result = await postVbTextTurn({
+          userText: request.userText,
+          bundle: agentBundle,
+          state: session,
+          answerContext,
+        });
+        if (cancelled) return;
+
+        setVbSession(result.nextState ?? null);
+        setState((prev) => applyVbTurnResult(prev, {
+          userText: request.userText,
+          result,
+          priorSession: session,
+          pendingContext: pending,
+          sessionPendingMismatch,
+          userMessageId: request.userMessageId,
+        }));
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setState((prev) => ({
+          ...prev,
+          messages: [
+            ...prev.messages,
+            {
+              id: nextMsgId(),
+              role: 'agent',
+              text: `Errore replay chat: ${message}`,
+            },
+          ],
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          onChatTurnReplayHandled?.();
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatTurnReplayRequest, agentBundle, applyVbTurnResult, onChatTurnReplayHandled]);
 
   const submit = async () => {
     const trimmed = input.trim();
@@ -1040,8 +1500,13 @@ export function ChatPanel({
         <ChatMessageList
           messages={state.messages}
           selectedPath={state.selectedPath}
+          plan={disambiguationPlan}
+          grammarTuningAddedIds={grammarTuningAddedIds}
+          onGrammarTuningAdded={handleGrammarTuningAdded}
+          onPatchDisambiguationMessage={onPatchDisambiguationMessage}
           onAgentMessageSave={handlePatchMessage}
           onOpenDisambiguationMessage={onOpenDisambiguationMessage}
+          onRequestChatTurnReplay={onRequestChatTurnReplay}
         />
         <div ref={bottomRef} />
       </div>

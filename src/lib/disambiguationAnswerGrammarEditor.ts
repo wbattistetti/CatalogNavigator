@@ -4,6 +4,14 @@
 import type { GrammarEntry } from './analysisTypes';
 import type { DisambiguationQuestionStyle } from './disambiguationPlanTypes';
 import {
+  buildCombinatorialAnswerGrammarPanels,
+  compileCombinatorialAnswerGrammarFromPanels,
+  isCombinatorialAnswerGrammar,
+  matchAllCombinatorialAtoms,
+  resolveOptionKeyFromMatchedAtoms,
+  shouldUseCombinatorialAnswerGrammar,
+} from './combinatorialAnswerGrammar';
+import {
   compileInteractiveGrammar,
   extractSynonymsForTarget,
   sortSynonymsAlphabetically,
@@ -18,17 +26,29 @@ function seedSynonymsForOption(option: string, allOptions: string[]): string[] {
   return fromGrammar.length > 0 ? fromGrammar : [option];
 }
 
-/** Builds synonym panels for each disambiguation option token. */
+/** True when this message should use atomic combinatorial answer grammar. */
+export function usesCombinatorialAnswerGrammar(
+  options: string[],
+  style: DisambiguationQuestionStyle,
+): boolean {
+  return shouldUseCombinatorialAnswerGrammar(options, style);
+}
+
+/** Builds synonym panels for disambiguation answer grammar (atomic or per-option). */
 export function buildDisambiguationAnswerGrammarPanels(
   options: string[],
   grammar: GrammarEntry | null | undefined,
-  _style: DisambiguationQuestionStyle,
+  style: DisambiguationQuestionStyle,
 ): GrammarEditorPanel[] {
+  if (shouldUseCombinatorialAnswerGrammar(options, style)) {
+    return buildCombinatorialAnswerGrammarPanels(options, grammar);
+  }
+
   const cleaned = options.map((o) => o.trim()).filter(Boolean);
   const ordered = [...cleaned].sort((a, b) => b.length - a.length);
 
   return ordered.map((option) => {
-    const fromGrammar = grammar?.regex?.trim()
+    const fromGrammar = grammar?.regex?.trim() && !grammar.combinatorial
       ? extractSynonymsForTarget(grammar, option)
       : [];
     const synonyms = fromGrammar.length > 0
@@ -47,7 +67,12 @@ export function buildDisambiguationAnswerGrammarPanels(
 /** Compiles edited panels back to a turn answer grammar. */
 export function compileDisambiguationAnswerGrammarFromPanels(
   panels: GrammarEditorPanel[],
+  options: string[],
+  style: DisambiguationQuestionStyle,
 ): GrammarEntry {
+  if (shouldUseCombinatorialAnswerGrammar(options, style)) {
+    return compileCombinatorialAnswerGrammarFromPanels(panels);
+  }
   return compileInteractiveGrammar(panels);
 }
 
@@ -65,12 +90,14 @@ export type DisambiguationTestPhraseStatus =
 
 export interface DisambiguationAnswerDraftMatchAll extends DisambiguationAnswerDraftMatch {
   matchedOptions: string[];
+  matchedAtoms?: string[];
 }
 
 export interface DisambiguationTestPhraseEvaluation {
   status: DisambiguationTestPhraseStatus;
   recognized: string | null;
   matchedOptions: string[];
+  matchedAtoms?: string[];
   compileError: string | null;
 }
 
@@ -78,8 +105,10 @@ export interface DisambiguationTestPhraseEvaluation {
 export function matchDisambiguationAnswerDraft(
   panels: GrammarEditorPanel[],
   utterance: string,
+  options: string[],
+  style: DisambiguationQuestionStyle,
 ): DisambiguationAnswerDraftMatch {
-  const result = matchAllDisambiguationAnswerDraft(panels, utterance);
+  const result = matchAllDisambiguationAnswerDraft(panels, utterance, options, style);
   return {
     selectedOption: result.selectedOption,
     compileError: result.compileError,
@@ -87,12 +116,14 @@ export function matchDisambiguationAnswerDraft(
 }
 
 /**
- * Returns every option whose draft panel matches the utterance independently.
- * Ambiguity = more than one option matches.
+ * Returns matched catalog option(s) for the utterance.
+ * Combinatorial mode: resolves atoms → value-set key; legacy mode: per-option match.
  */
 export function matchAllDisambiguationAnswerDraft(
   panels: GrammarEditorPanel[],
   utterance: string,
+  options: string[],
+  style: DisambiguationQuestionStyle,
 ): DisambiguationAnswerDraftMatchAll {
   const text = utterance.trim();
   if (!text) {
@@ -100,12 +131,24 @@ export function matchAllDisambiguationAnswerDraft(
   }
 
   try {
-    const compiled = compileDisambiguationAnswerGrammarFromPanels(panels);
+    const compiled = compileDisambiguationAnswerGrammarFromPanels(panels, options, style);
+
+    if (isCombinatorialAnswerGrammar(compiled) || shouldUseCombinatorialAnswerGrammar(options, style)) {
+      const matchedAtoms = matchAllCombinatorialAtoms(text, compiled);
+      const resolved = resolveOptionKeyFromMatchedAtoms(matchedAtoms, options);
+      return {
+        selectedOption: resolved,
+        matchedOptions: resolved ? [resolved] : [],
+        matchedAtoms,
+        compileError: null,
+      };
+    }
+
     const runtime = matchTurnAnswerGrammar(text, compiled);
     const matchedOptions: string[] = [];
 
     for (const panel of panels) {
-      const single = compileDisambiguationAnswerGrammarFromPanels([panel]);
+      const single = compileDisambiguationAnswerGrammarFromPanels([panel], options, style);
       const match = matchTurnAnswerGrammar(text, single);
       if (match?.selectedOption && !matchedOptions.includes(match.selectedOption)) {
         matchedOptions.push(match.selectedOption);
@@ -126,15 +169,19 @@ export function matchAllDisambiguationAnswerDraft(
   }
 }
 
-/** Evaluates one saved test phrase against an expected option token. */
+/** Evaluates one saved test phrase against an expected catalog option key. */
 export function evaluateDisambiguationTestPhrase(
   panels: GrammarEditorPanel[],
   phrase: string,
   expected: string,
+  options: string[],
+  style: DisambiguationQuestionStyle,
 ): DisambiguationTestPhraseEvaluation {
-  const { matchedOptions, selectedOption, compileError } = matchAllDisambiguationAnswerDraft(
+  const { matchedOptions, selectedOption, matchedAtoms, compileError } = matchAllDisambiguationAnswerDraft(
     panels,
     phrase,
+    options,
+    style,
   );
   if (compileError) {
     return {
@@ -149,6 +196,7 @@ export function evaluateDisambiguationTestPhrase(
       status: 'no_match',
       recognized: null,
       matchedOptions: [],
+      matchedAtoms,
       compileError: null,
     };
   }
@@ -157,6 +205,7 @@ export function evaluateDisambiguationTestPhrase(
       status: 'ambiguous',
       recognized: selectedOption,
       matchedOptions,
+      matchedAtoms,
       compileError: null,
     };
   }
@@ -167,6 +216,7 @@ export function evaluateDisambiguationTestPhrase(
       status: 'ok',
       recognized,
       matchedOptions,
+      matchedAtoms,
       compileError: null,
     };
   }
@@ -175,6 +225,7 @@ export function evaluateDisambiguationTestPhrase(
     status: 'mismatch',
     recognized,
     matchedOptions,
+    matchedAtoms,
     compileError: null,
   };
 }

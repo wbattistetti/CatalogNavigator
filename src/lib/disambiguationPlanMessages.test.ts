@@ -9,6 +9,7 @@ import {
   mergeDisambiguationPlanAfterCompute,
   mergeDisambiguationPlanStorage,
   patchDisambiguationPlanMessage,
+  regenerateDisambiguationAnswerGrammars,
   rowsNeedingDisambiguationMessages,
   summarizeDisambiguationMerge,
 } from './disambiguationPlanMessages';
@@ -266,5 +267,49 @@ describe('buildPlanResultFromStorage', () => {
     });
     expect(plan?.nodes).toHaveLength(1);
     expect(plan?.warnings[0]).toMatch(/ripristinato/i);
+  });
+});
+
+describe('regenerateDisambiguationAnswerGrammars', () => {
+  it('recompiles answer grammars and forces text mode', () => {
+    const combinedRow: DisambiguationEditorRow = {
+      ...row,
+      signature: 'esami||ECG+Ecodoppler|Holter||choice',
+      categoryName: 'esami',
+      options: ['ECG+Ecodoppler', 'Holter'],
+      answer_grammar: { regex: '(?<old>vecchia)', mappings: { old: 'ECG+Ecodoppler' } },
+      answer_grammar_mode: 'graph',
+      answer_grammar_graph: {
+        id: 'g1',
+        name: 'test',
+        nodes: [],
+        edges: [],
+        semanticSets: [],
+        metadata: { createdAt: 1, updatedAt: 1, version: '1.0.0' },
+      },
+    };
+
+    const { rows: next, stats } = regenerateDisambiguationAnswerGrammars([combinedRow, row]);
+    expect(stats.regenerated).toBe(2);
+    expect(stats.skipped).toBe(0);
+
+    const regenerated = next.find((r) => r.signature === combinedRow.signature)!;
+    expect(regenerated.answer_grammar?.combinatorial).toBe(true);
+    expect(regenerated.answer_grammar_graph).toBeNull();
+    expect(regenerated.answer_grammar_mode).toBe('text');
+  });
+
+  it('skips ask_age rows unchanged', () => {
+    const ageRow: DisambiguationEditorRow = {
+      ...row,
+      signature: 'vincolo||età||ask',
+      style: 'ask_age',
+      options: ['adulto'],
+      answer_grammar: null,
+    };
+    const { rows: next, stats } = regenerateDisambiguationAnswerGrammars([ageRow]);
+    expect(stats.skipped).toBe(1);
+    expect(stats.regenerated).toBe(0);
+    expect(next[0]).toEqual(ageRow);
   });
 });

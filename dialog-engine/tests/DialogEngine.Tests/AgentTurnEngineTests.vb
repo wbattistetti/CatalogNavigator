@@ -508,6 +508,33 @@ Public Class AgentTurnEngineTests
     End Sub
 
     <Fact>
+    Public Sub DistrettoAnswer_DoesNotThrow_WhenGrammarCombinatorialFlagIsNull()
+        Dim bundle = TestBundleFactory.BuildAngiologicaEcodopplerDistrettoBundle()
+        Dim state = AgentTurnEngine.InitAgentSession()
+
+        state = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "esame ecodoppler").NextState
+        state = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "30 anni").NextState
+        state = AgentTurnEngine.ProcessAgentTurnFromText(bundle, state, "angiologica").NextState
+
+        Dim distrettoStep = AgentTurnEngine.ProcessAgentTurn(bundle, state, New AgentTurnInput())
+        Assert.Equal("disambiguate", distrettoStep.Instruction.Action)
+        Assert.Equal("distretto anatomico", distrettoStep.Instruction.CategoryName)
+        state = distrettoStep.NextState
+
+        Dim answerContext = New DisambiguationAnswerContext With {
+            .CategoryName = "distretto anatomico",
+            .Options = New List(Of String) From {"arti inferiori", "vasi epiaortici"},
+            .ValueKind = CategoryTypes.ValueKindCanonicalToken
+        }
+
+        Dim result = AgentTurnEngine.ProcessAgentTurnFromText(
+            bundle, state, "per gli arti anteriori", answerContext)
+
+        Assert.NotNull(result)
+        Assert.NotNull(result.Instruction)
+    End Sub
+
+    <Fact>
     Public Sub HttpResponse_BuildsWebhookPayload()
         Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
         Dim turn = AgentTurnEngine.ProcessAgentTurn(bundle, AgentTurnEngine.InitAgentSession(), New AgentTurnInput With {

@@ -272,6 +272,7 @@ export function normalizeGrammarEntry(grammar: GrammarEntry): GrammarEntry {
     : {};
 
   return {
+    ...grammar,
     regex: pattern,
     mappings,
   };

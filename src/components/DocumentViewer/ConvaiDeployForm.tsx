@@ -358,7 +358,7 @@ export function ConvaiDeployForm({
       </button>
 
       <p className="text-emerald-400/45 text-[10px]">
-        ngrok da backend/.env. Gateway: npm run be:gateway. Voice relay — nessuna KB ElevenLabs.
+        ngrok da backend/.env. Gateway: npm run be:gateway. Al redeploy aggiorna lo stesso tool workspace (non ne crea uno nuovo).
       </p>
     </div>
   );

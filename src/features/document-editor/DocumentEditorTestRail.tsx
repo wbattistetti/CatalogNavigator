@@ -8,11 +8,19 @@ import {
   type DisambiguationPlanMessagePatch,
 } from '../../components/DocumentViewer/ChatPanel';
 import { patchDisambiguationPlanMessage } from '../../lib/disambiguationPlanMessages';
+import type { OpenDisambiguationFromChatOptions } from '../../lib/grammarTuningFromChat';
 import { useDocumentEditorController } from './DocumentEditorContext';
 import { useTestAgentBundle } from './useTestAgentBundle';
 
 export function DocumentEditorTestRail() {
-  const { setTestOpen, analysisApi, openDisambiguationMessage } = useDocumentEditorController();
+  const {
+    setTestOpen,
+    analysisApi,
+    openDisambiguationMessage,
+    chatTurnReplayRequest,
+    clearChatTurnReplayRequest,
+    requestChatTurnReplay,
+  } = useDocumentEditorController();
   const agentBundle = useTestAgentBundle();
   const { analysis, updateDisambiguationPlan } = analysisApi;
 
@@ -24,7 +32,7 @@ export function DocumentEditorTestRail() {
 
   const onOpenDisambiguationFromChat = useCallback((
     signature: string,
-    opts?: { focusGrammar?: boolean },
+    opts?: OpenDisambiguationFromChatOptions,
   ) => {
     openDisambiguationMessage(signature, opts ?? { focusGrammar: true });
   }, [openDisambiguationMessage]);
@@ -39,7 +47,10 @@ export function DocumentEditorTestRail() {
       onClose={() => setTestOpen(false)}
       onPatchDisambiguationMessage={onPatchDisambiguationMessage}
       onOpenDisambiguationMessage={onOpenDisambiguationFromChat}
+      onRequestChatTurnReplay={requestChatTurnReplay}
       onSaveChat={onSaveChat}
+      chatTurnReplayRequest={chatTurnReplayRequest}
+      onChatTurnReplayHandled={clearChatTurnReplayRequest}
     />
   );
 }

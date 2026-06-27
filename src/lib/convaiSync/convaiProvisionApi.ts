@@ -1,5 +1,5 @@
 /**
- * Client HTTP verso gateway locale per provision ConvAI (create/patch agent, KB).
+ * Client HTTP verso gateway locale per provision ConvAI (create/patch agent, KB, tools).
  */
 import {
   filterConvaiAgentsBySearch,
@@ -7,6 +7,11 @@ import {
   sortAgentsForDesignerPicker,
 } from './convaiAgentList';
 import { convaiGatewayOrigin } from './convaiDevTunnel';
+import {
+  parseConvaiWorkspaceToolList,
+  type AgentDialogStepToolConfig,
+  type ConvaiWorkspaceToolSummary,
+} from './convaiWorkspaceTool';
 
 export interface CreateAgentResponse {
   agent_id?: string;
@@ -69,6 +74,22 @@ function formatElevenLabsErrorBody(raw: unknown, status: number, label: string):
 /** Parses gateway JSON; ElevenLabs DELETE/PATCH may return an empty body. */
 async function parseJsonResponse<T>(res: Response, label: string): Promise<T> {
   const text = await res.text();
+
+  if (!res.ok) {
+    const gatewayHint = formatGatewayToolsRouteHint(res.status, label, text, res.headers.get('content-type'));
+    if (gatewayHint) throw new Error(gatewayHint);
+
+    let raw: unknown = {};
+    if (text.trim()) {
+      try {
+        raw = JSON.parse(text) as unknown;
+      } catch {
+        throw new Error(`${label} failed: ${res.status} — risposta non JSON`);
+      }
+    }
+    throw new Error(formatElevenLabsErrorBody(raw, res.status, label));
+  }
+
   let raw: unknown = {};
   if (text.trim()) {
     try {
@@ -77,10 +98,26 @@ async function parseJsonResponse<T>(res: Response, label: string): Promise<T> {
       throw new Error(`${label} failed: ${res.status} — risposta non JSON`);
     }
   }
-  if (!res.ok) {
-    throw new Error(formatElevenLabsErrorBody(raw, res.status, label));
-  }
   return raw as T;
+}
+
+const GATEWAY_TOOLS_ROUTE_HINT =
+  'Gateway ConvAI non aggiornato: chiudi la finestra be:gateway e rilancia npm run dev:convai '
+  + '(mancano le route /elevenlabs/tools).';
+
+function formatGatewayToolsRouteHint(
+  status: number,
+  label: string,
+  body: string,
+  contentType: string | null,
+): string | null {
+  if (status !== 404) return null;
+  if (!/Tool$/i.test(label)) return null;
+  // Express unmatched route returns HTML/plain; proxied ElevenLabs errors are JSON.
+  if (contentType?.includes('application/json')) return null;
+  const trimmed = body.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return null;
+  return `${label} failed: 404 — ${GATEWAY_TOOLS_ROUTE_HINT}`;
 }
 
 function pickAgentId(row: Record<string, unknown>): string {
@@ -220,4 +257,55 @@ export async function listConvaiKbDocuments(): Promise<ConvaiKbDocumentSummary[]
   const res = await fetch(`${gatewayBase()}/elevenlabs/knowledge-base`);
   const raw = await parseJsonResponse<unknown>(res, 'listKb');
   return parseKbList(raw);
+}
+
+function pickToolId(raw: Record<string, unknown>): string {
+  const id = raw.id ?? raw.tool_id;
+  if (!id) throw new Error('tool_id mancante nella risposta ElevenLabs');
+  return String(id);
+}
+
+/** Lists workspace-level ConvAI tools. */
+export async function listConvaiWorkspaceTools(): Promise<ConvaiWorkspaceToolSummary[]> {
+  const res = await fetch(`${gatewayBase()}/elevenlabs/tools?search=agent_dialog_step&page_size=100`);
+  const raw = await parseJsonResponse<unknown>(res, 'listTools');
+  return parseConvaiWorkspaceToolList(raw);
+}
+
+/** Fetches one workspace tool by id (no list endpoint required). */
+export async function getConvaiWorkspaceTool(
+  toolId: string,
+): Promise<ConvaiWorkspaceToolSummary | null> {
+  const trimmed = toolId.trim();
+  if (!trimmed) return null;
+  const res = await fetch(`${gatewayBase()}/elevenlabs/tools/${encodeURIComponent(trimmed)}`);
+  const raw = await parseJsonResponse<unknown>(res, 'getTool');
+  const parsed = parseConvaiWorkspaceToolList({ tools: [raw] });
+  return parsed[0] ?? null;
+}
+
+/** Creates a workspace webhook tool (single persistent agent_dialog_step). */
+export async function createConvaiWorkspaceTool(
+  toolConfig: AgentDialogStepToolConfig,
+): Promise<string> {
+  const res = await fetch(`${gatewayBase()}/elevenlabs/tools`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool_config: toolConfig }),
+  });
+  const raw = await parseJsonResponse<Record<string, unknown>>(res, 'createTool');
+  return pickToolId(raw);
+}
+
+/** Updates an existing workspace tool in place (new ngrok URL, same tool id). */
+export async function patchConvaiWorkspaceTool(
+  toolId: string,
+  toolConfig: AgentDialogStepToolConfig,
+): Promise<void> {
+  const res = await fetch(`${gatewayBase()}/elevenlabs/tools/${encodeURIComponent(toolId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool_config: toolConfig }),
+  });
+  await parseJsonResponse<unknown>(res, 'patchTool');
 }

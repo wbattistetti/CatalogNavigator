@@ -49,4 +49,17 @@ describe('buildConvaiConversationConfig', () => {
     expect(config.agent.prompt.knowledge_base).toEqual([]);
     expect(config.agent.prompt.prompt).toContain('ponte vocale');
   });
+
+  it('references workspace tool by id without inline tools', () => {
+    const config = buildConvaiConversationConfig({
+      bundle: minimalBundle('Test'),
+      documentId: 'doc-1',
+      workspaceToolId: 'tool_workspace_1',
+    }) as {
+      agent: { prompt: { tools: unknown[]; tool_ids: string[] } };
+    };
+
+    expect(config.agent.prompt.tools).toEqual([]);
+    expect(config.agent.prompt.tool_ids).toEqual(['tool_workspace_1']);
+  });
 });

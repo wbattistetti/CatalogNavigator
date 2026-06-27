@@ -4,14 +4,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Pencil, Play, Trash2, X } from 'lucide-react';
 import type { GrammarEntry } from '../../lib/analysisTypes';
-import type { DisambiguationQuestionStyle } from '../../lib/disambiguationPlanTypes';
+import type { DisambiguationQuestionStyle, AnswerGrammarMode } from '../../lib/disambiguationPlanTypes';
 import type { DisambiguationTestPhrase } from '../../lib/disambiguationPlanTypes';
 import {
   buildDisambiguationAnswerGrammarPanels,
   compileDisambiguationAnswerGrammarFromPanels,
   evaluateDisambiguationTestPhrase,
+  usesCombinatorialAnswerGrammar,
   type DisambiguationTestPhraseEvaluation,
 } from '../../lib/disambiguationAnswerGrammarEditor';
+import { parseValueSetKey } from '../../lib/valueSet';
 import { DICT_INPUT_FIELD } from '../../features/dictionaries/dictionaryFormStyles';
 import {
   normalizeSortedSynonymList,
@@ -25,6 +27,12 @@ import {
   normalizeTestPhrases,
   testPhraseKey,
 } from '../../lib/disambiguationTestPhrases';
+import type { GrammarGraph } from '../../lib/grammarGraph/grammarGraphTypes';
+import { evaluateDisambiguationGraphTestPhrase } from '../../lib/grammarGraph/evaluateDisambiguationGraph';
+import { seedDisambiguationGrammarGraph } from '../../lib/grammarGraph/seedDisambiguationGrammarGraph';
+import { resolveAnswerGrammarMode } from '../../lib/grammarGraph/answerGrammarMode';
+import { GrammarGraphEditor } from '../grammarEditor/GrammarGraphEditor';
+import type { ChatTurnReplayRequest } from '../../lib/grammarTuningFromChat';
 
 const CHAT_TEXT = 'text-sm leading-relaxed';
 
@@ -68,8 +76,10 @@ function evaluatePhrase(
   panels: ReturnType<typeof buildDisambiguationAnswerGrammarPanels>,
   phrase: string,
   expected: string,
+  options: string[],
+  style: DisambiguationQuestionStyle,
 ): TestRowResult {
-  return evaluateDisambiguationTestPhrase(panels, phrase, expected);
+  return evaluateDisambiguationTestPhrase(panels, phrase, expected, options, style);
 }
 
 function testRowResultKey(phrase: string, expected?: string): string {
@@ -80,13 +90,22 @@ interface DisambiguationAnswerGrammarEditorProps {
   viewMode: DisambiguationGrammarEditorView;
   options: string[];
   style: DisambiguationQuestionStyle;
+  categoryName: string;
+  signature: string;
   grammar: GrammarEntry | null | undefined;
+  grammarGraph?: GrammarGraph | null;
+  grammarMode?: AnswerGrammarMode;
   testPhrases?: DisambiguationTestPhrase[];
   runtimeOptions?: string[];
   autoFocus?: boolean;
   focusExpectedOption?: string | null;
+  proposedSynonym?: string;
+  chatReplay?: ChatTurnReplayRequest;
+  onGrammarTuningReplay?: (request: ChatTurnReplayRequest) => void;
   onNavigateToGrammar?: (expected: string) => void;
   onSave: (grammar: GrammarEntry) => void;
+  onSaveGraph: (graph: GrammarGraph) => void;
+  onSaveMode: (mode: AnswerGrammarMode) => void;
   onSaveTestPhrases: (phrases: DisambiguationTestPhrase[]) => void;
 }
 
@@ -94,30 +113,51 @@ export function DisambiguationAnswerGrammarEditor({
   viewMode,
   options,
   style,
+  categoryName,
+  signature,
   grammar,
+  grammarGraph: grammarGraphProp,
+  grammarMode: grammarModeProp,
   testPhrases: testPhrasesProp,
   runtimeOptions,
   autoFocus = false,
   focusExpectedOption = null,
+  proposedSynonym,
+  chatReplay,
+  onGrammarTuningReplay,
   onNavigateToGrammar,
   onSave,
+  onSaveGraph,
+  onSaveMode,
   onSaveTestPhrases,
 }: DisambiguationAnswerGrammarEditorProps) {
   const grammarRegex = grammar?.regex ?? '';
   const optionsKey = options.join('\0');
   const testPhrasesKey = (testPhrasesProp ?? []).map((r) => `${r.phrase}\0${r.expected}`).join('\n');
-  const rowSyncKey = `${grammarRegex}\0${optionsKey}\0${style}\0${testPhrasesKey}`;
+  const resolvedMode = resolveAnswerGrammarMode({ answer_grammar_mode: grammarModeProp });
+  const rowSyncKey = `${grammarRegex}\0${optionsKey}\0${style}\0${testPhrasesKey}\0${signature}\0${resolvedMode}`;
 
   const initialPanels = useMemo(
     () => buildDisambiguationAnswerGrammarPanels(options, grammar, style),
     [options, grammarRegex, style],
   );
+  const combinatorial = useMemo(
+    () => usesCombinatorialAnswerGrammar(options, style),
+    [options, style],
+  );
+  const initialGraph = useMemo(() => {
+    if (resolvedMode !== 'graph') return null;
+    return seedDisambiguationGrammarGraph(options, categoryName, grammar, grammarGraphProp ?? null);
+  }, [options, categoryName, grammarRegex, grammarGraphProp, resolvedMode]);
   const initialTestPhrases = useMemo(
     () => normalizeTestPhrases(testPhrasesProp),
     [testPhrasesProp],
   );
 
   const [panels, setPanels] = useState(initialPanels);
+  const [grammarGraph, setGrammarGraph] = useState<GrammarGraph | null>(initialGraph);
+  const [grammarMode, setGrammarMode] = useState<AnswerGrammarMode>(resolvedMode);
+  const [selectedGraphOption, setSelectedGraphOption] = useState<string | null>(null);
   const [selectedPanelIndex, setSelectedPanelIndex] = useState(0);
   const [testPhrases, setTestPhrases] = useState(initialTestPhrases);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +174,9 @@ export function DisambiguationAnswerGrammarEditor({
     if (lastRowSyncKeyRef.current === rowSyncKey) return;
     lastRowSyncKeyRef.current = rowSyncKey;
     setPanels(initialPanels);
+    setGrammarGraph(initialGraph);
+    setGrammarMode(resolvedMode);
+    setSelectedGraphOption(null);
     setTestPhrases(initialTestPhrases);
     setSelectedPanelIndex(0);
     setError(null);
@@ -142,7 +185,7 @@ export function DisambiguationAnswerGrammarEditor({
     setContextualTestResults(new Map());
     setHighlightTestKey(null);
     setTestPhraseError(null);
-  }, [rowSyncKey, initialPanels, initialTestPhrases]);
+  }, [rowSyncKey, initialPanels, initialGraph, initialTestPhrases]);
 
   useEffect(() => {
     setSelectedPanelIndex((idx) => Math.min(idx, Math.max(panels.length - 1, 0)));
@@ -155,32 +198,57 @@ export function DisambiguationAnswerGrammarEditor({
   }, [focusExpectedOption, panels]);
 
   useEffect(() => {
-    if (panels.length === 0) {
+    if (options.length === 0) {
       setNewPhraseExpected('');
       return;
     }
     setNewPhraseExpected((prev) => {
-      if (prev && panels.some((p) => p.targetPath === prev)) return prev;
-      return panels[0]!.targetPath;
+      if (prev && options.some((o) => o === prev)) return prev;
+      return options[0]!;
     });
-  }, [panels]);
+  }, [options]);
 
   const selectedPanel = panels[selectedPanelIndex] ?? panels[0] ?? null;
+  const activeOptionToken = grammarMode === 'graph'
+    ? selectedGraphOption
+    : selectedPanel?.targetPath ?? null;
 
-  const phrasesForSelectedValue = useMemo(
-    () => (selectedPanel
-      ? testPhrases.filter((row) => row.expected === selectedPanel.targetPath)
-      : []),
-    [testPhrases, selectedPanel],
-  );
+  const phrasesForSelectedValue = useMemo(() => {
+    if (!activeOptionToken) return [];
+    if (combinatorial) {
+      return testPhrases.filter((row) =>
+        parseValueSetKey(row.expected).some(
+          (atom) => atom.toLowerCase() === activeOptionToken.toLowerCase(),
+        ),
+      );
+    }
+    return testPhrases.filter((row) => row.expected === activeOptionToken);
+  }, [testPhrases, activeOptionToken, combinatorial]);
 
   useEffect(() => {
     if (phrasesForSelectedValue.length > 0) setContextualTestOpen(true);
-  }, [selectedPanel?.targetPath, phrasesForSelectedValue.length]);
+  }, [activeOptionToken, phrasesForSelectedValue.length]);
+
+  const handleModeChange = useCallback((mode: AnswerGrammarMode) => {
+    setGrammarMode(mode);
+    onSaveMode(mode);
+    if (mode === 'graph') {
+      const nextGraph = seedDisambiguationGrammarGraph(
+        options,
+        categoryName,
+        grammar,
+        grammarGraphProp ?? grammarGraph ?? null,
+      );
+      setGrammarGraph(nextGraph);
+      onSaveGraph(nextGraph);
+    }
+    setTestResults(new Map());
+    setContextualTestResults(new Map());
+  }, [categoryName, grammar, grammarGraph, grammarGraphProp, onSaveGraph, onSaveMode, options]);
 
   const persistPanels = useCallback((nextPanels: typeof panels) => {
     try {
-      const compiled = compileDisambiguationAnswerGrammarFromPanels(nextPanels);
+      const compiled = compileDisambiguationAnswerGrammarFromPanels(nextPanels, options, style);
       onSave(compiled);
       lastRowSyncKeyRef.current = `${compiled.regex ?? ''}\0${optionsKey}\0${style}\0${testPhrasesKey}`;
       setError(null);
@@ -189,7 +257,7 @@ export function DisambiguationAnswerGrammarEditor({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [onSave, optionsKey, style, testPhrasesKey]);
+  }, [onSave, options, optionsKey, style, testPhrasesKey]);
 
   const persistTestPhrases = useCallback((next: DisambiguationTestPhrase[]) => {
     const normalized = normalizeTestPhrases(next);
@@ -209,31 +277,51 @@ export function DisambiguationAnswerGrammarEditor({
     persistPanels(nextPanels);
   }, [persistPanels]);
 
+  const proposedSynonymTrimmed = proposedSynonym?.trim() ?? '';
+  const tuningTargetOption = focusExpectedOption ?? activeOptionToken;
+
   const visibleTestPhrases = useMemo(() => {
     if (testFilter === 'all') return testPhrases;
     if (!newPhraseExpected) return testPhrases;
     return testPhrases.filter((row) => row.expected === newPhraseExpected);
   }, [testPhrases, testFilter, newPhraseExpected]);
 
-  const runContextualTestAll = useCallback(() => {
-    if (!selectedPanel) return;
+  const persistGraph = useCallback((nextGraph: GrammarGraph) => {
+    setGrammarGraph(nextGraph);
+    onSaveGraph({
+      ...nextGraph,
+      metadata: { ...nextGraph.metadata, updatedAt: Date.now() },
+    });
+    setError(null);
+    setTestResults(new Map());
+    setContextualTestResults(new Map());
+  }, [onSaveGraph]);
+
+  const runContextualTestAll = useCallback(async () => {
+    if (!activeOptionToken) return;
     const next = new Map<string, TestRowResult>();
     for (const row of phrasesForSelectedValue) {
-      next.set(testPhraseKey(row.phrase), evaluatePhrase(panels, row.phrase, row.expected));
+      const evaluation = grammarMode === 'graph' && grammarGraph
+        ? await evaluateDisambiguationGraphTestPhrase(grammarGraph, row.phrase, row.expected)
+        : evaluatePhrase(panels, row.phrase, row.expected, options, style);
+      next.set(testPhraseKey(row.phrase), evaluation);
     }
     setContextualTestResults(next);
-  }, [phrasesForSelectedValue, panels, selectedPanel]);
+  }, [activeOptionToken, phrasesForSelectedValue, grammarMode, grammarGraph, panels]);
 
-  const runTestAll = useCallback(() => {
+  const runTestAll = useCallback(async () => {
     const next = new Map<string, TestRowResult>();
     for (const row of visibleTestPhrases) {
+      const evaluation = grammarMode === 'graph' && grammarGraph
+        ? await evaluateDisambiguationGraphTestPhrase(grammarGraph, row.phrase, row.expected)
+        : evaluatePhrase(panels, row.phrase, row.expected, options, style);
       next.set(
         testRowResultKey(row.phrase, row.expected),
-        evaluatePhrase(panels, row.phrase, row.expected),
+        evaluation,
       );
     }
     setTestResults(next);
-  }, [visibleTestPhrases, panels]);
+  }, [visibleTestPhrases, grammarMode, grammarGraph, panels]);
 
   const addTestPhraseForExpected = useCallback((phrase: string, expected: string) => {
     const { phrases: next, duplicateIndex, ambiguous } = addTestPhrase(
@@ -267,6 +355,8 @@ export function DisambiguationAnswerGrammarEditor({
         <GrammarTestPanel
           variant="full"
           panels={panels}
+          expectedOptionChoices={options}
+          combinatorial={combinatorial}
           testFilter={testFilter}
           onTestFilterChange={setTestFilter}
           newPhraseExpected={newPhraseExpected}
@@ -293,28 +383,51 @@ export function DisambiguationAnswerGrammarEditor({
 
   return (
     <div id="disambiguation-answer-grammar" className="flex flex-col h-full min-h-0 gap-2">
+      <GrammarModeRadio mode={grammarMode} onChange={handleModeChange} />
+      {proposedSynonymTrimmed && tuningTargetOption && (
+        <GrammarTuningFromChatBanner
+          phrase={proposedSynonymTrimmed}
+          targetOption={formatOptionLabel(tuningTargetOption)}
+          graphMode={grammarMode === 'graph'}
+        />
+      )}
       <div className="flex-1 min-h-0 flex flex-col">
-      <GrammarValuesSplitPane
-        valuesList={(
-          <SemanticValueList
-            panels={panels}
-            selectedIndex={selectedPanelIndex}
-            onSelect={setSelectedPanelIndex}
+        {grammarMode === 'text' ? (
+          <GrammarValuesSplitPane
+            valuesList={(
+              <SemanticValueList
+                panels={panels}
+                combinatorial={combinatorial}
+                selectedIndex={selectedPanelIndex}
+                onSelect={setSelectedPanelIndex}
+              />
+            )}
+            detail={selectedPanel ? (
+              <SemanticValueSynonymsPanel
+                label={selectedPanel.label}
+                synonyms={selectedPanel.synonyms}
+                autoFocusAdd={autoFocus}
+                onChange={(synonyms) => updatePanelSynonyms(selectedPanelIndex, synonyms)}
+              />
+            ) : (
+              <div className="flex h-full min-h-0 items-center justify-center rounded border border-sky-400/20 bg-[#0a1510] p-3 font-mono text-sm text-emerald-300/75">
+                Nessun valore semantico
+              </div>
+            )}
           />
-        )}
-        detail={selectedPanel ? (
-          <SemanticValueSynonymsPanel
-            label={selectedPanel.label}
-            synonyms={selectedPanel.synonyms}
-            autoFocusAdd={autoFocus}
-            onChange={(synonyms) => updatePanelSynonyms(selectedPanelIndex, synonyms)}
+        ) : grammarGraph ? (
+          <GrammarGraphEditor
+            grammarKey={`${signature}\0${optionsKey}\0graph`}
+            initialGrammar={grammarGraph}
+            focusOptionToken={focusExpectedOption}
+            onGrammarChange={persistGraph}
+            onSelectedOptionTokenChange={setSelectedGraphOption}
           />
         ) : (
           <div className="flex h-full min-h-0 items-center justify-center rounded border border-sky-400/20 bg-[#0a1510] p-3 font-mono text-sm text-emerald-300/75">
-            Nessun valore semantico
+            Caricamento editor grafo…
           </div>
         )}
-      />
       </div>
 
       {error && (
@@ -327,22 +440,81 @@ export function DisambiguationAnswerGrammarEditor({
       <ContextualTestAccordion
         open={contextualTestOpen}
         onToggle={() => setContextualTestOpen((v) => !v)}
-        selectedExpectedLabel={selectedPanel ? formatOptionLabel(selectedPanel.targetPath) : ''}
+        selectedExpectedLabel={activeOptionToken ? formatOptionLabel(activeOptionToken) : ''}
         phrases={phrasesForSelectedValue}
         testResults={contextualTestResults}
         highlightKey={highlightTestKey}
         testPhraseError={testPhraseError}
         onRunTestAll={runContextualTestAll}
         onAddPhrase={(phrase) => {
-          if (!selectedPanel) return;
-          addTestPhraseForExpected(phrase, selectedPanel.targetPath);
+          if (!activeOptionToken) return;
+          addTestPhraseForExpected(phrase, activeOptionToken);
         }}
         onDeletePhrase={(phrase) => {
           persistTestPhrases(testPhrases.filter((row) => row.phrase !== phrase));
         }}
         onClearHighlight={() => setHighlightTestKey(null)}
-        disabled={!selectedPanel}
+        disabled={!activeOptionToken}
       />
+    </div>
+  );
+}
+
+function GrammarTuningFromChatBanner({
+  phrase,
+  targetOption,
+  graphMode,
+}: {
+  phrase: string;
+  targetOption: string;
+  graphMode: boolean;
+}) {
+  return (
+    <div className="flex-shrink-0 rounded border border-amber-400/35 bg-amber-950/25 px-3 py-2">
+      <p className={`font-mono ${CHAT_TEXT} text-amber-200/90`}>
+        Frase dal chat: <span className="text-emerald-100/95">«{phrase}»</span>
+        {' · '}
+        opzione <span className="text-emerald-100/95">{targetOption}</span>
+      </p>
+      {graphMode && (
+        <p className={`mt-1 font-mono ${CHAT_TEXT} text-amber-300/80`}>
+          Passa all&apos;editor Text per aggiungere sinonimi dal chat.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GrammarModeRadio({
+  mode,
+  onChange,
+}: {
+  mode: AnswerGrammarMode;
+  onChange: (mode: AnswerGrammarMode) => void;
+}) {
+  return (
+    <div className="flex-shrink-0 flex items-center gap-4 px-1 py-1 font-mono text-xs text-emerald-300/90">
+      <span className="text-emerald-400/70 uppercase tracking-wide">Editor</span>
+      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+        <input
+          type="radio"
+          name="grammar-editor-mode"
+          checked={mode === 'text'}
+          onChange={() => onChange('text')}
+          className="accent-emerald-400"
+        />
+        Text
+      </label>
+      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+        <input
+          type="radio"
+          name="grammar-editor-mode"
+          checked={mode === 'graph'}
+          onChange={() => onChange('graph')}
+          className="accent-emerald-400"
+        />
+        Graph
+      </label>
     </div>
   );
 }
@@ -420,10 +592,12 @@ function GrammarValuesSplitPane({
 
 function SemanticValueList({
   panels,
+  combinatorial = false,
   selectedIndex,
   onSelect,
 }: {
   panels: ReturnType<typeof buildDisambiguationAnswerGrammarPanels>;
+  combinatorial?: boolean;
   selectedIndex: number;
   onSelect: (index: number) => void;
 }) {
@@ -431,10 +605,10 @@ function SemanticValueList({
     <div
       className="flex flex-col h-full min-h-0 rounded border border-sky-400/25 bg-[#0a1510] overflow-hidden"
       role="listbox"
-      aria-label="Valori semantici"
+      aria-label={combinatorial ? 'Valori atomici' : 'Valori semantici'}
     >
       <p className="flex-shrink-0 font-mono text-[10px] uppercase tracking-wider text-sky-400/55 px-2 py-1.5 border-b border-sky-400/15">
-        Valori
+        {combinatorial ? 'Atomi' : 'Valori'}
       </p>
       <div className="flex-1 min-h-0 overflow-y-auto py-1">
         {panels.map((panel, index) => {
@@ -795,6 +969,8 @@ function ContextualTestAccordion({
 function GrammarTestPanel({
   variant,
   panels,
+  expectedOptionChoices,
+  combinatorial = false,
   testFilter,
   onTestFilterChange,
   newPhraseExpected,
@@ -815,6 +991,8 @@ function GrammarTestPanel({
 }: {
   variant: 'full';
   panels: ReturnType<typeof buildDisambiguationAnswerGrammarPanels>;
+  expectedOptionChoices: string[];
+  combinatorial?: boolean;
   testFilter: TestFilter;
   onTestFilterChange: (filter: TestFilter) => void;
   newPhraseExpected: string;
@@ -855,8 +1033,9 @@ function GrammarTestPanel({
     setAddDraft('');
   };
 
-  const expectedLabelForFilter = panels.find((p) => p.targetPath === newPhraseExpected)?.label
-    ?? formatOptionLabel(newPhraseExpected);
+  const expectedLabelForFilter = formatOptionLabel(newPhraseExpected);
+
+  const expectedChoices = combinatorial ? expectedOptionChoices : panels.map((p) => p.targetPath);
 
   return (
     <div className="flex flex-col h-full min-h-0 rounded border border-amber-400/25 bg-amber-400/5 overflow-hidden">
@@ -895,8 +1074,12 @@ function GrammarTestPanel({
             onChange={(e) => onNewPhraseExpectedChange(e.target.value)}
             className={`${DICT_INPUT_FIELD} text-xs py-0.5 max-w-[12rem]`}
           >
-            {panels.map((panel) => (
-              <option key={panel.targetPath} value={panel.targetPath}>{panel.label}</option>
+            {expectedChoices.map((optionToken) => (
+              <option key={optionToken} value={optionToken}>
+                {combinatorial ? formatOptionLabel(optionToken) : (
+                  panels.find((p) => p.targetPath === optionToken)?.label ?? formatOptionLabel(optionToken)
+                )}
+              </option>
             ))}
           </select>
         </label>

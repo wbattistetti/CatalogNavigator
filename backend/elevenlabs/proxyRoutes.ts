@@ -60,4 +60,20 @@ export function mountElevenLabsProxyRoutes(app: Express): void {
   app.get('/elevenlabs/knowledge-base', (req, res) => {
     void proxyJson(req, res, upstreamPathWithQuery(req, '/convai/knowledge-base'), 'GET');
   });
+
+  app.get('/elevenlabs/tools', (req, res) => {
+    void proxyJson(req, res, upstreamPathWithQuery(req, '/convai/tools'), 'GET');
+  });
+
+  app.get('/elevenlabs/tools/:toolId', (req, res) => {
+    void proxyJson(req, res, `/convai/tools/${req.params.toolId}`, 'GET');
+  });
+
+  app.post('/elevenlabs/tools', (req, res) => {
+    void proxyJson(req, res, '/convai/tools', 'POST');
+  });
+
+  app.patch('/elevenlabs/tools/:toolId', (req, res) => {
+    void proxyJson(req, res, `/convai/tools/${req.params.toolId}`, 'PATCH');
+  });
 }

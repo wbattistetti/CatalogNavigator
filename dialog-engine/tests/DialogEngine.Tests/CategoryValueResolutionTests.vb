@@ -116,6 +116,46 @@ Public Class CategoryValueResolutionTests
   End Sub
 
   <Fact>
+  Public Sub DropShadowedByLongerMatches_RemovesAgonisticaInsideNonAgonistica()
+    Dim result = GrammarMatcher.DropShadowedByLongerMatches(
+      New List(Of String) From {"agonistica", "non agonistica"})
+
+    Assert.Equal(New List(Of String) From {"non agonistica"}, result)
+  End Sub
+
+  <Fact>
+  Public Sub DropShadowedByLongerMatches_KeepsIndependentMultiMatches()
+    Dim result = GrammarMatcher.DropShadowedByLongerMatches(
+      New List(Of String) From {"ecg", "ecocolordoppler cardiaco"})
+
+    Assert.Equal(2, result.Count)
+    Assert.Contains("ecg", result)
+    Assert.Contains("ecocolordoppler cardiaco", result)
+  End Sub
+
+  <Fact>
+  Public Sub MatchAllGrammarValues_ShadowsAgonisticaWhenNonAgonisticaMatches()
+    Dim category = New CategoryDefinition With {
+      .Name = "pratica sportiva",
+      .Kind = ConceptKind.Attributo,
+      .AllowedValues = New List(Of String) From {"non agonistica", "agonistica"},
+      .Grammar = New CategoryGrammar With {
+        .Regex = "(?<non_agonistica>non\s+agonistica)|(?<agonistica>agonistica)",
+        .Mappings = New Dictionary(Of String, String) From {
+          {"non_agonistica", "non agonistica"},
+          {"agonistica", "agonistica"}
+        }
+      }
+    }
+
+    Dim matches = GrammarMatcher.MatchAllGrammarValues(
+      "certificato per attivita non agonistica con test da sforzo massimale",
+      category)
+
+    Assert.Equal(New List(Of String) From {"non agonistica"}, matches)
+  End Sub
+
+  <Fact>
   Public Sub TryExtractNamedGroupPattern_HandlesNestedGroups()
     Dim combined = "(?<maxillo>maxillo(?:\s+facciale)?)|(?<generale>generale)"
     Dim pattern = GrammarMatcher.TryExtractNamedGroupPattern(combined, "maxillo")

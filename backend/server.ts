@@ -23,7 +23,12 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'convai-gateway', port: PORT });
+  res.json({
+    ok: true,
+    service: 'convai-gateway',
+    port: PORT,
+    capabilities: ['elevenlabs-tools'],
+  });
 });
 
 mountElevenLabsProxyRoutes(app);

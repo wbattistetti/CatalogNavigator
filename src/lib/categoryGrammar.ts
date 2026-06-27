@@ -247,6 +247,37 @@ export function matchCategoryGrammar(
 }
 
 /**
+ * Removes shorter matched tokens contained as whole words inside a longer match
+ * (e.g. "agonistica" inside "non agonistica").
+ */
+export function dropShadowedByLongerMatches(values: readonly string[]): string[] {
+  const cleaned = values.map((v) => v.trim()).filter(Boolean);
+  if (cleaned.length <= 1) return [...cleaned];
+
+  const ordered = [...cleaned].sort(
+    (a, b) => b.length - a.length || a.localeCompare(b, 'it', { sensitivity: 'base' }),
+  );
+
+  const survivors: string[] = [];
+  for (const candidate of ordered) {
+    const shadowed = survivors.some((longer) => isShadowedByLongerMatch(candidate, longer));
+    if (!shadowed) survivors.push(candidate);
+  }
+
+  const survivorKeys = new Set(survivors.map((v) => v.toLowerCase()));
+  return cleaned.filter((v) => survivorKeys.has(v.toLowerCase()));
+}
+
+function isShadowedByLongerMatch(shorter: string, longer: string): boolean {
+  if (!shorter || !longer || shorter.length >= longer.length) return false;
+  const pattern = new RegExp(
+    `(?<![\\w])${escapeRegexLiteral(shorter)}(?![\\w])`,
+    'iu',
+  );
+  return pattern.test(longer);
+}
+
+/**
  * Returns every canonical value in the category that matches the text.
  * Each token is tested independently so multiple values from one category can match.
  */
@@ -267,7 +298,7 @@ export function matchAllCategoryGrammarValues(
       values.push(canonical);
     }
   }
-  return values;
+  return dropShadowedByLongerMatches(values);
 }
 
 function canonicalMatchesInCategory(

@@ -168,6 +168,108 @@ Public Module TestBundleFactory
         }
     End Function
 
+    Public Function BuildAngiologicaEcodopplerDistrettoBundle() As AgentBundle
+        Dim artiPath = "angiologica.ecodoppler.arti_inferiori"
+        Dim epiPath = "angiologica.ecodoppler.epiaortici"
+        Dim cardioArtiPath = "cardiologica.ecodoppler.arti_inferiori"
+
+        Dim bundle = New AgentBundle With {
+            .Meta = New AgentBundleMeta With {.DocumentName = "Angiologica eco distretto"},
+            .Ontology = New Ontology With {
+                .StartQuestion = "Che visita desidera prenotare?",
+                .ConfirmationPreamble = "Confermo:",
+                .Categories = New List(Of CategoryDefinition) From {
+                    New CategoryDefinition With {.Id = "c1", .Name = "prestazione", .Order = 0, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"ecodoppler"}},
+                    New CategoryDefinition With {.Id = "c2", .Name = "specialità", .Order = 1, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"angiologica", "cardiologica", "none"}},
+                    New CategoryDefinition With {.Id = "c3", .Name = "fascia di età", .Order = 2, .Kind = ConceptKind.Vincolo, .ValueKind = "age_years", .AllowedValues = New List(Of String) From {"> 17 anni"}},
+                    New CategoryDefinition With {.Id = "c4", .Name = "distretto anatomico", .Order = 3, .Kind = ConceptKind.Attributo, .AllowedValues = New List(Of String) From {"arti inferiori", "vasi epiaortici"}}
+                },
+                .Nodes = New List(Of DialogNode) From {
+                    New DialogNode With {.Path = artiPath, .ConfirmationText = "Eco angiologica arti inferiori"},
+                    New DialogNode With {.Path = epiPath, .ConfirmationText = "Eco angiologica vasi epiaortici"},
+                    New DialogNode With {.Path = cardioArtiPath, .ConfirmationText = "Eco cardiologica arti inferiori"}
+                },
+                .DisambiguationPlan = New DisambiguationPlan With {
+                    .Messages = New List(Of DisambiguationMessage) From {
+                        New DisambiguationMessage With {
+                            .Signature = "specialità||angiologica|cardiologica|none||choice",
+                            .CategoryName = "specialità",
+                            .Style = "choice",
+                            .Question = "Per specialità, preferisce angiologica, cardiologica o none?",
+                            .AnswerGrammar = New CategoryGrammar With {
+                                .Regex = "(?<angiologica>angiologica)|(?<cardiologica>cardiologica)|(?<none>none)",
+                                .Mappings = New Dictionary(Of String, String) From {
+                                    {"angiologica", "angiologica"},
+                                    {"cardiologica", "cardiologica"},
+                                    {"none", "none"}
+                                }
+                            }
+                        },
+                        New DisambiguationMessage With {
+                            .Signature = "distretto anatomico||arti inferiori|vasi epiaortici||choice",
+                            .CategoryName = "distretto anatomico",
+                            .Style = "choice",
+                            .Question = "Per quale distretto anatomico desidera prenotare: arti inferiori o vasi epiaortici?",
+                            .AnswerGrammar = New CategoryGrammar With {
+                                .Regex = "(?<arti_inferiori>arti(?:\s+inferiori)?)|(?<vasi_epiaortici>vasi(?:\s+epiaortici)?)",
+                                .Mappings = New Dictionary(Of String, String) From {
+                                    {"arti_inferiori", "arti inferiori"},
+                                    {"vasi_epiaortici", "vasi epiaortici"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            .Catalog = New Catalog With {
+                .Items = New List(Of CatalogItem) From {
+                    BuildCatalogItem(artiPath, {
+                        Attr("ecodoppler", "prestazione"),
+                        Attr("angiologica", "specialità"),
+                        Vincolo("> 17 anni", "fascia di età"),
+                        Attr("arti inferiori", "distretto anatomico")
+                    }, minAge:=18, maxAge:=Nothing),
+                    BuildCatalogItem(epiPath, {
+                        Attr("ecodoppler", "prestazione"),
+                        Attr("angiologica", "specialità"),
+                        Vincolo("> 17 anni", "fascia di età"),
+                        Attr("vasi epiaortici", "distretto anatomico")
+                    }, minAge:=18, maxAge:=Nothing),
+                    BuildCatalogItem(cardioArtiPath, {
+                        Attr("ecodoppler", "prestazione"),
+                        Attr("cardiologica", "specialità"),
+                        Vincolo("> 17 anni", "fascia di età"),
+                        Attr("arti inferiori", "distretto anatomico")
+                    }, minAge:=18, maxAge:=Nothing)
+                }
+            }
+        }
+        AddAngiologicaEcodopplerDistrettoGrammars(bundle)
+        AddAgeVincoloResolution(bundle)
+        Return bundle
+    End Function
+
+    Public Sub AddAngiologicaEcodopplerDistrettoGrammars(bundle As AgentBundle)
+        Dim prestazione = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "prestazione")
+        If prestazione IsNot Nothing Then
+            prestazione.Grammar = New CategoryGrammar With {
+                .Regex = "(?<ecodoppler>ecodoppler|esame ecodoppler)",
+                .Mappings = New Dictionary(Of String, String) From {{"ecodoppler", "ecodoppler"}}
+            }
+        End If
+
+        Dim specialita = bundle.Ontology.Categories.FirstOrDefault(Function(c) c.Name = "specialità")
+        If specialita IsNot Nothing Then
+            specialita.Grammar = New CategoryGrammar With {
+                .Regex = "(?<angiologica>angiologica)|(?<cardiologica>cardiologica)",
+                .Mappings = New Dictionary(Of String, String) From {
+                    {"angiologica", "angiologica"},
+                    {"cardiologica", "cardiologica"}
+                }
+            }
+        End If
+    End Sub
+
     Public Function BuildDistrettiAnatomiciBundle() As AgentBundle
         Dim artiOnlyPath = "ecodoppler.arti_inferiori"
         Dim aortaArtiPath = "ecodoppler.aorta_arti"

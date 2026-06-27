@@ -12,6 +12,7 @@ import {
   categoryGrammarCoversDictionaryAliases,
   matchAllCategoryGrammarValues,
   matchCategoryGrammar,
+  dropShadowedByLongerMatches,
   reconcileCategoryGrammarsWithTokens,
 } from './categoryGrammar';
 import type { TokenCategory } from './dictionaryTree';
@@ -63,6 +64,30 @@ describe('compileCategoryGrammar', () => {
       specialita,
       tokens,
     )).toEqual(['cardiologica', 'dermatologica']);
+  });
+
+  it('drops shorter token shadowed by a longer match in the same category', () => {
+    const agonismoCategory: TokenCategory = {
+      id: 'c-agonismo',
+      name: 'pratica sportiva',
+      order: 0,
+      tokenTexts: ['non agonistica', 'agonistica'],
+      type: 'attributo',
+    };
+    const agonismoTokens: TokenEntry[] = [
+      { text: 'non agonistica', enabled: true },
+      { text: 'agonistica', enabled: true },
+    ];
+    const withGrammar = applyCategoryGrammars([agonismoCategory], agonismoTokens, true);
+
+    expect(dropShadowedByLongerMatches(['agonistica', 'non agonistica'])).toEqual([
+      'non agonistica',
+    ]);
+    expect(matchAllCategoryGrammarValues(
+      'certificato per attivita non agonistica con test',
+      withGrammar[0]!,
+      agonismoTokens,
+    )).toEqual(['non agonistica']);
   });
 
   it('includes dictionary aliases in category grammar and matching', () => {

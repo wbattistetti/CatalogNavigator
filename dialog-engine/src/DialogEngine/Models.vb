@@ -14,6 +14,8 @@ Namespace Models
     Public Class CategoryGrammar
         Public Property Regex As String
         Public Property Mappings As Dictionary(Of String, String)
+        ''' <summary>When true, mappings are atomic values matched independently and combined by the engine.</summary>
+        Public Property Combinatorial As Boolean?
     End Class
 
     Public Class CategoryDefinition
@@ -78,6 +80,10 @@ Namespace Models
         Public Property NoMatch3 As String
         Public Property Style As String
         Public Property AnswerGrammar As CategoryGrammar
+        ''' <summary>Design-time grammar graph; compiled when AnswerGrammarMode is graph.</summary>
+        Public Property AnswerGrammarGraph As GrammarGraphModels.GrammarGraph
+        ''' <summary>text (default) | graph — mutually exclusive runtime source.</summary>
+        Public Property AnswerGrammarMode As String
     End Class
 
     Public Class DisambiguationPlan

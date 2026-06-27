@@ -2,6 +2,10 @@
  * Types for the compile-time disambiguation plan (reachable conversation graph).
  */
 import type { GrammarEntry } from './analysisTypes';
+import type { GrammarGraph } from './grammarGraph/grammarGraphTypes';
+import type { AnswerGrammarMode } from './grammarGraph/answerGrammarMode';
+
+export type { AnswerGrammarMode };
 
 export type DisambiguationAction =
   | 'disambiguate'
@@ -81,6 +85,10 @@ export interface DisambiguationMessageRecord {
   contextCount?: number;
   /** Maps utterance → canonical option token (includes "none" when applicable). */
   answer_grammar?: GrammarEntry | null;
+  /** Design-time grammar graph; used when answer_grammar_mode is graph. */
+  answer_grammar_graph?: GrammarGraph | null;
+  /** Mutually exclusive editor/runtime mode; default text. */
+  answer_grammar_mode?: AnswerGrammarMode;
   /** Saved test utterances for grammar validation in the editor. */
   test_phrases?: DisambiguationTestPhrase[];
 }

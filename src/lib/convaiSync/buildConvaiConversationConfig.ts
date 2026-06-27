@@ -3,6 +3,7 @@
  */
 import type { AgentBundle } from '../agentBundleTypes';
 import { buildAgentDialogStepTool } from './buildAgentDialogStepTool';
+import { attachWorkspaceToolToConversationConfig } from './convaiWorkspaceTool';
 
 export interface ConvaiConversationConfigInput {
   bundle: AgentBundle;
@@ -11,6 +12,8 @@ export interface ConvaiConversationConfigInput {
   voiceId?: string | null;
   llm?: string;
   gatewayOrigin?: string;
+  /** When set, references workspace tool instead of inline tools (avoids duplicate tools on redeploy). */
+  workspaceToolId?: string | null;
 }
 
 /** System prompt: ConvAI relays transcript to backend and speaks spokenHint verbatim. */
@@ -42,8 +45,8 @@ export const DEFAULT_CONVAI_RELAY_LLM = 'gpt-4o-mini';
 /** Assembles full conversation_config for create/patch agent (dumb relay). */
 export function buildConvaiConversationConfig(input: ConvaiConversationConfigInput) {
   const prompt = compileVoiceRelayPrompt(input.bundle);
-  const tool = buildAgentDialogStepTool(input.documentId, input.gatewayOrigin);
   const voiceId = input.voiceId?.trim() || DEFAULT_CONVAI_VOICE_ID;
+  const workspaceToolId = input.workspaceToolId?.trim();
 
   const conversationConfig: Record<string, unknown> = {
     agent: {
@@ -54,7 +57,10 @@ export function buildConvaiConversationConfig(input: ConvaiConversationConfigInp
       prompt: {
         prompt,
         llm: input.llm ?? DEFAULT_CONVAI_RELAY_LLM,
-        tools: [tool],
+        tools: workspaceToolId
+          ? [] as unknown[]
+          : [buildAgentDialogStepTool(input.documentId, input.gatewayOrigin)],
+        tool_ids: workspaceToolId ? [workspaceToolId] : [] as string[],
         knowledge_base: [] as Array<{ type: string; name: string; id: string; usage_mode: string }>,
       },
     },
@@ -64,6 +70,9 @@ export function buildConvaiConversationConfig(input: ConvaiConversationConfigInp
     },
   };
 
-  // tool_ids: [] only on PATCH (stripPromptToolIdsForInlineToolsPatch), not on create.
+  if (workspaceToolId) {
+    attachWorkspaceToolToConversationConfig(conversationConfig, workspaceToolId);
+  }
+
   return conversationConfig;
 }

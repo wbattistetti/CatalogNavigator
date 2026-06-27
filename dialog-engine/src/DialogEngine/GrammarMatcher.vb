@@ -76,7 +76,57 @@ Public Module GrammarMatcher
             End If
         End If
 
-        Return values
+        Return DropShadowedByLongerMatches(values)
+    End Function
+
+    ''' <summary>
+    ''' Removes shorter matched tokens contained as whole words inside a longer matched token
+    ''' (e.g. "agonistica" inside "non agonistica").
+    ''' </summary>
+    Public Function DropShadowedByLongerMatches(values As IList(Of String)) As List(Of String)
+        If values Is Nothing Then Return New List(Of String)()
+
+        Dim cleaned = values.
+            Where(Function(v) Not String.IsNullOrWhiteSpace(v)).
+            Select(Function(v) v.Trim()).
+            ToList()
+        If cleaned.Count <= 1 Then Return cleaned
+
+        Dim ordered = cleaned.
+            OrderByDescending(Function(v) v.Length).
+            ThenBy(Function(v) v, StringComparer.OrdinalIgnoreCase).
+            ToList()
+
+        Dim survivors As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        For Each candidate In ordered
+            Dim shadowed = survivors.Any(Function(longer) IsShadowedByLongerMatch(candidate, longer))
+            If Not shadowed Then survivors.Add(candidate)
+        Next
+
+        Dim result As New List(Of String)()
+        For Each value In cleaned
+            If survivors.Contains(value) AndAlso
+               Not result.Any(Function(r) String.Equals(r, value, StringComparison.OrdinalIgnoreCase)) Then
+                result.Add(value)
+            End If
+        Next
+
+        Return result
+    End Function
+
+    Private Function IsShadowedByLongerMatch(shorter As String, longer As String) As Boolean
+        If String.IsNullOrWhiteSpace(shorter) OrElse String.IsNullOrWhiteSpace(longer) Then Return False
+        If shorter.Length >= longer.Length Then Return False
+
+        Try
+            Dim pattern = "(?<!\w)" & Regex.Escape(shorter.Trim()) & "(?!\w)"
+            Return Regex.IsMatch(
+                longer.Trim(),
+                pattern,
+                RegexOptions.IgnoreCase Or RegexOptions.CultureInvariant)
+        Catch
+            Return False
+        End Try
     End Function
 
     Private Function FindMappingGroupName(

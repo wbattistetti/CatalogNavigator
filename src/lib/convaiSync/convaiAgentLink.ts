@@ -11,6 +11,8 @@ export interface ConvaiAgentLink {
   lastSyncedAt?: string;
   bundleCompiledAt?: string;
   publicBaseUrl?: string | null;
+  /** ElevenLabs workspace tool id for agent_dialog_step (stable across redeploys). */
+  workspaceToolId?: string | null;
   /** webhook = agent_dialog_step; no-backend = structured KB + LLM algorithm. */
   deployMode?: 'webhook' | 'no-backend';
   kbRemoteByDocId?: Record<string, string>;
@@ -49,6 +51,7 @@ export async function loadConvaiAgentLink(documentId: string): Promise<ConvaiAge
     lastSyncedAt: data.last_synced_at ?? stored.lastSyncedAt ?? undefined,
     bundleCompiledAt: data.bundle_compiled_at ?? stored.bundleCompiledAt ?? undefined,
     publicBaseUrl: data.public_base_url ?? stored.publicBaseUrl ?? null,
+    workspaceToolId: stored.workspaceToolId ?? undefined,
     kbRemoteByDocId: stored.kbRemoteByDocId ?? {},
     lastKbRemoteIds: stored.lastKbRemoteIds ?? [],
   };

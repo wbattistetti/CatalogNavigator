@@ -25,6 +25,8 @@ Public Module DisambiguationAnswer
         Dim canonical As String = Nothing
         If Not String.IsNullOrWhiteSpace(tokenMatch) Then
             canonical = tokenMatch
+        ElseIf grammar IsNot Nothing AndAlso CombinatorialAnswerGrammar.IsCombinatorialGrammar(grammar) Then
+            canonical = CombinatorialAnswerGrammar.MatchAndResolveOptionKey(text, grammar, resolvedOptions)
         ElseIf grammar IsNot Nothing Then
             canonical = MatchAnswerGrammar(text, grammar)
         End If
@@ -103,10 +105,7 @@ Public Module DisambiguationAnswer
         signature As String
     ) As Models.CategoryGrammar
         Dim record = DisambiguationCopy.FindMessageRecordBySignature(bundle, signature)
-        If record?.AnswerGrammar Is Nothing OrElse String.IsNullOrWhiteSpace(record.AnswerGrammar.Regex) Then
-            Return Nothing
-        End If
-        Return record.AnswerGrammar
+        Return ResolveStoredAnswerGrammar(record)
     End Function
 
     Private Function FindPlanAnswerGrammar(
@@ -115,7 +114,31 @@ Public Module DisambiguationAnswer
         options As IList(Of String)
     ) As Models.CategoryGrammar
         Dim record = DisambiguationCopy.FindMessageRecord(bundle, categoryName, options)
-        If record?.AnswerGrammar Is Nothing OrElse String.IsNullOrWhiteSpace(record.AnswerGrammar.Regex) Then
+        Return ResolveStoredAnswerGrammar(record)
+    End Function
+
+    Private Function ResolveStoredAnswerGrammar(record As Models.DisambiguationMessage) As Models.CategoryGrammar
+        If record Is Nothing Then Return Nothing
+
+        Dim mode = If(record.AnswerGrammarMode, "text").Trim().ToLowerInvariant()
+        If String.Equals(mode, "graph", StringComparison.Ordinal) AndAlso
+            record.AnswerGrammarGraph IsNot Nothing AndAlso
+            record.AnswerGrammarGraph.Nodes IsNot Nothing AndAlso
+            record.AnswerGrammarGraph.Nodes.Count > 0 Then
+            Try
+                Dim compiled = AnswerGrammarMatch.CompileGraphCached(
+                    record.AnswerGrammarGraph,
+                    $"{record.Signature}|{AnswerGrammarMatch.BuildGraphCacheKey(record.AnswerGrammarGraph)}")
+                Return New Models.CategoryGrammar With {
+                    .Regex = compiled.Regex,
+                    .Mappings = compiled.Mappings
+                }
+            Catch
+                Return Nothing
+            End Try
+        End If
+
+        If record.AnswerGrammar Is Nothing OrElse String.IsNullOrWhiteSpace(record.AnswerGrammar.Regex) Then
             Return Nothing
         End If
         Return record.AnswerGrammar

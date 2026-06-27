@@ -43,12 +43,22 @@ import { resolveCorpusOntologyStatus } from '../../domain/project/corpusOntology
 import { isProjectDictionaryLayoutStable } from '../../domain/project/projectLayoutReady';
 import { applySegmentExclusions } from '../../lib/corpusSegmentationOverrides';
 import type { OntologyCorpusSegmentationValue } from '../ontology-corpus/OntologyCorpusSegmentationContext';
+import type {
+  ChatTurnReplayRequest,
+  OpenDisambiguationFromChatOptions,
+} from '../../lib/grammarTuningFromChat';
 
 export type { AgentDictionaryContext };
+export type { ChatTurnReplayRequest, OpenDisambiguationFromChatOptions };
 
 export interface DisambiguationNavRequest {
   signature: string;
   focusGrammar?: boolean;
+  proposedSynonym?: string;
+  focusExpectedOption?: string | null;
+  chatReplay?: ChatTurnReplayRequest;
+  categoryName?: string;
+  options?: string[];
 }
 
 export interface UseDocumentEditorControllerOptions {
@@ -64,6 +74,7 @@ export function useDocumentEditorController({
 }: UseDocumentEditorControllerOptions) {
   const [dictState, setDictState] = useState<DictionaryPanelState | null>(null);
   const [disambiguationNavRequest, setDisambiguationNavRequest] = useState<DisambiguationNavRequest | null>(null);
+  const [chatTurnReplayRequest, setChatTurnReplayRequest] = useState<ChatTurnReplayRequest | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const [convaiOpen, setConvaiOpen] = useState(false);
   const [convaiNoBeOpen, setConvaiNoBeOpen] = useState(false);
@@ -670,16 +681,33 @@ export function useDocumentEditorController({
 
   const openDisambiguationMessage = useCallback((
     signature: string,
-    opts?: { focusGrammar?: boolean },
+    opts?: OpenDisambiguationFromChatOptions,
   ) => {
     setDisambiguationNavRequest({
       signature,
       focusGrammar: opts?.focusGrammar ?? true,
+      proposedSynonym: opts?.proposedSynonym?.trim() || undefined,
+      focusExpectedOption: opts?.focusExpectedOption ?? undefined,
+      chatReplay: opts?.chatReplay,
+      categoryName: opts?.categoryName,
+      options: opts?.options ? [...opts.options] : undefined,
     });
   }, []);
 
   const clearDisambiguationNavRequest = useCallback(() => {
     setDisambiguationNavRequest(null);
+  }, []);
+
+  const requestChatTurnReplay = useCallback((request: ChatTurnReplayRequest) => {
+    setChatTurnReplayRequest({
+      userMessageId: request.userMessageId.trim(),
+      userText: request.userText.trim(),
+    });
+    setTestOpen(true);
+  }, []);
+
+  const clearChatTurnReplayRequest = useCallback(() => {
+    setChatTurnReplayRequest(null);
   }, []);
 
   /** Dictionary for disambiguation tab — panel state, agent bundle, or live project refs. */
@@ -750,6 +778,9 @@ export function useDocumentEditorController({
     disambiguationNavRequest,
     openDisambiguationMessage,
     clearDisambiguationNavRequest,
+    chatTurnReplayRequest,
+    requestChatTurnReplay,
+    clearChatTurnReplayRequest,
     testOpen,
     setTestOpen,
     convaiOpen,

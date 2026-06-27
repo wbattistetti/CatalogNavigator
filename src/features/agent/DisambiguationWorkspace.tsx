@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { AlertTriangle, Calculator, Loader2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, Calculator, Loader2, RefreshCw, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import {
   compileDisambiguationPlanAsync,
@@ -23,6 +23,8 @@ import {
   editorRowsToStorage,
 
   mergeDisambiguationPlanAfterCompute,
+
+  regenerateDisambiguationAnswerGrammars,
 
   rowsNeedingDisambiguationMessages,
 
@@ -65,6 +67,8 @@ import { AgentGlobalMessagesStrip } from './AgentGlobalMessagesStrip';
 import { DisambiguationMessagePanel } from './DisambiguationMessagePanel';
 import { DisambiguationMessagesSplitPane } from './DisambiguationMessagesSplitPane';
 import type { DisambiguationNavRequest } from '../document-editor/useDocumentEditorController';
+import type { ChatTurnReplayRequest } from '../../lib/grammarTuningFromChat';
+import { resolveEditorSignatureForTuning } from '../../lib/grammarTuningFromChat';
 import { DisambiguationComputeProgressOverlay, type DisambiguationComputePhase } from '../document-editor/DisambiguationProgressBar';
 import { yieldToUi } from '../../lib/yieldToUi';
 import { DICT_INPUT_FIELD } from '../dictionaries/dictionaryFormStyles';
@@ -141,6 +145,8 @@ interface DisambiguationWorkspaceProps {
   navRequest?: DisambiguationNavRequest | null;
 
   onNavRequestHandled?: () => void;
+
+  onRequestChatTurnReplay?: (request: ChatTurnReplayRequest) => void;
 
   onUpdateAgentConfig?: (updates: {
     start_question?: string | null;
@@ -270,6 +276,8 @@ export function DisambiguationWorkspace({
 
   onNavRequestHandled,
 
+  onRequestChatTurnReplay,
+
   onUpdateAgentConfig,
 
 }: DisambiguationWorkspaceProps) {
@@ -286,6 +294,8 @@ export function DisambiguationWorkspace({
 
   const [error, setError] = useState<string | null>(null);
 
+  const [grammarNotice, setGrammarNotice] = useState<string | null>(null);
+
   const [mergeStats, setMergeStats] = useState<DisambiguationMergeStats | null>(null);
 
   const [selectedSignature, setSelectedSignature] = useState<string | null>(null);
@@ -294,14 +304,18 @@ export function DisambiguationWorkspace({
 
   const [focusGrammar, setFocusGrammar] = useState(false);
 
+  const [grammarTuningFromChat, setGrammarTuningFromChat] = useState<{
+    proposedSynonym?: string;
+    focusExpectedOption?: string | null;
+    chatReplay?: ChatTurnReplayRequest;
+  } | null>(null);
+
   const segmentation = useOntologyCorpusSegmentation();
 
-  useEffect(() => {
-    if (!navRequest?.signature) return;
-    setSelectedSignature(navRequest.signature);
-    setFocusGrammar(navRequest.focusGrammar ?? false);
-    onNavRequestHandled?.();
-  }, [navRequest?.signature, navRequest?.focusGrammar, onNavRequestHandled]);
+  const handleGrammarTuningReplay = useCallback((request: ChatTurnReplayRequest) => {
+    setGrammarTuningFromChat(null);
+    onRequestChatTurnReplay?.(request);
+  }, [onRequestChatTurnReplay]);
 
 
 
@@ -477,6 +491,43 @@ export function DisambiguationWorkspace({
   }, [plan, analysis?.disambiguation_plan, dictionaryCategories]);
 
 
+
+  useEffect(() => {
+    if (!navRequest?.signature) return;
+    const sig = resolveEditorSignatureForTuning({
+      signature: navRequest.signature,
+      categoryName: navRequest.categoryName,
+      options: navRequest.options,
+      plan: analysis?.disambiguation_plan,
+      editorSignatures: editorRows.map((r) => r.signature),
+    });
+    if (!sig) return;
+    setSelectedSignature(sig);
+    setFocusGrammar(navRequest.focusGrammar ?? false);
+    if (
+      navRequest.proposedSynonym
+      || navRequest.focusExpectedOption
+      || navRequest.chatReplay
+    ) {
+      setGrammarTuningFromChat({
+        proposedSynonym: navRequest.proposedSynonym,
+        focusExpectedOption: navRequest.focusExpectedOption ?? null,
+        chatReplay: navRequest.chatReplay,
+      });
+    }
+    onNavRequestHandled?.();
+  }, [
+    navRequest?.signature,
+    navRequest?.focusGrammar,
+    navRequest?.proposedSynonym,
+    navRequest?.focusExpectedOption,
+    navRequest?.chatReplay,
+    navRequest?.categoryName,
+    navRequest?.options,
+    analysis?.disambiguation_plan,
+    editorRows,
+    onNavRequestHandled,
+  ]);
 
   const rowsToGenerate = useMemo(
 
@@ -710,6 +761,24 @@ export function DisambiguationWorkspace({
 
   }, [plan, editorRows, onUpdatePlan]);
 
+  const handleRegenerateGrammars = useCallback(() => {
+    if (!plan || editorRows.length === 0) return;
+    setError(null);
+    const { rows: nextRows, stats } = regenerateDisambiguationAnswerGrammars(editorRows);
+    onUpdatePlan(editorRowsToStorage(nextRows, plan.computedAt));
+    setGrammarNotice(
+      stats.regenerated > 0
+        ? `Rigenerate ${stats.regenerated} grammatiche risposta (modalità testo).`
+        : 'Nessuna grammatica da rigenerare.',
+    );
+  }, [plan, editorRows, onUpdatePlan]);
+
+  useEffect(() => {
+    if (!grammarNotice) return;
+    const timer = setTimeout(() => setGrammarNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [grammarNotice]);
+
 
 
   const catalogCount = useMemo(
@@ -776,6 +845,30 @@ export function DisambiguationWorkspace({
 
               type="button"
 
+              onClick={handleRegenerateGrammars}
+
+              disabled={generating || computing}
+
+              title="Ricompila tutte le grammatiche di risposta (atomi combinabili quando applicabile)"
+
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-orange-400/40 bg-orange-400/10 text-orange-200 font-mono text-sm hover:bg-orange-400/20 disabled:opacity-40 transition-colors"
+
+            >
+
+              <RefreshCw className="w-3.5 h-3.5" />
+
+              Rigenera grammatiche
+
+            </button>
+
+          )}
+
+          {plan && editorRows.length > 0 && (
+
+            <button
+
+              type="button"
+
               onClick={() => void handleGenerateAi(false)}
 
               disabled={generating || computing || rowsToGenerate.length === 0}
@@ -822,6 +915,16 @@ export function DisambiguationWorkspace({
         <div className="flex-shrink-0 mx-4 mt-3 rounded border border-red-400/40 bg-red-400/10 px-4 py-2 font-mono text-sm text-red-300">
 
           {error}
+
+        </div>
+
+      )}
+
+      {grammarNotice && (
+
+        <div className="flex-shrink-0 mx-4 mt-3 rounded border border-orange-400/35 bg-orange-400/10 px-4 py-2 font-mono text-sm text-orange-200/95">
+
+          {grammarNotice}
 
         </div>
 
@@ -1083,6 +1186,8 @@ export function DisambiguationWorkspace({
               vincoloCategory={selectedVincoloCategory}
               focusGrammar={focusGrammar}
               runtimeOptions={selectedRuntimeOptions}
+              grammarTuningFromChat={grammarTuningFromChat}
+              onGrammarTuningReplay={handleGrammarTuningReplay}
               onSave={handleSaveRow}
             />
           )}

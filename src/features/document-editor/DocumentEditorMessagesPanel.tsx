@@ -52,6 +52,8 @@ export function DocumentEditorMessagesPanel() {
 
     clearDisambiguationNavRequest,
 
+    requestChatTurnReplay,
+
   } = useDocumentEditorController();
 
 
@@ -153,6 +155,8 @@ export function DocumentEditorMessagesPanel() {
         navRequest={disambiguationNavRequest}
 
         onNavRequestHandled={clearDisambiguationNavRequest}
+
+        onRequestChatTurnReplay={requestChatTurnReplay}
 
         onUpdateAgentConfig={updateAgentConfig}
 

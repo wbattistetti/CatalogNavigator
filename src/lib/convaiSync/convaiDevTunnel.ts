@@ -17,6 +17,7 @@ const LOCALHOST_PATTERNS = [
 export interface NgrokTunnelInfo {
   running: boolean;
   publicUrl: string | null;
+  reachable?: boolean;
 }
 
 export function convaiGatewayOrigin(): string {
@@ -50,10 +51,12 @@ export async function startNgrokTunnel(
   return publicUrl.replace(/\/$/, '');
 }
 
-/** Ensures ngrok tunnel is up; returns public base URL. */
+/** Ensures ngrok tunnel is up and reachable; restarts stale zombie listeners. */
 export async function ensureConvaiDeployTunnelReady(authtoken?: string): Promise<string> {
   const status = await fetchNgrokStatus();
-  if (status.running && status.publicUrl) return status.publicUrl.replace(/\/$/, '');
+  if (status.running && status.publicUrl && status.reachable) {
+    return status.publicUrl.replace(/\/$/, '');
+  }
   return startNgrokTunnel(authtoken);
 }
 

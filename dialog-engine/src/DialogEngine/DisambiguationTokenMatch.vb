@@ -45,6 +45,26 @@ Public Module DisambiguationTokenMatch
         Return Nothing
     End Function
 
+    ''' <summary>
+    ''' Builds a canonical option key from mentioned atoms (exact match, then maximal fallback).
+    ''' </summary>
+    Public Function ResolveOptionKeyFromMentionedAtoms(
+        mentioned As IList(Of String),
+        options As IList(Of String)
+    ) As String
+        Dim cleaned = ResolveOptionsList(options)
+        If cleaned.Count = 0 Then Return Nothing
+
+        Dim normalized = ValueSetOps.NormalizeAttributoValues(
+            If(mentioned, New List(Of String)()))
+        If normalized.Count = 0 Then Return Nothing
+
+        Dim exact = FindExactOptionKey(normalized, cleaned)
+        If Not String.IsNullOrWhiteSpace(exact) Then Return exact
+
+        Return FindMaximalMatchingOptionKey(normalized, cleaned)
+    End Function
+
     Private Function ResolveOptionsList(options As IList(Of String)) As List(Of String)
         If options Is Nothing Then Return New List(Of String)()
         Return options.

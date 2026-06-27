@@ -3,6 +3,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import {
+  ensureTunnel,
   getTunnelStatus,
   startTunnel,
   stopAllTunnels,
@@ -12,14 +13,19 @@ import {
 const DEFAULT_PORT = Number(process.env.CONVAI_GATEWAY_PORT ?? 3110);
 
 export function mountNgrokRoutes(app: Express): void {
-  app.get('/api/dev-tunnel/ngrok/status', (_req: Request, res: Response) => {
-    const status = getTunnelStatus(DEFAULT_PORT);
-    res.json({
-      ok: true,
-      tunnels: {
-        [String(DEFAULT_PORT)]: status,
-      },
-    });
+  app.get('/api/dev-tunnel/ngrok/status', async (_req: Request, res: Response) => {
+    try {
+      const status = await getTunnelStatus(DEFAULT_PORT);
+      res.json({
+        ok: true,
+        tunnels: {
+          [String(DEFAULT_PORT)]: status,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: message });
+    }
   });
 
   app.post('/api/dev-tunnel/ngrok/start', async (req: Request, res: Response) => {
@@ -28,11 +34,21 @@ export function mountNgrokRoutes(app: Express): void {
         ? req.body.ports.map(Number)
         : [DEFAULT_PORT];
       const authtoken = typeof req.body?.authtoken === 'string' ? req.body.authtoken : undefined;
-      const tunnels: Record<string, { running: boolean; publicUrl: string | null }> = {};
+      const force = req.body?.force === true;
+      const tunnels: Record<string, { running: boolean; publicUrl: string | null; reachable: boolean }> = {};
+
       for (const port of ports) {
-        const publicUrl = await startTunnel(port, authtoken);
-        tunnels[String(port)] = { running: true, publicUrl };
+        const publicUrl = force
+          ? await startTunnel(port, authtoken)
+          : await ensureTunnel(port, authtoken);
+        const status = await getTunnelStatus(port);
+        tunnels[String(port)] = {
+          running: true,
+          publicUrl,
+          reachable: status.reachable,
+        };
       }
+
       res.json({ ok: true, tunnels });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

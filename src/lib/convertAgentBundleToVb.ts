@@ -25,6 +25,8 @@ import {
 import { normalizeConfirmationPreamble } from './confirmationPrompts';
 import { compileDisambiguationAnswerGrammar } from './disambiguationPlanMessages';
 import type { DisambiguationMessageRecord } from './disambiguationPlanTypes';
+import { resolveAnswerGrammarMode } from './grammarGraph/answerGrammarMode';
+import type { GrammarGraph } from './grammarGraph/grammarGraphTypes';
 
 function canonicalConceptValue(value: string): string {
   return value.trim().toLowerCase();
@@ -71,7 +73,9 @@ export interface VbDisambiguationMessage {
   noMatch2: string | null;
   noMatch3: string | null;
   style: string;
-  answerGrammar?: { regex: string; mappings: Record<string, string> } | null;
+  answerGrammar?: { regex: string; mappings: Record<string, string>; combinatorial?: boolean } | null;
+  answerGrammarGraph?: GrammarGraph | null;
+  answerGrammarMode?: 'text' | 'graph';
 }
 
 export interface VbAgentBundlePayload {
@@ -104,18 +108,26 @@ export interface VbAgentBundlePayload {
   };
 }
 
-/** Resolves answer grammar from storage or compiles from plan options at export time. */
+/** Resolves answer grammar for text mode export (regex + mappings). */
 function resolveDisambiguationAnswerGrammar(
   message: DisambiguationMessageRecord,
-): { regex: string; mappings: Record<string, string> } | null {
+): { regex: string; mappings: Record<string, string>; combinatorial?: boolean } | null {
   if (message.style === 'ask_age') return null;
   const stored = message.answer_grammar;
   if (stored?.regex?.trim()) {
-    return { regex: stored.regex, mappings: stored.mappings };
+    return {
+      regex: stored.regex,
+      mappings: stored.mappings,
+      combinatorial: stored.combinatorial,
+    };
   }
   const compiled = compileDisambiguationAnswerGrammar(message.options ?? []);
   if (!compiled?.regex?.trim()) return null;
-  return { regex: compiled.regex, mappings: compiled.mappings };
+  return {
+    regex: compiled.regex,
+    mappings: compiled.mappings,
+    combinatorial: compiled.combinatorial,
+  };
 }
 
 /** Maps editor bundle → VB-native bundle JSON for DialogEngine.Api. */
@@ -178,12 +190,22 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
       messages: plan.messages
         .filter((m) => m.question?.trim() || (m.options?.length ?? 0) > 0)
         .map((m) => {
-          const ag = resolveDisambiguationAnswerGrammar(m);
-          if (m.style !== 'ask_age' && !ag) {
+          const mode = resolveAnswerGrammarMode(m);
+          const ag = mode === 'text' ? resolveDisambiguationAnswerGrammar(m) : null;
+          const graph = mode === 'graph' && m.answer_grammar_graph?.nodes?.length
+            ? m.answer_grammar_graph
+            : null;
+          if (m.style !== 'ask_age' && mode === 'text' && !ag) {
             throw new Error(
               `[convertAgentBundleToVb] Messaggio di disambiguazione senza answer_grammar: ` +
               `signature="${m.signature ?? m.categoryName}". ` +
               `Ricalcola il piano di disambiguazione per generare le grammar.`,
+            );
+          }
+          if (m.style !== 'ask_age' && mode === 'graph' && !graph) {
+            throw new Error(
+              `[convertAgentBundleToVb] Messaggio in modalità graph senza answer_grammar_graph: ` +
+              `signature="${m.signature ?? m.categoryName}".`,
             );
           }
           return {
@@ -195,6 +217,8 @@ export function convertAgentBundleToVb(bundle: AgentBundle): VbAgentBundlePayloa
             noMatch3: m.no_match_3,
             style: m.style,
             answerGrammar: ag ?? undefined,
+            answerGrammarGraph: graph ?? undefined,
+            answerGrammarMode: mode,
           };
         }),
     }

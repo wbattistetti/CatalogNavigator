@@ -10,6 +10,8 @@ using System.Text.Json.Serialization;
 
 using DialogEngine;
 
+using DialogEngine.GrammarGraphModels;
+
 using DialogEngine.Models;
 
 
@@ -419,6 +421,45 @@ app.MapPost("/api/test/text-turn", async (HttpRequest request) =>
 
     }
 
+});
+
+
+
+app.MapPost("/api/grammar/match-answer", async (HttpRequest request) =>
+{
+    try
+    {
+        using var doc = await JsonDocument.ParseAsync(request.Body);
+        var root = doc.RootElement;
+
+        var text = root.TryGetProperty("text", out var textEl) ? textEl.GetString()?.Trim() ?? string.Empty : string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+            return Results.Json(new { matchedOption = (string?)null, matchedOptions = Array.Empty<string>(), compileError = "text mancante." }, jsonOptions, statusCode: 400);
+
+        if (!root.TryGetProperty("graph", out var graphEl))
+            return Results.Json(new { matchedOption = (string?)null, matchedOptions = Array.Empty<string>(), compileError = "graph mancante." }, jsonOptions, statusCode: 400);
+
+        var graph = JsonSerializer.Deserialize<GrammarGraph>(graphEl.GetRawText(), jsonOptions);
+        if (graph is null)
+            return Results.Json(new { matchedOption = (string?)null, matchedOptions = Array.Empty<string>(), compileError = "graph non valido." }, jsonOptions, statusCode: 400);
+
+        var result = AnswerGrammarMatch.MatchGrammarGraph(text, graph);
+        return Results.Json(new
+        {
+            matchedOption = result.MatchedOption,
+            matchedOptions = result.MatchedOptions,
+            compileError = result.CompileError,
+        }, jsonOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            matchedOption = (string?)null,
+            matchedOptions = Array.Empty<string>(),
+            compileError = ex.Message,
+        }, jsonOptions, statusCode: 500);
+    }
 });
 
 

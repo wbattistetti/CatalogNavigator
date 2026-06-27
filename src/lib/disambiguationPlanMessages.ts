@@ -16,6 +16,10 @@ import type { TokenCategory } from './dictionaryTree';
 import { deriveDisambiguationParents, type DisambiguationContextVariant, type DisambiguationParentInfo } from './disambiguationParents';
 import { defaultNoMatchReplies } from './messageAssembly';
 import { compileTurnAnswerGrammar } from './turnAnswerGrammar';
+import {
+  compileCombinatorialAnswerGrammar,
+  shouldUseCombinatorialAnswerGrammar,
+} from './combinatorialAnswerGrammar';
 import { AGE_YEARS_QUESTION } from './constraintValidation';
 import { normalizeTestPhrases } from './disambiguationTestPhrases';
 
@@ -93,10 +97,61 @@ export function formatTechnicalOptions(options: string[]): string {
 /** Compiles turn-scoped answer grammar from plan option tokens. */
 export function compileDisambiguationAnswerGrammar(options: string[]) {
   try {
+    if (shouldUseCombinatorialAnswerGrammar(options)) {
+      return compileCombinatorialAnswerGrammar(options);
+    }
     return compileTurnAnswerGrammar(options);
   } catch {
     return null;
   }
+}
+
+export interface RegenerateAnswerGrammarsStats {
+  total: number;
+  regenerated: number;
+  skipped: number;
+}
+
+/**
+ * Recompiles answer grammars for all non–ask_age rows (combinatorial when applicable).
+ * Resets graph mode to text and clears saved grammar graphs.
+ */
+export function regenerateDisambiguationAnswerGrammars(
+  rows: readonly DisambiguationEditorRow[],
+): { rows: DisambiguationEditorRow[]; stats: RegenerateAnswerGrammarsStats } {
+  let regenerated = 0;
+  let skipped = 0;
+
+  const nextRows = rows.map((row) => {
+    if (row.style === 'ask_age') {
+      skipped += 1;
+      return row;
+    }
+
+    const grammar = compileDisambiguationAnswerGrammar(row.options ?? []);
+    if (!grammar?.regex?.trim()) {
+      skipped += 1;
+      return {
+        ...row,
+        answer_grammar: null,
+        answer_grammar_graph: null,
+        answer_grammar_mode: 'text' as const,
+      };
+    }
+
+    regenerated += 1;
+    return {
+      ...row,
+      answer_grammar: grammar,
+      answer_grammar_graph: null,
+      answer_grammar_mode: 'text' as const,
+    };
+  });
+
+  return {
+    rows: nextRows,
+    stats: { total: rows.length, regenerated, skipped },
+  };
 }
 
 export function formatAcquiredContext(acquired: Record<string, string>): string {

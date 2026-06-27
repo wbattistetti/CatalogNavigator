@@ -5,6 +5,8 @@
 export interface GrammarEntry {
   regex: string;
   mappings: Record<string, string>;
+  /** When true, mappings are atomic values matched independently and combined by the engine. */
+  combinatorial?: boolean;
 }
 
 /** Which inline grammar editor is open: node, category recognition, or question-answer routing. */
