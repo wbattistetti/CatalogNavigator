@@ -17,8 +17,15 @@ import {
   useDictionaryCatalog,
   useDictionarySessionActions,
   useDocumentEditorDictionaryNav,
+  useDocumentEditorController,
 } from '../document-editor/DocumentEditorContext';
 import { useDictionarySession } from '../../hooks/useDictionarySession';
+import {
+  canLoadCategoryFromDocument,
+  extractDistinctColumnValues,
+  importableDocumentColumns,
+  loadTokensFromColumnIntoCategory,
+} from '../../lib/loadCategoryFromDocumentColumn';
 export const DictionaryEditorView = memo(function DictionaryEditorView({ dictionaryId }: { dictionaryId: string }) {
   const catalog = useDictionaryCatalog();
   const { setSessionTokens, setSessionCategories } = useDictionarySessionActions();
@@ -30,6 +37,7 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
   } = useDocumentEditorDictionaryNav();
   const meta = catalog.getDictionaryMeta(dictionaryId);
   const session = useDictionarySession(dictionaryId);
+  const { content, doc } = useDocumentEditorController();
 
   const [grammarPanelOpen, setGrammarPanelOpen] = useState(false);
   const [grammarEditCategoryId, setGrammarEditCategoryId] = useState<string | null>(null);
@@ -50,6 +58,39 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
   const tokens = session?.tokens ?? [];
   const categories = session?.categories ?? [];
 
+  const handleLayoutChange = useCallback((nextTokens: typeof tokens, nextCategories: typeof categories) => {
+    const synced = reconcileCategoryGrammarsWithTokens(nextCategories, nextTokens);
+    setSessionTokens(dictionaryId, nextTokens);
+    setSessionCategories(dictionaryId, synced);
+  }, [setSessionTokens, setSessionCategories, dictionaryId]);
+
+  const handleDocumentColumnImport = useCallback((categoryId: string, columnName: string) => {
+    const tabular = content.tabular;
+    if (!tabular) return;
+
+    const values = extractDistinctColumnValues(tabular, columnName);
+    if (values.length === 0) return;
+
+    const result = loadTokensFromColumnIntoCategory(tokens, categories, categoryId, values);
+    handleLayoutChange(result.tokens, result.categories);
+  }, [content.tabular, tokens, categories, handleLayoutChange]);
+
+  const documentColumnImportProps = useMemo(() => {
+    const tabular = content.tabular;
+    const columnRoles = doc.column_roles ?? {};
+    if (!canLoadCategoryFromDocument(tabular, columnRoles)) return undefined;
+
+    const columns = importableDocumentColumns(tabular!.headers, columnRoles);
+    if (columns.length === 0) return undefined;
+
+    return {
+      columns,
+      countValuesInColumn: (columnName: string) =>
+        extractDistinctColumnValues(tabular!, columnName).length,
+      onImport: handleDocumentColumnImport,
+    };
+  }, [content.tabular, doc.column_roles, handleDocumentColumnImport]);
+
   const focusTokenText = useMemo(
     () => (dictionaryTreeFocus?.dictionaryId === dictionaryId
       ? dictionaryTreeFocus.tokenText
@@ -59,12 +100,6 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
 
   const aliasPickActive = dictionaryAliasPick?.dictionaryId === dictionaryId;
   const aliasPickPhrase = aliasPickActive ? dictionaryAliasPick?.normalizedPhrase ?? null : null;
-
-  const handleLayoutChange = useCallback((nextTokens: typeof tokens, nextCategories: typeof categories) => {
-    const synced = reconcileCategoryGrammarsWithTokens(nextCategories, nextTokens);
-    setSessionTokens(dictionaryId, nextTokens);
-    setSessionCategories(dictionaryId, synced);
-  }, [setSessionTokens, setSessionCategories, dictionaryId]);
 
   const handleTokensChange = useCallback((next: typeof tokens) => {
     const synced = reconcileCategoryGrammarsWithTokens(categories, next);
@@ -195,6 +230,7 @@ export const DictionaryEditorView = memo(function DictionaryEditorView({ diction
             onMoveCategoryToLibrary={
               meta.scope === 'project' ? handleMoveCategoryToLibrary : undefined
             }
+            documentColumnImport={documentColumnImportProps}
           />
         </div>
         {moveCategory && (

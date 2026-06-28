@@ -43,6 +43,18 @@ Public Module AgentTurnEngine
         Return ProcessAgentTurn(bundle, conversation, turn)
     End Function
 
+    ''' <summary>
+    ''' Advances dialog from session state with pre-loaded AcquiredConcepts (no utterance / external slots).
+    ''' Used when a prior dialog injects category values before the first user turn.
+    ''' </summary>
+    Public Function ProcessBootstrapTurn(
+        bundle As Models.AgentBundle,
+        conversation As Models.AgentSessionState
+    ) As Models.AgentTurnResult
+        If conversation Is Nothing Then conversation = InitAgentSession()
+        Return ProcessAgentTurn(bundle, conversation, New Models.AgentTurnInput())
+    End Function
+
     Private Function ReconcilePendingFromTurn(
         conversation As Models.AgentSessionState,
         turn As Models.AgentTurnInput

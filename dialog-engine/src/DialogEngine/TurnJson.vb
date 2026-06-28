@@ -41,6 +41,10 @@ Public Module TurnJson
                 ToList()
         End If
 
+        If state.ExactAttributoCategories Is Nothing Then
+            state.ExactAttributoCategories = New List(Of String)()
+        End If
+
         Return state
     End Function
 

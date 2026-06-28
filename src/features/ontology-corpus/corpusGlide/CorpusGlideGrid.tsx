@@ -9,14 +9,17 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  useState,
 } from 'react';
 import {
   DataEditor,
   GridCellKind,
   type CustomCell,
+  type CustomRenderer,
   type DataEditorRef,
   type GridCell,
   type GridColumn,
+  type GridMouseEventArgs,
   type Item,
   type Rectangle,
 } from '@glideapps/glide-data-grid';
@@ -30,6 +33,7 @@ import { TABULAR_GLIDE_THEME } from '../../../components/DocumentViewer/tabularG
 import {
   GLIDE_CHIP_CELL,
   buildGlideChipCell,
+  drawGlideChipPills,
   glideChipRenderer,
   isGlideChipCell,
 } from '../../../lib/glideChipRenderer';
@@ -42,11 +46,13 @@ import {
 import type { CorpusRow } from '../corpusRowModel';
 import type { CorpusGlideRow } from './buildCorpusGlideRows';
 import { CorpusGlideDescriptionEditor } from './CorpusGlideDescriptionEditor';
-import { CorpusGlideSegmentationEditor } from './CorpusGlideSegmentationEditor';
+import { CorpusGlideSegmentationHitLayer } from './CorpusGlideSegmentationEditor';
 import {
   corpusGlideColumnWidths,
   estimateCorpusGlideRowHeight,
 } from '../../../lib/glideWrapLayout';
+import type { GlideChipCellData } from '../../../lib/glideChipRenderer';
+import { resolveGlideCellScreenRect, type GlideCellScreenRect } from './resolveGlideCellScreenRect';
 
 const CORPUS_GLIDE_MIN_ROW_HEIGHT = 48;
 
@@ -62,6 +68,12 @@ const CORPUS_COLUMNS: GridColumn[] = [
 
 export interface CorpusGlideGridHandle {
   scrollToTop: () => void;
+}
+
+interface SegmentationHitState {
+  displayRow: number;
+  chipData: GlideChipCellData;
+  anchor: GlideCellScreenRect;
 }
 
 export interface CorpusGlideGridProps {
@@ -80,6 +92,10 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
 ) {
   const { containerRef, size } = useContainerSize();
   const gridRef = useRef<DataEditorRef>(null);
+  const [segmentationHit, setSegmentationHit] = useState<SegmentationHitState | null>(null);
+  const segmentationHitRef = useRef<SegmentationHitState | null>(null);
+  const prevSegmentationHitRef = useRef<SegmentationHitState | null>(null);
+  segmentationHitRef.current = segmentationHit;
 
   const visibleRowsRef = useRef(visibleRows);
   visibleRowsRef.current = visibleRows;
@@ -134,7 +150,7 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
 
     if (col === CORPUS_GLIDE_COL_SEGMENTATION) {
       const paints = glideRow?.segPaints ?? [];
-      const unmatched = glideRow?.segmentation.unmatched ?? [];
+      const unmatched = glideRow?.segmentation?.unmatched ?? [];
       return buildGlideChipCell({
         type: GLIDE_CHIP_CELL,
         sourceText: text,
@@ -152,16 +168,8 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
     if (isGlideDescCell(custom)) {
       return { editor: CorpusGlideDescriptionEditor, disablePadding: true };
     }
-    if (isGlideChipCell(custom)) {
-      return { editor: CorpusGlideSegmentationEditor, disablePadding: true };
-    }
     return undefined;
   }, []);
-
-  const customRenderers = useMemo(
-    () => [glideDescriptionRenderer, glideChipRenderer],
-    [],
-  );
 
   const gridReady = size.width > 0 && size.height > 0;
   const columnWidths = useMemo(
@@ -179,7 +187,7 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
         corpusRow.text.length > 0 ? [{ kind: 'text', text: corpusRow.text }] : []
       ),
       segmentTexts: glideRow?.segPaints.map((p) => p.text) ?? [],
-      unmatchedCount: glideRow?.segmentation.unmatched.length ?? 0,
+      unmatchedCount: glideRow?.segmentation?.unmatched.length ?? 0,
       descriptionColWidth: columnWidths.description,
       segmentationColWidth: columnWidths.segmentation,
       minHeight: CORPUS_GLIDE_MIN_ROW_HEIGHT,
@@ -196,7 +204,93 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
     });
   }, [gridReady, size.width, size.height, visibleRows.length]);
 
+  const closeSegmentationHit = useCallback(() => {
+    setSegmentationHit(null);
+  }, []);
+
+  const openSegmentationHit = useCallback((cell: Item, eventBounds?: Rectangle) => {
+    const [col, row] = cell;
+    if (col !== CORPUS_GLIDE_COL_SEGMENTATION) return;
+
+    const corpusRow = visibleRowsRef.current[row];
+    if (!corpusRow) return;
+
+    const glideRow = glideRowMapRef.current.get(corpusRow.rowIndex);
+    const next: SegmentationHitState = {
+      displayRow: row,
+      chipData: {
+        type: GLIDE_CHIP_CELL,
+        sourceText: corpusRow.text,
+        segments: glideRow?.segPaints ?? [],
+        unmatched: glideRow?.segmentation?.unmatched ?? [],
+      },
+      anchor: resolveGlideCellScreenRect(
+        gridRef,
+        cell,
+        eventBounds ?? { x: 0, y: 0, width: 0, height: 0 },
+        containerRef.current,
+      ),
+    };
+
+    setSegmentationHit((prev) => {
+      if (
+        prev?.displayRow === next.displayRow
+        && prev.chipData.sourceText === next.chipData.sourceText
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [containerRef]);
+
+  const segmentationChipRenderer = useMemo((): CustomRenderer<CustomCell> => ({
+    ...glideChipRenderer,
+    draw: (args, cell) => {
+      if (!isGlideChipCell(cell as CustomCell)) return;
+      const hit = segmentationHitRef.current;
+      if (hit?.displayRow === args.row) {
+        const { ctx, rect, theme } = args;
+        ctx.fillStyle = theme.bgCell;
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+        return;
+      }
+      drawGlideChipPills(args, (cell as CustomCell<GlideChipCellData>).data);
+    },
+    onClick: (args) => {
+      if (!isGlideChipCell(args.cell as CustomCell)) return;
+      args.preventDefault();
+      openSegmentationHit(args.location, args.bounds);
+    },
+  }), [openSegmentationHit]);
+
+  const onItemHovered = useCallback((args: GridMouseEventArgs) => {
+    if (args.kind !== 'cell') return;
+    const [col] = args.location;
+    if (col !== CORPUS_GLIDE_COL_SEGMENTATION) {
+      setSegmentationHit(null);
+      return;
+    }
+    openSegmentationHit(args.location, args.bounds);
+  }, [openSegmentationHit]);
+
+  useEffect(() => {
+    const prev = prevSegmentationHitRef.current;
+    prevSegmentationHitRef.current = segmentationHit;
+    const cells: Item[] = [];
+    if (prev) cells.push([CORPUS_GLIDE_COL_SEGMENTATION, prev.displayRow]);
+    if (segmentationHit) cells.push([CORPUS_GLIDE_COL_SEGMENTATION, segmentationHit.displayRow]);
+    if (cells.length > 0) {
+      gridRef.current?.updateCells(cells.map(([col, row]) => ({ cell: [col, row] })));
+    }
+  }, [segmentationHit]);
+
+  const customRenderers = useMemo(
+    () => [glideDescriptionRenderer, segmentationChipRenderer],
+    [segmentationChipRenderer],
+  );
+
   const onVisibleRegionChanged = useCallback((range: Rectangle) => {
+    setSegmentationHit(null);
     tabularGlideLogScrollRegion({
       rows: visibleRowsRef.current.length,
       cols: CORPUS_COLUMNS.length,
@@ -205,12 +299,16 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
     });
   }, []);
 
+  const handleGridClick = useCallback((e: React.MouseEvent) => {
+    onClearSelectionClick(e);
+  }, [onClearSelectionClick]);
+
   return (
     <div
       ref={containerRef}
       className="tabular-glide-grid tabular-glide-bench flex-1 min-h-0 min-w-0"
       style={{ height: '100%', width: '100%' }}
-      onClick={onClearSelectionClick}
+      onClick={handleGridClick}
     >
       {gridReady ? (
         <DataEditor
@@ -220,6 +318,7 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
           getCellContent={getCellContent}
           provideEditor={provideEditor}
           customRenderers={customRenderers}
+          onItemHovered={onItemHovered}
           onVisibleRegionChanged={onVisibleRegionChanged}
           getRowHeight={getRowHeight}
           rowHeight={CORPUS_GLIDE_MIN_ROW_HEIGHT}
@@ -227,6 +326,7 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
           width={size.width}
           height={size.height}
           theme={TABULAR_GLIDE_THEME}
+          drawFocusRing={false}
           smoothScrollX
           smoothScrollY
           experimental={{ scrollbarWidthOverride: 16 }}
@@ -235,6 +335,13 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
         <div className="flex h-full items-center justify-center font-mono text-xs text-emerald-400/35">
           Caricamento griglia…
         </div>
+      )}
+      {segmentationHit && (
+        <CorpusGlideSegmentationHitLayer
+          chipData={segmentationHit.chipData}
+          anchor={segmentationHit.anchor}
+          onClose={closeSegmentationHit}
+        />
       )}
     </div>
   );

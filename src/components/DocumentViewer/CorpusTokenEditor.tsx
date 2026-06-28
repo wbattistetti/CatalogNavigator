@@ -80,7 +80,8 @@ export function CorpusTokenEditor({
 
   const cacheReady = segmentation.progress.ready;
   const segmentationActive = segmentation.building;
-  const hasSegmentation = cacheReady || segmentation.progress.processed > 0;
+  const hasDisplayableSegmentation = cacheReady || segmentation.cache.size > 0;
+  const hasSegmentation = hasDisplayableSegmentation || segmentation.progress.processed > 0;
   const refreshLabel = hasSegmentation ? 'Ricrea ontologia' : 'Crea ontologia';
 
   useEffect(() => {
@@ -98,7 +99,7 @@ export function CorpusTokenEditor({
     liveLoadedRefs,
     projectDictionaryId,
     categories,
-    cacheReady,
+    hasDisplayableSegmentation,
   );
 
   const overlayValue = useMemo((): CorpusGlideOverlayContextValue => ({
@@ -153,7 +154,7 @@ export function CorpusTokenEditor({
     }
   };
 
-  const showGrid = cacheReady && !glideRowsBuilding && glideRowMap.size > 0;
+  const showGrid = hasDisplayableSegmentation && visibleRows.length > 0;
   /** Only block the grid while corpus rows are being segmented — not during background path sync. */
   const refreshInProgress = segmentationActive && !cacheReady;
 
@@ -186,7 +187,7 @@ export function CorpusTokenEditor({
       );
     }
 
-    if (!cacheReady) {
+    if (!hasDisplayableSegmentation) {
       const partialSaved = segmentation.progress.processed > 0
         && segmentation.progress.total > segmentation.progress.processed;
 
@@ -260,27 +261,27 @@ export function CorpusTokenEditor({
       );
     }
 
-    if (glideRowsBuilding) {
-      const glidePct = glideBuildProgress.total > 0
-        ? Math.round((glideBuildProgress.processed / glideBuildProgress.total) * 100)
-        : 0;
-      return (
-        <div className="flex-1 flex flex-col items-center justify-center gap-2 px-4 py-8 font-mono text-xs text-emerald-400/45">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>
-            Preparazione griglia…
-            {glideBuildProgress.total > 0
-              ? ` ${glideBuildProgress.processed.toLocaleString('it-IT')} / ${glideBuildProgress.total.toLocaleString('it-IT')}`
-              : ''}
-          </span>
-          {glideBuildProgress.total > 0 && (
-            <span className="text-emerald-400/30 tabular-nums">{glidePct}%</span>
-          )}
-        </div>
-      );
-    }
-
     if (!showGrid) {
+      if (glideRowsBuilding) {
+        const glidePct = glideBuildProgress.total > 0
+          ? Math.round((glideBuildProgress.processed / glideBuildProgress.total) * 100)
+          : 0;
+        return (
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 px-4 py-8 font-mono text-xs text-emerald-400/45">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>
+              Preparazione griglia…
+              {glideBuildProgress.total > 0
+                ? ` ${glideBuildProgress.processed.toLocaleString('it-IT')} / ${glideBuildProgress.total.toLocaleString('it-IT')}`
+                : ''}
+            </span>
+            {glideBuildProgress.total > 0 && (
+              <span className="text-emerald-400/30 tabular-nums">{glidePct}%</span>
+            )}
+          </div>
+        );
+      }
+
       return (
         <div className="flex-1 flex items-center justify-center px-4 py-8 font-mono text-xs text-emerald-400/35">
           Nessuna riga da mostrare.

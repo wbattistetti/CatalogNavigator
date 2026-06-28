@@ -121,9 +121,7 @@ export function buildGlideChipCell(data: GlideChipCellData): CustomCell<GlideChi
     kind: GridCellKind.Custom,
     data,
     copyData: copy,
-    allowOverlay: true,
+    allowOverlay: false,
     readonly: true,
-    allowWrapping: true,
-    activationBehaviorOverride: 'single-click',
   };
 }

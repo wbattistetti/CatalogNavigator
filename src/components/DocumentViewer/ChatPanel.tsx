@@ -37,10 +37,15 @@ import {
   buildAnswerContextFromPending,
   describePendingSessionMismatch,
 } from '../../lib/pendingDisambiguationAnswerContext';
-import { pingVbEngine, postVbTextTurn, type VbTextTurnResponse } from '../../lib/vbTestEngineClient';
+import { pingVbEngine, postVbBootstrapTurn, postVbTextTurn, type VbTextTurnResponse } from '../../lib/vbTestEngineClient';
 import type { SavedChatMessageInput } from '../../lib/savedChatTests';
 import { resolveBubbleDisambiguationSignature } from '../../lib/resolveBubbleDisambiguationSignature';
 import type { OpenDisambiguationFromChatOptions, ChatTurnReplayRequest } from '../../lib/grammarTuningFromChat';
+import {
+  buildSessionFromInjectedPairs,
+  type InjectedConceptPair,
+} from '../../lib/injectedConcepts';
+import { InjectedConceptsToolbar } from './InjectedConceptsToolbar';
 import {
   inferExpectedOptionFromUserText,
   isUserTurnRecognitionFailure,
@@ -142,6 +147,49 @@ function resolveDisambiguationOptions(result: VbTextTurnResponse): {
   if (options.length === 0) return {};
   const categoryName = result.instruction?.categoryName?.trim();
   return { categoryName: categoryName || undefined, options };
+}
+
+function buildAgentMessageFromVbResult(
+  result: VbTextTurnResponse,
+  agentBundle: AgentBundle,
+  id: string,
+): ChatMessage | null {
+  const spoken = result.spokenHint?.trim() ?? '';
+  if (!spoken) return null;
+
+  const selectedPath = result.selectedPath ?? result.nextState?.selectedPath ?? null;
+  const isConfirm = result.instruction?.action === 'confirm' && !!selectedPath;
+  const { hintSource, editablePlanField } = resolveHintMeta(result);
+  const { categoryName: disambiguationCategory, options: disambiguationOptions } =
+    resolveDisambiguationOptions(result);
+  const disambiguationParentInfo = disambiguationCategory
+    && (result.candidatePaths?.length ?? 0) > 0
+    ? deriveDisambiguationParents(
+      disambiguationCategory,
+      result.candidatePaths ?? [],
+      agentBundle.dictionary.categories ?? [],
+    )
+    : undefined;
+  const disambiguationCandidatePaths = (result.candidatePaths ?? [])
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  return {
+    id,
+    role: 'agent',
+    text: spoken,
+    isResult: isConfirm,
+    hintSource,
+    disambiguationSignature: result.disambiguationSignature,
+    disambiguationCategory,
+    disambiguationOptions,
+    disambiguationParentInfo,
+    disambiguationCandidatePaths: disambiguationCandidatePaths.length > 0
+      ? disambiguationCandidatePaths
+      : undefined,
+    editablePlanField,
+    turnDebug: buildChatTurnDebug(result, agentBundle),
+  };
 }
 
 function DisambiguationNavButtons({
@@ -1028,6 +1076,7 @@ export function ChatPanel({
   ));
   const [grammarTuningAddedIds, setGrammarTuningAddedIds] = useState<Set<string>>(() => new Set());
   const [vbSession, setVbSession] = useState<AgentSessionState | null>(null);
+  const [injectedConcepts, setInjectedConcepts] = useState<InjectedConceptPair[]>([]);
   const [vbOnline, setVbOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState('');
@@ -1051,6 +1100,39 @@ export function ChatPanel({
   }, []);
 
   const disambiguationPlan = agentBundle?.analysis.disambiguation_plan ?? null;
+  const dictionaryCategories = useMemo(
+    () => agentBundle?.dictionary.categories ?? [],
+    [agentBundle?.dictionary.categories],
+  );
+  const hasUserTurns = state.messages.some((m) => m.role === 'user');
+  const conceptsToolbarLocked = hasUserTurns || loading || state.selectedPath !== null;
+
+  const runBootstrap = useCallback(async (pairs: InjectedConceptPair[]) => {
+    if (!agentBundle || pairs.length === 0) return;
+    setLoading(true);
+    try {
+      const preload = buildSessionFromInjectedPairs(pairs, dictionaryCategories);
+      const result = await postVbBootstrapTurn({ bundle: agentBundle, state: preload });
+      const nextState = result.nextState ?? preload;
+      setVbSession(nextState);
+      const agentMsg = buildAgentMessageFromVbResult(result, agentBundle, nextMsgId());
+      setState({
+        messages: agentMsg ? [agentMsg] : [],
+        selectedPath: result.selectedPath ?? nextState.selectedPath ?? null,
+        candidatePaths: result.candidatePaths ?? null,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setVbSession(null);
+      setState({
+        messages: [{ id: nextMsgId(), role: 'agent', text: `Errore bootstrap VB: ${message}` }],
+        selectedPath: null,
+        candidatePaths: null,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [agentBundle, dictionaryCategories]);
 
   const focusInput = useCallback(() => {
     if (inputRef.current && !state.selectedPath) {
@@ -1059,12 +1141,17 @@ export function ChatPanel({
   }, [state.selectedPath]);
 
   const restart = useCallback(() => {
-    setVbSession(null);
-    if (agentBundle) setState(initChatState(agentBundle));
     setInput('');
     setSaveFlash(false);
     setGrammarTuningAddedIds(new Set());
-  }, [agentBundle]);
+    if (agentBundle && injectedConcepts.length > 0) {
+      setVbSession(null);
+      void runBootstrap(injectedConcepts);
+      return;
+    }
+    setVbSession(null);
+    if (agentBundle) setState(initChatState(agentBundle));
+  }, [agentBundle, injectedConcepts, runBootstrap]);
 
   const saveChat = useCallback(() => {
     if (!onSaveChat || state.messages.length === 0) return;
@@ -1417,9 +1504,23 @@ export function ChatPanel({
     const resetKey = buildChatSessionResetKey(agentBundle);
     if (sessionResetKeyRef.current === resetKey) return;
     sessionResetKeyRef.current = resetKey;
+    setInjectedConcepts([]);
     setVbSession(null);
     setState(initChatState(agentBundle));
   }, [agentBundle]);
+
+  useEffect(() => {
+    if (!agentBundle) return;
+    if (messagesRef.current.some((m) => m.role === 'user')) return;
+
+    if (injectedConcepts.length === 0) {
+      setVbSession(null);
+      setState(initChatState(agentBundle));
+      return;
+    }
+
+    void runBootstrap(injectedConcepts);
+  }, [agentBundle, injectedConcepts, runBootstrap]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1495,6 +1596,13 @@ export function ChatPanel({
           </p>
         </div>
       )}
+
+      <InjectedConceptsToolbar
+        categories={dictionaryCategories}
+        pairs={injectedConcepts}
+        onPairsChange={setInjectedConcepts}
+        disabled={conceptsToolbarLocked}
+      />
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-3">
         <ChatMessageList

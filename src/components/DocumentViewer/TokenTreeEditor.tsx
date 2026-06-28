@@ -50,10 +50,10 @@ import { useCorpusVirtualScroll } from '../../hooks/useCorpusVirtualScroll';
 import {
   TOKEN_DRAG_MIME,
   TOKEN_DRAG_PLAIN_PREFIX,
-  CATEGORY_DRAG_MIME,
   DRAG_THRESHOLD_PX,
   assignTokensToCategory,
   categoryIdAtPoint,
+  categoryReorderIndexAtPoint,
   formatDragGhostLabel,
   isTokenDragEvent,
   parseTokenDragPayload,
@@ -65,6 +65,7 @@ import {
   useDictionarySelectedSet,
   useDictionarySelectionActions,
 } from '../../features/document-editor/dictionarySelectionStore';
+import { CategoryLoadFromDocument } from '../../features/dictionaries/CategoryLoadFromDocument';
 
 export interface TokenTreeEditorProps {
   tokens: TokenEntry[];
@@ -90,6 +91,12 @@ export interface TokenTreeEditorProps {
   onFocusTokenHandled?: () => void;
   /** When set, project categories show a control to move the whole category to library. */
   onMoveCategoryToLibrary?: (categoryId: string, categoryName: string, tokenCount: number) => void;
+  /** Tabular document columns — enables "carica dal documento" on empty named categories. */
+  documentColumnImport?: {
+    columns: string[];
+    countValuesInColumn: (columnName: string) => number;
+    onImport: (categoryId: string, columnName: string) => void;
+  };
 }
 
 const TOKEN_ROW_HEIGHT_PX = 30;
@@ -338,6 +345,15 @@ function TokenRow({
 
 const MemoTokenRow = memo(TokenRow);
 
+function CategoryDropIndicator() {
+  return (
+    <div
+      className="mx-1 my-0.5 h-1 rounded-full bg-amber-400/90 shadow-[0_0_10px_rgba(251,191,36,0.55)]"
+      aria-hidden
+    />
+  );
+}
+
 function CategoryRow({
   id,
   name,
@@ -351,7 +367,8 @@ function CategoryRow({
   active,
   dropHighlight,
   grammarEditActive,
-  draggable,
+  dragging,
+  reorderable,
   onSelect,
   onGrammarEdit,
   onSettingsChange,
@@ -361,11 +378,10 @@ function CategoryRow({
   onMoveDown,
   canMoveUp,
   canMoveDown,
-  onDragStart,
+  onReorderPointerDown,
   onDragOver,
   onDragLeave,
   onDrop,
-  onDragEnd,
 }: {
   id: string;
   name: string;
@@ -379,7 +395,8 @@ function CategoryRow({
   active: boolean;
   dropHighlight: boolean;
   grammarEditActive?: boolean;
-  draggable: boolean;
+  dragging?: boolean;
+  reorderable: boolean;
   onSelect: () => void;
   onGrammarEdit?: () => void;
   onSettingsChange?: (patch: CategorySettingsPatch) => void;
@@ -389,11 +406,10 @@ function CategoryRow({
   onMoveDown?: () => void;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
-  onDragStart: (e: React.DragEvent) => void;
+  onReorderPointerDown?: (e: React.MouseEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: () => void;
   onDrop: (e: React.DragEvent) => void;
-  onDragEnd: () => void;
 }) {
   const isNoCategory = id === NO_CATEGORY_SENTINEL;
   const type = normalizeCategoryType(categoryType);
@@ -417,12 +433,10 @@ function CategoryRow({
   return (
     <div
       data-category-id={id}
-      draggable={draggable}
-      onDragStart={draggable ? onDragStart : undefined}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      onDragEnd={onDragEnd}
+      onMouseDown={reorderable ? onReorderPointerDown : undefined}
       onClick={onSelect}
       onDoubleClick={
         onGrammarEdit
@@ -433,21 +447,23 @@ function CategoryRow({
           : undefined
       }
       className={`group flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-        grammarEditActive
+        dragging
+          ? 'opacity-35'
+          : grammarEditActive
           ? 'bg-sky-400/20 ring-1 ring-sky-400/50'
           : active
           ? 'ring-1'
           : dropHighlight
             ? 'bg-sky-400/20 ring-1 ring-sky-400/50'
             : 'hover:bg-[#0f1a12]'
-      }`}
-      style={!grammarEditActive && active ? {
+      } ${reorderable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      style={!grammarEditActive && active && !dragging ? {
         backgroundColor: `${iconColor}24`,
         boxShadow: `inset 0 0 0 1px ${iconColor}66`,
       } : undefined}
     >
-      {draggable && (
-        <GripVertical className="w-2.5 h-2.5 flex-shrink-0 text-emerald-400/30 opacity-0 group-hover:opacity-100" />
+      {reorderable && (
+        <GripVertical className="w-2.5 h-2.5 flex-shrink-0 text-emerald-400/45 opacity-0 group-hover:opacity-100" />
       )}
       <DictionaryIcon
         iconKey={iconKey}
@@ -552,9 +568,9 @@ function CategoryRow({
           </div>
         )}
       </div>
-      {((draggable && (onMoveUp || onMoveDown)) || onMoveToLibrary || onDelete) && (
+      {((reorderable && (onMoveUp || onMoveDown)) || onMoveToLibrary || onDelete) && (
       <div className="flex items-center flex-shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-      {draggable && (onMoveUp || onMoveDown) && (
+      {reorderable && (onMoveUp || onMoveDown) && (
         <div className="flex items-center flex-shrink-0">
           {onMoveUp && (
             <button
@@ -640,6 +656,7 @@ export function TokenTreeEditor({
   focusTokenText = null,
   onFocusTokenHandled,
   onMoveCategoryToLibrary,
+  documentColumnImport,
 }: TokenTreeEditorProps) {
   const selected = useDictionarySelectedSet();
   const dictionaryCategoryDropTarget = useDictionaryDropTarget();
@@ -650,9 +667,11 @@ export function TokenTreeEditor({
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newTokenName, setNewTokenName] = useState('');
   const [newTokenFeedback, setNewTokenFeedback] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+  const [columnImportFeedback, setColumnImportFeedback] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
   const pendingActiveCategoryIdRef = useRef<string | null>(null);
   const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
   const [categoryDropIndex, setCategoryDropIndex] = useState<number | null>(null);
+  const [draggingCategoryId, setDraggingCategoryId] = useState<string | null>(null);
   const [tokenDragActive, setTokenDragActive] = useState(false);
   const [splittingTokenText, setSplittingTokenText] = useState<string | null>(null);
   const [splitError, setSplitError] = useState<string | null>(null);
@@ -660,6 +679,8 @@ export function TokenTreeEditor({
   const [conceptEditLine, setConceptEditLine] = useState('');
   const [conceptEditError, setConceptEditError] = useState<string | null>(null);
   const dragGhostRef = useRef<HTMLDivElement>(null);
+  const categoriesListRef = useRef<HTMLDivElement>(null);
+  const suppressCategoryClickRef = useRef(false);
   const tokenListRef = useRef<HTMLDivElement>(null);
   const splitLabelRef = useRef<HTMLSpanElement>(null);
   const categoriesSplitRef = useRef<HTMLDivElement>(null);
@@ -730,6 +751,7 @@ export function TokenTreeEditor({
     setSplittingTokenText(null);
     setSplitError(null);
     setNewTokenFeedback(null);
+    setColumnImportFeedback(null);
   }, [activeCategoryKey]);
 
   useEffect(() => {
@@ -1033,44 +1055,73 @@ export function TokenTreeEditor({
     onCategoriesChange(reorderCategory(categories, categoryId, direction));
   }, [categories, onCategoriesChange]);
 
-  const handleCategoryDragStart = useCallback((
-    e: React.DragEvent,
+  const startCategoryPointerDrag = useCallback((
+    e: React.MouseEvent,
     categoryId: string,
     categoryName: string,
   ) => {
-    e.stopPropagation();
-    e.dataTransfer.setData(CATEGORY_DRAG_MIME, categoryId);
-    e.dataTransfer.setData('text/plain', `${CATEGORY_DRAG_MIME}:${categoryId}`);
-    e.dataTransfer.effectAllowed = 'move';
-    const ghost = prepareDragImage(categoryName);
-    if (ghost) {
-      e.dataTransfer.setDragImage(ghost, 12, 16);
-    }
-  }, [prepareDragImage]);
+    if ((e.target as HTMLElement).closest('button, input, select, a')) return;
+    if (e.button !== 0) return;
+
+    const listRoot = categoriesListRef.current;
+    if (!listRoot) return;
+
+    const originX = e.clientX;
+    const originY = e.clientY;
+    let active = false;
+
+    const updateDropIndex = (clientY: number) => {
+      setCategoryDropIndex(categoryReorderIndexAtPoint(clientY, listRoot));
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - originX, ev.clientY - originY) < DRAG_THRESHOLD_PX) return;
+        active = true;
+        suppressCategoryClickRef.current = true;
+        document.body.style.userSelect = 'none';
+        setDraggingCategoryId(categoryId);
+        showDragGhost(categoryName, ev.clientX, ev.clientY);
+        updateDropIndex(ev.clientY);
+      } else {
+        showDragGhost(categoryName, ev.clientX, ev.clientY);
+        updateDropIndex(ev.clientY);
+      }
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      if (active) {
+        const insertionIndex = categoryReorderIndexAtPoint(ev.clientY, listRoot);
+        onCategoriesChange(reorderCategoryToIndex(categories, categoryId, insertionIndex));
+      } else {
+        suppressCategoryClickRef.current = false;
+      }
+      setDraggingCategoryId(null);
+      setCategoryDropIndex(null);
+      hideDragGhost();
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [categories, hideDragGhost, onCategoriesChange, showDragGhost]);
 
   const handleCategoryDragOver = useCallback((
     e: React.DragEvent,
     categoryKey: string,
-    index?: number,
   ) => {
-    const isToken = isTokenDragEvent(e);
-    const isCategory = e.dataTransfer.types.includes(CATEGORY_DRAG_MIME);
-    if (!isToken && !isCategory) return;
+    if (!isTokenDragEvent(e)) return;
 
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-
-    if (isToken) {
-      setDropTargetCategory(categoryKey);
-      setDropTarget(categoryKey);
-      setCategoryDropIndex(null);
-    } else if (isCategory && typeof index === 'number') {
-      setCategoryDropIndex(index);
-      setDropTargetCategory(null);
-    }
+    setDropTargetCategory(categoryKey);
+    setDropTarget(categoryKey);
+    setCategoryDropIndex(null);
   }, [setDropTarget]);
 
-  const handleCategoryDrop = useCallback((e: React.DragEvent, categoryKey: string, index?: number) => {
+  const handleCategoryDrop = useCallback((e: React.DragEvent, categoryKey: string) => {
     e.preventDefault();
     setDropTargetCategory(null);
     setDropTarget(null);
@@ -1080,23 +1131,12 @@ export function TokenTreeEditor({
     if (texts) {
       moveTokensToTarget(categoryKey, texts);
       handleTokenDragEnd();
-      return;
     }
-
-    let draggedCategoryId = e.dataTransfer.getData(CATEGORY_DRAG_MIME);
-    if (!draggedCategoryId) {
-      const plain = e.dataTransfer.getData('text/plain');
-      if (plain.startsWith(`${CATEGORY_DRAG_MIME}:`)) {
-        draggedCategoryId = plain.slice(CATEGORY_DRAG_MIME.length + 1);
-      }
-    }
-    if (draggedCategoryId && typeof index === 'number') {
-      onCategoriesChange(reorderCategoryToIndex(categories, draggedCategoryId, index));
-    }
-  }, [categories, handleTokenDragEnd, moveTokensToTarget, onCategoriesChange, setDropTarget]);
+  }, [handleTokenDragEnd, moveTokensToTarget, setDropTarget]);
 
   const effectiveDropTarget = dropTargetCategory ?? dictionaryCategoryDropTarget;
   const anyTokenDragActive = tokenDragActive || dictionaryTokenDragActive;
+  const categoryReorderActive = draggingCategoryId !== null;
 
   const cancelTokenSplit = useCallback(() => {
     setSplittingTokenText(null);
@@ -1104,6 +1144,10 @@ export function TokenTreeEditor({
   }, []);
 
   const selectCategory = useCallback((categoryKey: string) => {
+    if (suppressCategoryClickRef.current) {
+      suppressCategoryClickRef.current = false;
+      return;
+    }
     pendingActiveCategoryIdRef.current = null;
     setActiveCategoryKey(categoryKey);
     if (
@@ -1351,7 +1395,7 @@ export function TokenTreeEditor({
           <p className={`flex-shrink-0 px-2 py-1 ${TREE_LABEL} text-emerald-400/65 leading-snug`}>
             Trascina o usa ↑↓ · l&apos;ordine definisce la gerarchia ontologia
           </p>
-          <div className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5">
+          <div ref={categoriesListRef} className="flex-1 min-h-0 overflow-y-auto p-1 space-y-0.5">
             <CategoryRow
               id={NO_CATEGORY_SENTINEL}
               name="no category"
@@ -1360,18 +1404,16 @@ export function TokenTreeEditor({
               iconColor={NO_CATEGORY_ICON.iconColor}
               active={activeCategoryKey === NO_CATEGORY_SENTINEL}
               dropHighlight={effectiveDropTarget === NO_CATEGORY_SENTINEL}
-              draggable={false}
+              reorderable={false}
               onSelect={() => selectCategory(NO_CATEGORY_SENTINEL)}
               onDragOver={(e) => handleCategoryDragOver(e, NO_CATEGORY_SENTINEL)}
               onDragLeave={() => setDropTargetCategory(null)}
               onDrop={(e) => handleCategoryDrop(e, NO_CATEGORY_SENTINEL)}
-              onDragStart={() => {}}
-              onDragEnd={() => setDropTargetCategory(null)}
             />
             {sortedCategories.map((cat, index) => (
-              <div key={cat.id}>
-                {categoryDropIndex === index && (
-                  <div className="h-0.5 bg-amber-400/60 rounded mx-1 my-0.5" />
+              <div key={cat.id} data-category-reorder-id={cat.id}>
+                {categoryReorderActive && categoryDropIndex === index && (
+                  <CategoryDropIndicator />
                 )}
                 <CategoryRow
                   id={cat.id}
@@ -1386,7 +1428,8 @@ export function TokenTreeEditor({
                   active={activeCategoryKey === cat.id}
                   dropHighlight={effectiveDropTarget === cat.id}
                   grammarEditActive={grammarPanelOpen && grammarEditCategoryId === cat.id}
-                  draggable
+                  dragging={draggingCategoryId === cat.id}
+                  reorderable
                   onSelect={() => selectCategory(cat.id)}
                   onGrammarEdit={
                     grammarPanelOpen
@@ -1411,31 +1454,16 @@ export function TokenTreeEditor({
                   onMoveDown={() => handleMoveCategory(cat.id, 'down')}
                   canMoveUp={index > 0}
                   canMoveDown={index < sortedCategories.length - 1}
-                  onDragStart={(e) => handleCategoryDragStart(e, cat.id, cat.name)}
-                  onDragOver={(e) => handleCategoryDragOver(e, cat.id, index)}
-                  onDragLeave={() => {
-                    setDropTargetCategory(null);
-                    setCategoryDropIndex(null);
-                  }}
-                  onDrop={(e) => handleCategoryDrop(e, cat.id, index)}
-                  onDragEnd={() => {
-                    hideDragGhost();
-                    setDropTargetCategory(null);
-                    setCategoryDropIndex(null);
-                  }}
+                  onReorderPointerDown={(e) => startCategoryPointerDrag(e, cat.id, cat.name)}
+                  onDragOver={(e) => handleCategoryDragOver(e, cat.id)}
+                  onDragLeave={() => setDropTargetCategory(null)}
+                  onDrop={(e) => handleCategoryDrop(e, cat.id)}
                 />
               </div>
             ))}
-            <div
-              className="min-h-[0.75rem]"
-              onDragOver={(e) => handleCategoryDragOver(e, 'end', sortedCategories.length)}
-              onDragLeave={() => setCategoryDropIndex(null)}
-              onDrop={(e) => handleCategoryDrop(e, 'end', sortedCategories.length)}
-            >
-              {categoryDropIndex === sortedCategories.length && (
-                <div className="h-0.5 bg-amber-400/60 rounded mx-1 my-0.5" />
-              )}
-            </div>
+            {categoryReorderActive && categoryDropIndex === sortedCategories.length && (
+              <CategoryDropIndicator />
+            )}
           </div>
         </div>
 
@@ -1521,9 +1549,33 @@ export function TokenTreeEditor({
             onClick={handleTokenListBackgroundClick}
           >
             {selectableTokenTexts.length === 0 ? (
-              <p className={`${TREE_LABEL} text-emerald-300/90 px-2 py-4 text-center leading-relaxed`}>
-                Nessun token in questa categoria.
-              </p>
+              <div className="px-2 py-4 text-center leading-relaxed">
+                <p className={`${TREE_LABEL} text-emerald-300/90`}>
+                  Nessun token in questa categoria.
+                </p>
+                {documentColumnImport
+                  && activeCategoryKey !== NO_CATEGORY_SENTINEL
+                  && documentColumnImport.columns.length > 0 && (
+                  <CategoryLoadFromDocument
+                    columns={documentColumnImport.columns}
+                    countValuesInColumn={documentColumnImport.countValuesInColumn}
+                    onImport={(columnName) => {
+                      documentColumnImport.onImport(activeCategoryKey, columnName);
+                    }}
+                    onFeedback={setColumnImportFeedback}
+                  />
+                )}
+                {columnImportFeedback && (
+                  <p
+                    role="alert"
+                    className={`${TREE_LABEL} mt-2 ${
+                      columnImportFeedback.kind === 'error' ? 'text-red-300/90' : 'text-amber-200/90'
+                    }`}
+                  >
+                    {columnImportFeedback.text}
+                  </p>
+                )}
+              </div>
             ) : (
               <div
                 ref={tokenListRef}
@@ -1617,7 +1669,7 @@ export function TokenTreeEditor({
         <div
           ref={dragGhostRef}
           aria-hidden
-          className="fixed z-[10000] pointer-events-none px-3 py-2 rounded-md border border-sky-400/50 bg-[#0a1510] shadow-xl font-mono text-[11px] text-sky-100 max-w-[220px] truncate whitespace-nowrap"
+          className="fixed z-[10000] pointer-events-none px-3 py-2 rounded-md border border-sky-400/50 bg-[#0a1510]/95 shadow-xl font-mono text-[11px] text-sky-100 max-w-[220px] truncate whitespace-nowrap opacity-90"
           style={{ left: -9999, top: 0, visibility: 'hidden' }}
         />,
         document.body,

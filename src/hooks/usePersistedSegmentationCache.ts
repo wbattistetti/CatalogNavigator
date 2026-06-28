@@ -199,17 +199,21 @@ export function usePersistedSegmentationCache(
     if (!enabled || loadingPersisted || building) return;
 
     if (!layoutStable) {
-      if (persistedRow && persistedRow.signature === currentSignature) {
+      if (persistedRow && persistedRow.entries.length > 0) {
         const hydrated = corpusSegmentationCacheFromEntries(persistedRow.entries);
         const entryCount = hydrated.size;
-        const isComplete = isPersistedSegmentationComplete(entryCount, uniqueTextCount);
-        setCache(hydrated);
-        setProgress({
-          processed: entryCount,
-          total: uniqueTextCount,
-          ready: isComplete,
-          phase: 'segmenting',
-        });
+        if (entryCount > 0) {
+          const signatureMatches = persistedRow.signature === currentSignature;
+          setCache(hydrated);
+          setProgress({
+            processed: entryCount,
+            total: uniqueTextCount,
+            ready: signatureMatches
+              ? isPersistedSegmentationComplete(entryCount, uniqueTextCount)
+              : true,
+            phase: 'segmenting',
+          });
+        }
       }
       return;
     }
@@ -228,16 +232,27 @@ export function usePersistedSegmentationCache(
       return;
     }
 
+    // Layout drifted — still show last saved segmentation until the user refreshes.
+    if (persistedRow && persistedRow.entries.length > 0) {
+      const hydrated = corpusSegmentationCacheFromEntries(persistedRow.entries);
+      const entryCount = hydrated.size;
+      if (entryCount > 0) {
+        setCache(hydrated);
+        setProgress({
+          processed: entryCount,
+          total: uniqueTextCount,
+          ready: true,
+          phase: 'segmenting',
+        });
+        return;
+      }
+    }
+
     // Keep a complete in-memory build even if signature drifted before DB row caught up.
     if (progress.ready && cache.size > 0) return;
 
     // Keep unsaved partial for the current layout (failed save or interrupted persist).
     if (!progress.ready && cache.size > 0) {
-      if (persistedRow && persistedRow.signature !== currentSignature) {
-        setCache(new Map());
-        setProgress({ processed: 0, total: uniqueTextCount, ready: false, phase: 'segmenting' });
-        return;
-      }
       setProgress({
         processed: cache.size,
         total: uniqueTextCount,

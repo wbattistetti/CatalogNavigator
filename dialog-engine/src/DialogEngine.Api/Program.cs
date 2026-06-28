@@ -425,6 +425,102 @@ app.MapPost("/api/test/text-turn", async (HttpRequest request) =>
 
 
 
+app.MapPost("/api/test/bootstrap-turn", async (HttpRequest request) =>
+
+{
+
+    try
+
+    {
+
+        using var doc = await JsonDocument.ParseAsync(request.Body);
+
+        var root = doc.RootElement;
+
+
+
+        if (!root.TryGetProperty("bundle", out var bundleEl))
+
+            return Results.Json(new { ok = false, error = "bundle mancante." }, statusCode: 400);
+
+
+
+        var bundle = BundleJson.LoadBundle(bundleEl.GetRawText());
+
+        if (bundle.Catalog?.Items is null || bundle.Catalog.Items.Count == 0)
+
+            return Results.Json(new { ok = false, error = "bundle.catalog.items vuoto." }, statusCode: 400);
+
+
+
+        var reset = root.TryGetProperty("reset", out var resetEl) && resetEl.GetBoolean();
+
+        AgentSessionState state;
+
+        if (reset || !root.TryGetProperty("state", out var stateEl) || stateEl.ValueKind is JsonValueKind.Null)
+
+            state = AgentTurnEngine.InitAgentSession();
+
+        else
+
+            state = TurnJson.LoadSessionState(stateEl);
+
+
+
+        var result = AgentTurnEngine.ProcessBootstrapTurn(bundle, state);
+
+
+
+        return Results.Json(new
+
+        {
+
+            ok = true,
+
+            spokenHint = result.SpokenHint,
+
+            spokenHintSource = result.SpokenHintSource,
+
+            disambiguationSignature = result.DisambiguationSignature,
+
+            selectedPath = result.NextState.SelectedPath,
+
+            nextState = result.NextState,
+
+            instruction = result.Instruction,
+
+            parsed = result.Parsed,
+
+            candidateCount = result.CandidateCount,
+
+            candidatePaths = result.SurvivingPaths,
+
+            debug = new
+
+            {
+
+                log = HttpResponseBuilder.FormatInstructionLog(result.Instruction),
+
+                parsedBlock = AgentTurnEngine.FormatAgentParsedBlock(result.Parsed, result.Instruction),
+
+            },
+
+        }, jsonOptions);
+
+    }
+
+    catch (Exception ex)
+
+    {
+
+        return Results.Json(new { ok = false, error = ex.Message }, statusCode: 500);
+
+    }
+
+});
+
+
+
 app.MapPost("/api/grammar/match-answer", async (HttpRequest request) =>
 {
     try

@@ -65,17 +65,38 @@ export async function postVbTextTurn(params: {
     }),
   });
 
+  return parseVbTurnResponse(res);
+}
+
+/** Bootstrap dialog from pre-loaded acquiredConcepts (no user utterance). */
+export async function postVbBootstrapTurn(params: {
+  bundle: AgentBundle;
+  state: AgentSessionState;
+}): Promise<VbTextTurnResponse> {
+  const res = await fetch(`${VB_ENGINE_BASE}/api/test/bootstrap-turn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bundle: convertAgentBundleToVb(params.bundle),
+      state: convertSessionStateToVb(params.state),
+    }),
+  });
+
+  return parseVbTurnResponse(res);
+}
+
+async function parseVbTurnResponse(res: Response): Promise<VbTextTurnResponse> {
   const body = await res.json() as VbTextTurnResponse;
   if (!res.ok) {
     throw new Error(body.error ?? `VB engine HTTP ${res.status}`);
   }
 
-      if (body.nextState) {
-        body.nextState = convertSessionStateFromVb(body.nextState) ?? initAgentSession();
-      }
-      if (body.parsed != null) {
-        body.parsed = normalizeVbParsedList(body.parsed);
-      }
+  if (body.nextState) {
+    body.nextState = convertSessionStateFromVb(body.nextState) ?? initAgentSession();
+  }
+  if (body.parsed != null) {
+    body.parsed = normalizeVbParsedList(body.parsed);
+  }
 
   return body;
 }

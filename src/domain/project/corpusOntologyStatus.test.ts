@@ -20,7 +20,17 @@ describe('resolveCorpusOntologyStatus', () => {
     expect(resolveCorpusOntologyStatus({ ...base, segmentationReady: true }).phase).toBe('ready');
   });
 
-  it('reports stale when saved signature drifted', () => {
+  it('reports stale (not ready) when cache is complete but signature drifted', () => {
+    const status = resolveCorpusOntologyStatus({
+      ...base,
+      segmentationReady: true,
+      segmentationStale: true,
+    });
+    expect(status.phase).toBe('stale');
+    expect(status.message).toContain('Ricrea ontologia');
+  });
+
+  it('reports stale when saved signature drifted and cache not ready', () => {
     const status = resolveCorpusOntologyStatus({ ...base, segmentationStale: true });
     expect(status.phase).toBe('stale');
     expect(status.message).toContain('Ricrea ontologia');

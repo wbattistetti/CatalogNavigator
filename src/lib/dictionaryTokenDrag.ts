@@ -44,6 +44,31 @@ export function categoryIdAtPoint(clientX: number, clientY: number): string | nu
   return el?.closest('[data-category-id]')?.getAttribute('data-category-id') ?? null;
 }
 
+/**
+ * Insertion slot (0..rowCount) from pointer Y and row vertical midpoints.
+ * Slot N inserts before the row currently at index N; rowCount appends at end.
+ */
+export function categoryReorderIndexFromMidpoints(clientY: number, rowMidpoints: number[]): number {
+  for (let i = 0; i < rowMidpoints.length; i += 1) {
+    if (clientY < rowMidpoints[i]!) return i;
+  }
+  return rowMidpoints.length;
+}
+
+/**
+ * Insertion slot (0..rowCount) for category reorder from pointer Y within a list root.
+ * Slot N inserts before the row currently at index N; rowCount appends at end.
+ */
+export function categoryReorderIndexAtPoint(clientY: number, listRoot: HTMLElement): number {
+  const rows = listRoot.querySelectorAll('[data-category-reorder-id]');
+  const midpoints: number[] = [];
+  rows.forEach((row) => {
+    const rect = row.getBoundingClientRect();
+    midpoints.push(rect.top + rect.height / 2);
+  });
+  return categoryReorderIndexFromMidpoints(clientY, midpoints);
+}
+
 export function formatDragGhostLabel(texts: string[]): string {
   if (texts.length === 1) return texts[0]!;
   const preview = texts.slice(0, 3).join(', ');

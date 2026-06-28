@@ -42,6 +42,14 @@ export function resolveCorpusOntologyStatus(
   }
 
   if (input.segmentationReady) {
+    if (input.segmentationStale) {
+      return {
+        phase: 'stale',
+        message:
+          'Il dizionario o il corpus sono cambiati dopo l\'ultima ontologia. '
+          + 'Usa «Ricrea ontologia» per aggiornare la segmentazione.',
+      };
+    }
     return { phase: 'ready', message: '' };
   }
 

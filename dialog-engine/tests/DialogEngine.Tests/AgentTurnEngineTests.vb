@@ -549,6 +549,31 @@ Public Class AgentTurnEngineTests
         Assert.Contains("DISAMBIGUATE", http.Debug.Log)
     End Sub
 
+    <Fact>
+    Public Sub Bootstrap_DisambiguatesNextCategory_FromPreloadedAcquiredConcepts()
+        Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
+        Dim state = AgentTurnEngine.InitAgentSession()
+        state.AcquiredConcepts = New List(Of Concept) From {
+            Attr("specialità", "cardiologica")
+        }
+        state.ExactAttributoCategories = New List(Of String) From {"specialità"}
+
+        Dim result = AgentTurnEngine.ProcessBootstrapTurn(bundle, state)
+
+        Assert.Equal("disambiguate", result.Instruction.Action)
+        Assert.Contains("target", result.Instruction.CategoryName.ToLowerInvariant())
+        Assert.Equal(2, result.CandidateCount)
+    End Sub
+
+    <Fact>
+    Public Sub Bootstrap_ReturnsStartQuestion_WhenNoPreloadedConcepts()
+        Dim bundle = TestBundleFactory.BuildTargetOnlyBundle()
+        Dim result = AgentTurnEngine.ProcessBootstrapTurn(bundle, AgentTurnEngine.InitAgentSession())
+
+        Assert.Equal("no_match", result.Instruction.Action)
+        Assert.Equal("Come posso aiutarla?", result.SpokenHint)
+    End Sub
+
     Private Shared Function Attr(category As String, value As String) As Concept
         Return ValueSetOps.CreateAttributoConcept(category, New List(Of String) From {value})
     End Function
