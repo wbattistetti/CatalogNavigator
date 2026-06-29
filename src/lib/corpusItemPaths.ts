@@ -19,6 +19,10 @@ import {
   type CorpusItemExclusions,
   type CorpusSegmentExclusions,
 } from './corpusSegmentationOverrides';
+import {
+  applyExtraAnnotationsToRows,
+  type CorpusExtraAnnotations,
+} from './corpusExtraAnnotations';
 
 export type { CorpusSegmentExclusions, CorpusItemExclusions };
 import {
@@ -40,6 +44,8 @@ export interface CorpusSegmentationInput {
   segmentExclusions?: CorpusSegmentExclusions;
   /** Whole corpus rows omitted from catalog compile. */
   itemExclusions?: CorpusItemExclusions;
+  /** Per-row extra column tokens merged into paths. */
+  extraAnnotations?: CorpusExtraAnnotations;
 }
 
 export function buildCorpusSegmentationInputFromLoadedRefs(
@@ -47,6 +53,7 @@ export function buildCorpusSegmentationInputFromLoadedRefs(
   loadedRefs: LoadedDictionaryRef[],
   segmentExclusions?: CorpusSegmentExclusions,
   itemExclusions?: CorpusItemExclusions,
+  extraAnnotations?: CorpusExtraAnnotations,
 ): CorpusSegmentationInput {
   return {
     descriptions,
@@ -58,6 +65,7 @@ export function buildCorpusSegmentationInputFromLoadedRefs(
     loadedRefs,
     segmentExclusions,
     itemExclusions,
+    extraAnnotations,
   };
 }
 
@@ -107,7 +115,8 @@ export function resolveCorpusItemPathsFromRows(
   rows: RowSegmentation[],
   input: CorpusSegmentationInput,
 ): string[] {
-  const adjustedRows = applyExclusionsToRows(rows, input.segmentExclusions, input.itemExclusions);
+  const excluded = applyExclusionsToRows(rows, input.segmentExclusions, input.itemExclusions);
+  const adjustedRows = applyExtraAnnotationsToRows(excluded, input.extraAnnotations);
   const leafPaths = adjustedRows
     .map((row) => row.path.trim())
     .filter(Boolean);

@@ -169,6 +169,7 @@ export function estimateCorpusGlideRowHeight(input: {
   const measure = monospaceTextMeasure();
   const descInner = Math.max(64, input.descriptionColWidth - 16);
   const segInner = Math.max(64, input.segmentationColWidth - 16);
+  const extraInner = Math.max(64, (input.extraColWidth ?? input.segmentationColWidth) - 16);
   const descLines = input.descriptionRuns.length > 0
     ? estimateDescriptionRunLines(input.descriptionRuns, descInner, measure)
     : estimateWrappedTextLines(input.sourceText, descInner, measure);
@@ -182,16 +183,21 @@ export function estimateCorpusGlideRowHeight(input: {
   return corpusGlideRowHeight(descLines, segLines, input.minHeight);
 }
 
+export const CORPUS_GLIDE_EXTRA_COL_WIDTH = 160;
+
 export function corpusGlideColumnWidths(gridWidth: number): {
   index: number;
   description: number;
+  extra: number;
   segmentation: number;
 } {
   const index = 56;
-  const remaining = Math.max(0, gridWidth - index);
+  const extra = CORPUS_GLIDE_EXTRA_COL_WIDTH;
+  const remaining = Math.max(0, gridWidth - index - extra);
   const half = Math.floor(remaining / 2);
   return {
     index,
+    extra,
     description: half,
     segmentation: remaining - half,
   };

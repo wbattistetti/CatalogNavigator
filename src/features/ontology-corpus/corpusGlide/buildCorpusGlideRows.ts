@@ -8,6 +8,7 @@ import type { GlideDescRun } from '../../../lib/glideDescriptionRenderer';
 import type { LoadedDictionaryRef } from '../../../lib/multiDictionarySegment';
 import type { TokenCategory } from '../../../lib/dictionaryTree';
 import { findHighlightSpansFromPhrases, type MatchPhrase } from '../../../lib/tokenDictionary';
+import { mergeExtraIntoSegmentation } from '../../../lib/corpusExtraAnnotations';
 import type { CorpusRow } from '../corpusRowModel';
 
 export interface CorpusGlideRow {
@@ -15,6 +16,7 @@ export interface CorpusGlideRow {
   text: string;
   descriptionRuns: GlideDescRun[];
   segPaints: GlideChipPaint[];
+  extraPaints: GlideChipPaint[];
   segmentation: CorpusSegmentationEntry;
 }
 
@@ -93,6 +95,50 @@ function truncateChipLabel(text: string): string {
   return `${text.slice(0, MAX_CHIP_LABEL_CHARS - 1)}…`;
 }
 
+/** Maps segmentation tokens to inline description chip runs (fast, no phrase re-match). */
+function buildDescriptionRunsFromSegmentation(
+  text: string,
+  segmentation: CorpusSegmentationEntry,
+  paintForSegment: (canonical: string) => GlideChipPaint,
+): GlideDescRun[] {
+  if (segmentation.segments.length === 0) {
+    return text.length > 0 ? [{ kind: 'text', text }] : [];
+  }
+
+  const runs: GlideDescRun[] = [];
+  let cursor = 0;
+
+  for (const seg of segmentation.segments) {
+    const canonical = seg.text;
+    const slice = text.slice(cursor);
+    const relIdx = slice.toLowerCase().indexOf(canonical.toLowerCase());
+    if (relIdx < 0) continue;
+
+    const absStart = cursor + relIdx;
+    const absEnd = absStart + canonical.length;
+    const label = text.slice(absStart, absEnd);
+
+    if (absStart > cursor) {
+      runs.push({ kind: 'text', text: text.slice(cursor, absStart) });
+    }
+
+    const displayLabel = truncateChipLabel(label);
+    const paint = paintForSegment(canonical);
+    runs.push({
+      kind: 'chip',
+      text: displayLabel,
+      paint: { ...paint, text: displayLabel },
+    });
+    cursor = absEnd;
+  }
+
+  if (cursor < text.length) {
+    runs.push({ kind: 'text', text: text.slice(cursor) });
+  }
+
+  return runs.length > 0 ? runs : (text.length > 0 ? [{ kind: 'text', text }] : []);
+}
+
 function splitPreviewSegments(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -135,20 +181,24 @@ export function buildCorpusGlidePreviewRows(rows: readonly CorpusRow[]): CorpusG
     return {
       rowIndex: row.rowIndex,
       text: row.text,
-      descriptionRuns: row.text.length > 0 ? [{ kind: 'text', text: row.text }] : [],
+      descriptionRuns: buildDescriptionRunsFromSegmentation(
+        row.text,
+        segmentation,
+        (canonical) => {
+          const idx = segmentTexts.indexOf(canonical);
+          return segPaints[idx >= 0 ? idx : 0]!;
+        },
+      ),
       segPaints,
+      extraPaints: [],
       segmentation,
     };
   });
 }
 
-function plainDescriptionRuns(text: string): GlideDescRun[] {
-  return text.length > 0 ? [{ kind: 'text', text }] : [];
-}
-
 /**
- * Builds Glide rows from persisted segmentation only (no phrase re-match on description).
- * Intended for instant display after cache load — O(rows × segments), not O(rows × phrases).
+ * Builds Glide rows from persisted segmentation (description chips from segment positions).
+ * O(rows × segments) — no phrase re-match.
  */
 export function buildCorpusGlideRowsFromCache(
   rows: readonly CorpusRow[],
@@ -156,6 +206,7 @@ export function buildCorpusGlideRowsFromCache(
   loadedRefs: LoadedDictionaryRef[],
   editingDictionaryId: string | null,
   categories: TokenCategory[],
+  extraAnnotations: ReadonlyMap<number, readonly string[]> = new Map(),
 ): CorpusGlideRow[] {
   const cats = categories.length > 0 ? categories : loadedRefs[0]?.dictionary.categories ?? [];
   const paintCache = new Map<string, GlideChipPaint>();
@@ -169,14 +220,22 @@ export function buildCorpusGlideRowsFromCache(
   };
 
   return rows.map((row) => {
-    const segmentation = lookup(row.text) ?? EMPTY_SEGMENTATION;
+    const baseSegmentation = lookup(row.text) ?? EMPTY_SEGMENTATION;
+    const extraTokens = extraAnnotations.get(row.rowIndex) ?? [];
+    const segmentation = mergeExtraIntoSegmentation(baseSegmentation, extraTokens);
     const segPaints = segmentation.segments.map((seg) => paintCached(seg.text));
+    const extraPaints = extraTokens.map((t) => paintCached(t));
     return {
       rowIndex: row.rowIndex,
       text: row.text,
-      descriptionRuns: plainDescriptionRuns(row.text),
+      descriptionRuns: buildDescriptionRunsFromSegmentation(
+        row.text,
+        baseSegmentation,
+        paintCached,
+      ),
       segPaints,
-      segmentation,
+      extraPaints,
+      segmentation: baseSegmentation,
     };
   });
 }
@@ -213,6 +272,7 @@ export function buildCorpusGlideRows(
         editingDictionaryId,
         cats,
       ),
+      extraPaints: [],
       segmentation,
     };
   });
@@ -229,4 +289,73 @@ export function buildCorpusGlideRowMap(
     map.set(row.rowIndex, row);
   }
   return map;
+}
+
+/** Paints extra-column tokens with dictionary category colors. */
+export function buildExtraChipPaints(
+  tokens: readonly string[],
+  loadedRefs: LoadedDictionaryRef[],
+  editingDictionaryId: string | null,
+  categories: TokenCategory[],
+): GlideChipPaint[] {
+  const cats = categories.length > 0 ? categories : loadedRefs[0]?.dictionary.categories ?? [];
+  return tokens.map((text) => paintForSegment(text, loadedRefs, editingDictionaryId, cats));
+}
+
+function glideRowExtraMergeEquals(
+  row: CorpusGlideRow,
+  segPaints: CorpusGlideRow['segPaints'],
+  extraPaints: CorpusGlideRow['extraPaints'],
+): boolean {
+  return (
+    row.segPaints.length === segPaints.length
+    && row.segPaints.every((paint, i) => paint.text === segPaints[i]?.text)
+    && row.extraPaints.length === extraPaints.length
+    && row.extraPaints.every((paint, i) => paint.text === extraPaints[i]?.text)
+  );
+}
+
+/** Applies live extra annotations synchronously (no async row rebuild wait). */
+export function mergeExtraAnnotationsIntoGlideRowMap(
+  rowMap: ReadonlyMap<number, CorpusGlideRow>,
+  extraAnnotations: ReadonlyMap<number, readonly string[]>,
+  loadedRefs: LoadedDictionaryRef[],
+  editingDictionaryId: string | null,
+  categories: TokenCategory[],
+): Map<number, CorpusGlideRow> {
+  if (rowMap.size === 0) return new Map(rowMap);
+  if (!extraAnnotations.size) return new Map(rowMap);
+
+  let changed = false;
+  const next = new Map(rowMap);
+
+  for (const [rowIndex, row] of rowMap) {
+    const extraTokens = extraAnnotations.get(rowIndex) ?? [];
+    const mergedSegmentation = mergeExtraIntoSegmentation(row.segmentation, extraTokens);
+    const segPaints = buildExtraChipPaints(
+      mergedSegmentation.segments.map((seg) => seg.text),
+      loadedRefs,
+      editingDictionaryId,
+      categories,
+    );
+    const extraPaints = buildExtraChipPaints(
+      extraTokens,
+      loadedRefs,
+      editingDictionaryId,
+      categories,
+    );
+
+    if (glideRowExtraMergeEquals(row, segPaints, extraPaints)) {
+      continue;
+    }
+
+    changed = true;
+    next.set(rowIndex, {
+      ...row,
+      segPaints,
+      extraPaints,
+    });
+  }
+
+  return changed ? next : new Map(rowMap);
 }

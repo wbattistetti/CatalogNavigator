@@ -1,7 +1,8 @@
 /**
  * Detects ontology path drift from live dictionary layout and rebuilds segmentation on demand.
  * Full corpus segmentation runs asynchronously (never in render) so large dictionaries do not freeze the UI.
- */import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   mergeAllDictionarySessionsIntoLoadedRefs,
   mergeLoadedTokens,
@@ -13,6 +14,7 @@ import {
   type CorpusSegmentExclusions,
   type CorpusItemExclusions,
 } from '../../lib/corpusItemPaths';
+import type { CorpusExtraAnnotations } from '../../lib/corpusExtraAnnotations';
 import { yieldToMainThread } from '../../lib/corpusSegmentationCache';
 import {
   canonicalizedPathSetsEqual,
@@ -58,6 +60,7 @@ export interface UseOntologyRefreshParams {
   itemPaths: string[] | null | undefined;
   segmentExclusions?: CorpusSegmentExclusions;
   itemExclusions?: CorpusItemExclusions;
+  extraAnnotations?: CorpusExtraAnnotations;
   partialSegmentationAvailable: boolean;
   partialSegmentationProcessed: number;
   partialSegmentationTotal: number;
@@ -89,10 +92,17 @@ function computeLeafPaths(
   loadedRefs: LoadedDictionaryRef[],
   segmentExclusions?: CorpusSegmentExclusions,
   itemExclusions?: CorpusItemExclusions,
+  extraAnnotations?: CorpusExtraAnnotations,
 ): string[] {
   if (descriptions.length === 0 || loadedRefs.length === 0) return [];
   return resolveCorpusItemPaths(
-    buildCorpusSegmentationInputFromLoadedRefs(descriptions, loadedRefs, segmentExclusions, itemExclusions),
+    buildCorpusSegmentationInputFromLoadedRefs(
+      descriptions,
+      loadedRefs,
+      segmentExclusions,
+      itemExclusions,
+      extraAnnotations,
+    ),
   );
 }
 
@@ -106,6 +116,7 @@ export function useOntologyRefresh({
   itemPaths,
   segmentExclusions,
   itemExclusions,
+  extraAnnotations,
   partialSegmentationAvailable,
   partialSegmentationProcessed,
   partialSegmentationTotal,
@@ -175,7 +186,13 @@ export function useOntologyRefresh({
     const runFullCheck = () => {
       if (cancelled) return;
       try {
-        const leafPaths = computeLeafPaths(refreshDescriptions, liveLoadedRefs, segmentExclusions, itemExclusions);
+        const leafPaths = computeLeafPaths(
+          refreshDescriptions,
+          liveLoadedRefs,
+          segmentExclusions,
+          itemExclusions,
+          extraAnnotations,
+        );
         if (leafPaths.length === 0) {
           applyResult(false);
           return;
@@ -216,6 +233,7 @@ export function useOntologyRefresh({
     dicts.dictionarySessionsRevision,
     segmentExclusions,
     itemExclusions,
+    extraAnnotations,
   ]);
 
   const hasCorpusDescriptions = refreshDescriptions.some((d) => d.trim().length > 0);

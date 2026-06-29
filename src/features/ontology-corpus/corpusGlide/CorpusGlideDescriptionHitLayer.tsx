@@ -1,13 +1,11 @@
 /**
- * Portaled hit layer for corpus segmentation chips — same layout as canvas, no row resize.
+ * Portaled hit layer for corpus description cells — canvas-matching runs at 12px.
  */
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
-import type { GlideChipCellData, GlideChipPaint } from '../../../lib/glideChipRenderer';
+import type { GlideDescCellData, GlideDescRun } from '../../../lib/glideDescriptionRenderer';
 import { GLIDE_WRAP_PILL_GAP } from '../../../lib/glideWrapLayout';
 import { TABULAR_GLIDE_THEME } from '../../../components/DocumentViewer/tabularGlideTheme';
-import { useOntologyCorpusSegmentation } from '../OntologyCorpusSegmentationContext';
 import { useCorpusGlideOverlay } from './CorpusGlideOverlayContext';
 import type { GlideCellScreenRect } from './resolveGlideCellScreenRect';
 import {
@@ -15,25 +13,24 @@ import {
   useDictionaryChipSelected,
 } from '../../../features/document-editor/dictionarySelectionStore';
 import { useCorpusChipActions } from '../../../components/DocumentViewer/CorpusChipActionsContext';
+import type { GlideChipPaint } from '../../../lib/glideChipRenderer';
 
 const CELL_H_PAD = TABULAR_GLIDE_THEME.cellHorizontalPadding ?? 8;
 const CELL_V_PAD = TABULAR_GLIDE_THEME.cellVerticalPadding ?? 2;
-const UNMATCHED_COLOR = TABULAR_GLIDE_THEME.textLight ?? 'rgba(167, 243, 208, 0.55)';
+const TEXT_COLOR = TABULAR_GLIDE_THEME.textDark ?? '#d1fae5';
 
 function resolvePortalRoot(): HTMLElement {
   return document.getElementById('portal') ?? document.body;
 }
 
-function GlideSegmentationHitChip({
+function GlideDescriptionHitChip({
   paint,
   canonical,
   categorizable,
-  onRemove,
 }: {
   paint: GlideChipPaint;
   canonical: string;
   categorizable: boolean;
-  onRemove: () => void;
 }) {
   const selected = useDictionaryChipSelected(canonical);
   const dragging = useDictionaryChipDragging(canonical);
@@ -54,54 +51,50 @@ function GlideSegmentationHitChip({
       data-corpus-chip={categorizable ? 'true' : undefined}
       onClick={categorizable ? (e) => onChipClick(e, canonical) : undefined}
       onMouseDown={categorizable ? (e) => onChipMouseDown(e, canonical) : undefined}
-      className={`group/chip pointer-events-auto inline-flex max-w-full items-center gap-0.5 rounded-[6px] border font-mono text-[12px] leading-none whitespace-nowrap ${selectionClass}`}
+      className={`pointer-events-auto inline-flex max-w-full items-center rounded-[6px] border font-mono text-[12px] leading-none whitespace-nowrap ${selectionClass}`}
       style={{
         backgroundColor: paint.bgColor,
         borderColor: paint.borderColor,
         color: paint.fgColor,
-        height: 20,
+        height: 18,
         paddingLeft: 6,
-        paddingRight: 4,
+        paddingRight: 6,
       }}
       title={canonical}
     >
       <span className="truncate">{paint.text}</span>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        title="Rimuovi dalla segmentazione"
-        className="flex-shrink-0 rounded p-0.5 opacity-0 transition-opacity group-hover/chip:opacity-100 text-red-400/70 hover:text-red-300 hover:bg-red-400/15"
-      >
-        <X className="h-2.5 w-2.5" />
-      </button>
     </span>
   );
 }
 
-export function CorpusGlideSegmentationHitLayer({
-  chipData,
+function DescriptionRunSpan({ run }: { run: GlideDescRun }) {
+  if (run.kind === 'text') {
+    if (!run.text) return null;
+    return (
+      <span
+        className="font-mono text-[12px] whitespace-pre-wrap break-words select-text"
+        style={{ color: TEXT_COLOR, lineHeight: '20px' }}
+      >
+        {run.text}
+      </span>
+    );
+  }
+
+  return null;
+}
+
+export function CorpusGlideDescriptionHitLayer({
+  descData,
   anchor,
   onClose,
 }: {
-  chipData: GlideChipCellData;
+  descData: GlideDescCellData;
   anchor: GlideCellScreenRect;
   onClose: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const overlay = useCorpusGlideOverlay();
-  const { lookup, removeSegment } = useOntologyCorpusSegmentation();
-  const sourceText = chipData.sourceText;
-  const segmentation = lookup(sourceText);
-  const segments = segmentation?.segments ?? chipData.segments.map((paint) => ({
-    text: paint.text,
-    dictionaryId: '',
-  }));
-  const paints = chipData.segments;
-  const unmatched = segmentation?.unmatched ?? chipData.unmatched;
-  const paintByText = new Map(paints.map((p) => [p.text, p]));
+  const sourceText = descData.sourceText;
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -119,10 +112,14 @@ export function CorpusGlideSegmentationHitLayer({
     };
   }, [onClose]);
 
+  const runs = descData.runs.length > 0
+    ? descData.runs
+    : (sourceText.length > 0 ? [{ kind: 'text' as const, text: sourceText }] : []);
+
   return createPortal(
     <div
       ref={panelRef}
-      className="fixed z-[9998] box-border overflow-hidden pointer-events-auto"
+      className="fixed z-[9998] box-border overflow-hidden pointer-events-auto select-text"
       style={{
         top: anchor.y,
         left: anchor.x,
@@ -131,43 +128,33 @@ export function CorpusGlideSegmentationHitLayer({
         padding: `${CELL_V_PAD}px ${CELL_H_PAD}px`,
         backgroundColor: TABULAR_GLIDE_THEME.bgCell ?? '#0d0d0d',
       }}
+      onMouseDown={(e) => {
+        overlay.onMouseDown(e);
+        e.stopPropagation();
+      }}
+      onDoubleClick={(e) => overlay.onDoubleClick(e, sourceText)}
+      onMouseUp={(e) => overlay.onMouseUp(e, sourceText)}
+      onContextMenu={(e) => overlay.onContextMenu(e, sourceText)}
     >
-      {segments.length === 0 && unmatched.length === 0 ? (
-        <span
-          className="font-mono text-[12px] italic"
-          style={{ color: UNMATCHED_COLOR, lineHeight: '20px' }}
-        >
-          —
-        </span>
-      ) : (
-        <div
-          className="flex min-w-0 flex-wrap items-center"
-          style={{ gap: GLIDE_WRAP_PILL_GAP, rowGap: 0, lineHeight: '20px' }}
-        >
-          {segments.map((seg, i) => {
-            const paint = paintByText.get(seg.text) ?? paints[i];
-            if (!paint) return null;
-            const categorizable = overlay.editableCanonicalSet.has(seg.text);
-            return (
-              <GlideSegmentationHitChip
-                key={`${seg.text}-${i}`}
-                paint={paint}
-                canonical={seg.text}
-                categorizable={categorizable}
-                onRemove={() => removeSegment(sourceText, seg.text)}
-              />
-            );
-          })}
-          {unmatched.length > 0 && (
-            <span
-              className="font-mono text-[12px] whitespace-nowrap"
-              style={{ color: UNMATCHED_COLOR, lineHeight: '20px' }}
-            >
-              {`+${unmatched.length} unmatched`}
-            </span>
-          )}
-        </div>
-      )}
+      <div
+        className="min-w-0 flex flex-wrap items-center"
+        style={{ gap: GLIDE_WRAP_PILL_GAP, rowGap: 0, lineHeight: '20px' }}
+      >
+        {runs.map((run, i) => {
+          if (run.kind === 'text') {
+            return <DescriptionRunSpan key={`text-${i}`} run={run} />;
+          }
+          const categorizable = overlay.editableCanonicalSet.has(run.text);
+          return (
+            <GlideDescriptionHitChip
+              key={`chip-${run.text}-${i}`}
+              paint={run.paint}
+              canonical={run.text}
+              categorizable={categorizable}
+            />
+          );
+        })}
+      </div>
     </div>,
     resolvePortalRoot(),
   );

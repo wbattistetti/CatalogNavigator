@@ -19,6 +19,7 @@ import {
 import {
   normalizeSplitLayout,
   splitLayoutIncludesTab,
+  createSplitLayout,
   type EditorSplitLayout,
 } from './documentEditorSplitLayout';
 
@@ -55,8 +56,15 @@ export function DocumentEditorNavigationProvider({ children }: { children: React
 
   const setActiveTab = useCallback((tab: EditorTabId) => {
     setActiveTabState(tab);
+    if (
+      tab === EDITOR_TAB_IDS.ontology
+      && visibleTabs.has(EDITOR_TAB_IDS.dictionaries)
+    ) {
+      setSplitLayoutState(createSplitLayout(EDITOR_TAB_IDS.ontology, EDITOR_TAB_IDS.dictionaries, 58));
+      return;
+    }
     setSplitLayoutState({ type: 'single' });
-  }, []);
+  }, [visibleTabs]);
 
   const setSplitLayout = useCallback((layout: EditorSplitLayout) => {
     const normalized = normalizeSplitLayout(layout, visibleTabs);

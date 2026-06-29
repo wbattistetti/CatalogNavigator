@@ -108,8 +108,15 @@ function renameCanonicalInCategories(
   }));
 }
 
+function categoryLabelForCanonical(canonical: string, categories: TokenCategory[]): string {
+  const categoryId = getCategoryIdForToken(canonical, categories);
+  if (categoryId === null) return 'senza categoria';
+  return categoryDisplayName(categories, categoryId);
+}
+
 function syncAliasesForCanonical(
   tokens: TokenEntry[],
+  categories: TokenCategory[],
   canonical: string,
   desiredAliases: string[],
 ): TokenEntry[] {
@@ -126,7 +133,10 @@ function syncAliasesForCanonical(
   for (const alias of desiredAliases) {
     if (existing.has(alias)) continue;
     if (next.some((t) => t.text === alias && isCanonicalToken(t))) {
-      throw new Error(`"${alias}" è già un token canonico`);
+      const where = categoryLabelForCanonical(alias, categories);
+      throw new Error(
+        `"${alias}" è già un token canonico nella categoria «${where}»`,
+      );
     }
     next = addAlias(next, alias, canonical);
   }
@@ -151,7 +161,7 @@ export function applyCanonicalConceptEdit(
 
   let nextTokens = renameCanonicalInTokens(tokens, oldCanonical, newCanonical);
   let nextCategories = renameCanonicalInCategories(categories, oldCanonical, newCanonical);
-  nextTokens = syncAliasesForCanonical(nextTokens, newCanonical, desiredAliases);
+  nextTokens = syncAliasesForCanonical(nextTokens, nextCategories, newCanonical, desiredAliases);
 
   return { tokens: nextTokens, categories: nextCategories, canonical: newCanonical };
 }
@@ -221,7 +231,7 @@ export function applyNewConceptLine(
     nextCategories = addTokenToCategorySorted(nextCategories, activeCategoryKey, canonical);
   }
 
-  nextTokens = syncAliasesForCanonical(nextTokens, canonical, aliases);
+  nextTokens = syncAliasesForCanonical(nextTokens, nextCategories, canonical, aliases);
 
   return { tokens: nextTokens, categories: nextCategories, canonical, notice };
 }

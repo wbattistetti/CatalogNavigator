@@ -13,7 +13,9 @@ import {
   resolveCorpusItemPathsFromSegmentationCacheAsync,
   buildCorpusSegmentationInputFromLoadedRefs,
   type CorpusSegmentExclusions,
+  type CorpusItemExclusions,
 } from '../lib/corpusItemPaths';
+import { corpusExtraAnnotationsFromStorage } from '../lib/corpusExtraAnnotations';
 import { yieldToMainThread, type CorpusSegmentationEntry } from '../lib/corpusSegmentationCache';
 import { segmentAllDescriptions, type TokenDictionary, type TokenEntry } from '../lib/tokenDictionary';
 import { setTokenGrammar } from '../lib/tokenGrammar';
@@ -108,6 +110,7 @@ function normalizeLoadedAnalysis(data: Analysis): Analysis {
     readable_catalog: parseReadableCatalog(data.readable_catalog),
     saved_chat_tests: parseSavedChatTests(data.saved_chat_tests),
     item_paths: itemPaths.length > 0 ? itemPaths : null,
+    corpus_extra_annotations: data.corpus_extra_annotations ?? null,
   };
 }
 
@@ -127,6 +130,7 @@ function draftAnalysis(
     disambiguation_plan: existing?.disambiguation_plan ?? null,
     readable_catalog: existing?.readable_catalog ?? null,
     saved_chat_tests: existing?.saved_chat_tests ?? null,
+    corpus_extra_annotations: existing?.corpus_extra_annotations ?? null,
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
@@ -143,6 +147,7 @@ async function persistAnalysis(documentId: string, analysis: Analysis): Promise<
     disambiguation_plan: analysis.disambiguation_plan ?? null,
     readable_catalog: analysis.readable_catalog ?? null,
     saved_chat_tests: analysis.saved_chat_tests ?? null,
+    corpus_extra_annotations: analysis.corpus_extra_annotations ?? null,
   };
   const { data: inserted, error } = await supabase
     .from('kb_analyses')
@@ -151,8 +156,8 @@ async function persistAnalysis(documentId: string, analysis: Analysis): Promise<
     .single();
   if (error) {
     if (
-      (analysis.disambiguation_plan || analysis.readable_catalog || analysis.saved_chat_tests)
-      && /disambiguation_plan|readable_catalog|saved_chat_tests|column|schema cache/i.test(error.message)
+      (analysis.disambiguation_plan || analysis.readable_catalog || analysis.saved_chat_tests || analysis.corpus_extra_annotations)
+      && /disambiguation_plan|readable_catalog|saved_chat_tests|corpus_extra_annotations|column|schema cache/i.test(error.message)
     ) {
       throw new Error(
         `${error.message} — Esegui la migration Supabase: npx supabase db push.`,
@@ -311,13 +316,14 @@ export function useAnalysis(documentId: string) {
     });
   }, [analysis?.disambiguation_plan, analysis?.id]);
 
-  const saveAnalysis = useCallback(async () => {
+  const saveAnalysis = useCallback(async (overrides?: Pick<Analysis, 'corpus_extra_annotations'>) => {
     if (!analysis || !hasPersistableAnalysisState(analysis)) return;
     setSaving(true);
     setError(null);
     try {
       const toPersist: Analysis = {
         ...analysis,
+        ...overrides,
         saved_chat_tests: savedChatTestsRef.current.length > 0
           ? savedChatTestsRef.current
           : null,
@@ -332,6 +338,9 @@ export function useAnalysis(documentId: string) {
       setSavedChatTests(preserved);
       setAnalysis({
         ...normalized,
+        corpus_extra_annotations: normalized.corpus_extra_annotations
+          ?? toPersist.corpus_extra_annotations
+          ?? null,
         saved_chat_tests: preserved.length > 0 ? preserved : null,
       });
       setAnalysisDirty(false);
@@ -346,6 +355,19 @@ export function useAnalysis(documentId: string) {
   const discardAnalysisChanges = useCallback(async () => {
     await load();
   }, [load]);
+
+
+  const updateCorpusExtraAnnotations = useCallback((storage: Record<string, string[]>) => {
+    setAnalysis((prev) => {
+      const base = prev ?? draftAnalysis(documentId, [], null);
+      return {
+        ...base,
+        corpus_extra_annotations: Object.keys(storage).length > 0 ? storage : null,
+        updated_at: new Date().toISOString(),
+      };
+    });
+    setAnalysisDirty(true);
+  }, [documentId]);
 
   const updateAgentConfig = useCallback((updates: {
     start_question?: string | null;
@@ -524,18 +546,26 @@ export function useAnalysis(documentId: string) {
   const syncItemPathsFromLoadedRefs = useCallback((
     descriptions: string[],
     loadedRefs: LoadedDictionaryRef[],
-    options?: { segmentExclusions?: CorpusSegmentExclusions },
+    options?: {
+      segmentExclusions?: CorpusSegmentExclusions;
+      itemExclusions?: CorpusItemExclusions;
+      extraAnnotations?: import('../lib/corpusExtraAnnotations').CorpusExtraAnnotations;
+    },
   ): Analysis | null => {
     setError(null);
     try {
       if (loadedRefs.length > 0) {
         pathOrderingCategoriesRef.current = getPathOrderingCategories(loadedRefs);
       }
+      const extraAnnotations = options?.extraAnnotations
+        ?? corpusExtraAnnotationsFromStorage(analysis?.corpus_extra_annotations);
       const leafPaths = resolveCorpusItemPaths(
         buildCorpusSegmentationInputFromLoadedRefs(
           descriptions,
           loadedRefs,
           options?.segmentExclusions,
+          options?.itemExclusions,
+          extraAnnotations,
         ),
       );
       return applyItemPathSync(leafPaths, analysis);
@@ -552,6 +582,8 @@ export function useAnalysis(documentId: string) {
     loadedRefs: LoadedDictionaryRef[],
     options?: {
       segmentExclusions?: CorpusSegmentExclusions;
+      itemExclusions?: CorpusItemExclusions;
+      extraAnnotations?: import('../lib/corpusExtraAnnotations').CorpusExtraAnnotations;
       onProgress?: (current: number, total: number) => void;
     },
   ): Promise<Analysis> => {
@@ -559,10 +591,14 @@ export function useAnalysis(documentId: string) {
     if (loadedRefs.length > 0) {
       pathOrderingCategoriesRef.current = getPathOrderingCategories(loadedRefs);
     }
+    const extraAnnotations = options?.extraAnnotations
+      ?? corpusExtraAnnotationsFromStorage(analysis?.corpus_extra_annotations);
     const segInput = buildCorpusSegmentationInputFromLoadedRefs(
       descriptions,
       loadedRefs,
       options?.segmentExclusions,
+      options?.itemExclusions,
+      extraAnnotations,
     );
     const leafPaths = await resolveCorpusItemPathsFromSegmentationCacheAsync(
       segInput,
@@ -785,6 +821,7 @@ export function useAnalysis(documentId: string) {
     saveAnalysis,
     discardAnalysisChanges,
     updateAgentConfig,
+    updateCorpusExtraAnnotations,
     updateDisambiguationPlan,
     updateReadableCatalogEntry,
     addSavedChatTest,

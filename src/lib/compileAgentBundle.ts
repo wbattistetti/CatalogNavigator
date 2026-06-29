@@ -16,6 +16,7 @@ import {
   resolveCorpusItemPaths,
   resolveCorpusSegmentationRows,
 } from './corpusItemPaths';
+import { corpusExtraAnnotationsFromStorage } from './corpusExtraAnnotations';
 import { getPathOrderingCategories } from './pathCanonicalize';
 import { normalizeCategoryOrders } from './dictionaryTree';
 import type { CatalogSanityReport } from './catalogSanity';
@@ -113,12 +114,15 @@ function resolveLeafSourceText(
 export function compileAgentBundle(input: AgentBundleCompileInput): AgentBundle {
   const ontology = requireOntology(input);
   const descriptions = requireCorpusDescriptions(input);
+  const extraAnnotations = input.extraAnnotations
+    ?? corpusExtraAnnotationsFromStorage(input.analysis?.corpus_extra_annotations);
   const segmentationInput = {
     descriptions,
     dictionary: input.dictionary,
     loadedRefs: input.loadedRefs,
     segmentExclusions: input.segmentExclusions,
     itemExclusions: input.itemExclusions,
+    extraAnnotations,
   };
   const pathCategories = input.loadedRefs?.length
     ? getPathOrderingCategories(input.loadedRefs)

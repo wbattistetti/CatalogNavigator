@@ -42,7 +42,7 @@ export function isGlideDescCell(
     && (cell.data as GlideDescCellData | undefined)?.type === GLIDE_DESC_CELL;
 }
 
-function drawDescriptionRuns(
+export function drawDescriptionRuns(
   args: Parameters<CustomRenderer<CustomCell<GlideDescCellData>>['draw']>[0],
   data: GlideDescCellData,
 ): void {
@@ -121,9 +121,8 @@ export function buildGlideDescCell(data: GlideDescCellData): CustomCell<GlideDes
     kind: GridCellKind.Custom,
     data,
     copyData: data.sourceText,
-    allowOverlay: true,
+    allowOverlay: false,
     readonly: true,
     allowWrapping: true,
-    activationBehaviorOverride: 'single-click',
   };
 }

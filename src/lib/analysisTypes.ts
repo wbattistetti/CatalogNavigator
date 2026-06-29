@@ -83,6 +83,8 @@ export interface Analysis {
   readable_catalog?: ReadableCatalogStorage | null;
   /** Manual VB chat sessions saved from Test Motore VB. */
   saved_chat_tests?: SavedChatTestsStorage | null;
+  /** Per-row extra column tokens keyed by corpus source row index. */
+  corpus_extra_annotations?: Record<string, string[]> | null;
   created_at: string;
   updated_at: string;
 }

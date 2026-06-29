@@ -6,6 +6,7 @@ import { compileAgentBundle } from '../../lib/compileAgentBundle';
 import type { CatalogSanityReport } from '../../lib/catalogSanity';
 import { hasCatalogSanityIssues } from '../../lib/catalogSanity';
 import type { CorpusItemExclusions, CorpusSegmentExclusions } from '../../lib/corpusItemPaths';
+import type { CorpusExtraAnnotations } from '../../lib/corpusExtraAnnotations';
 import type { LoadedDictionaryRef } from '../../lib/multiDictionarySegment';
 import type { TokenDictionary } from '../../lib/tokenDictionary';
 import type { Analysis } from '../../lib/analysisTypes';
@@ -24,6 +25,7 @@ export interface CatalogSanityReportInput {
   pathsOutOfSync?: boolean;
   segmentExclusions?: CorpusSegmentExclusions;
   itemExclusions?: CorpusItemExclusions;
+  extraAnnotations?: CorpusExtraAnnotations;
 }
 
 export function computeCatalogSanityReport(
@@ -44,6 +46,7 @@ export function computeCatalogSanityReport(
       pathsOutOfSync: input.pathsOutOfSync,
       segmentExclusions: input.segmentExclusions,
       itemExclusions: input.itemExclusions,
+      extraAnnotations: input.extraAnnotations,
     });
     return bundle.meta.catalogSanity ?? null;
   } catch {
@@ -71,6 +74,7 @@ export function useCatalogSanityReport(input: CatalogSanityReportInput): {
       input.pathsOutOfSync,
       input.segmentExclusions,
       input.itemExclusions,
+      input.extraAnnotations,
     ],
   );
 

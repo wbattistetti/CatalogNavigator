@@ -60,6 +60,7 @@ function resolveSegmentationInput(input: AgentBundleCompileInput): CorpusSegment
       input.loadedRefs,
       input.segmentExclusions,
       input.itemExclusions,
+      input.extraAnnotations,
     );
   }
 
@@ -68,6 +69,7 @@ function resolveSegmentationInput(input: AgentBundleCompileInput): CorpusSegment
     dictionary: input.dictionary,
     segmentExclusions: input.segmentExclusions,
     itemExclusions: input.itemExclusions,
+    extraAnnotations: input.extraAnnotations,
   };
 }
 

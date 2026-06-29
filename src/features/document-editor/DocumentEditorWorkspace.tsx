@@ -4,10 +4,10 @@
 import { useCallback, useRef, useState } from 'react';
 import { useWorkspaceEagerMount } from '../../hooks/useWorkspaceEagerMount';
 import { useDocumentEditorController, useDocumentEditorTab } from './DocumentEditorContext';
-import { createSplitLayout, type EditorSplitLayout } from './documentEditorSplitLayout';
+import { createSplitLayout, isEditorTabDragEvent, parseEditorTabDrag } from './documentEditorSplitLayout';
 import { EditorWorkspacePanel } from './EditorWorkspacePanel';
 import { WorkspacePanel } from './WorkspacePanel';
-import { EDITOR_TAB_IDS, type EditorTabId } from './editorTabIds';
+import { EDITOR_TAB_IDS } from './editorTabIds';
 import { CorpusOntologyStatusBanner } from './CorpusOntologyStatusBanner';
 
 type DropSide = 'left' | 'right';
@@ -93,9 +93,27 @@ export function DocumentEditorWorkspace() {
   const mountedTabs = useWorkspaceEagerMount(activeTab);
   const [dragOver, setDragOver] = useState<DropSide | null>(null);
 
+  const applyTabSplitDrop = useCallback((e: React.DragEvent, side: DropSide) => {
+    const droppedTab = parseEditorTabDrag(e.dataTransfer);
+    if (!droppedTab) return;
+
+    const partner = activeTab === droppedTab
+      ? (droppedTab === EDITOR_TAB_IDS.document ? EDITOR_TAB_IDS.dictionaries : EDITOR_TAB_IDS.document)
+      : activeTab;
+
+    if (partner === droppedTab) return;
+
+    if (side === 'left') {
+      setSplitLayout(createSplitLayout(droppedTab, partner));
+    } else {
+      setSplitLayout(createSplitLayout(partner, droppedTab));
+    }
+  }, [activeTab, setSplitLayout]);
+
   const onDragOver = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes('application/x-editor-tab')) return;
+    if (!isEditorTabDragEvent(e)) return;
     e.preventDefault();
+    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const side: DropSide = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
     setDragOver(side);
@@ -108,26 +126,14 @@ export function DocumentEditorWorkspace() {
   }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
+    if (!isEditorTabDragEvent(e)) return;
     e.preventDefault();
+    e.stopPropagation();
     setDragOver(null);
-    const droppedTab = e.dataTransfer.getData('application/x-editor-tab') as EditorTabId;
-    if (!droppedTab) return;
-
-    const partner = activeTab === droppedTab
-      ? (droppedTab === EDITOR_TAB_IDS.document ? EDITOR_TAB_IDS.dictionaries : EDITOR_TAB_IDS.document)
-      : activeTab;
-
-    if (partner === droppedTab) return;
-
     const rect = e.currentTarget.getBoundingClientRect();
     const side: DropSide = e.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
-
-    if (side === 'left') {
-      setSplitLayout(createSplitLayout(droppedTab, partner));
-    } else {
-      setSplitLayout(createSplitLayout(partner, droppedTab));
-    }
-  }, [activeTab, setSplitLayout]);
+    applyTabSplitDrop(e, side);
+  }, [applyTabSplitDrop]);
 
   const onRatioChange = useCallback((ratio: number) => {
     if (splitLayout.type !== 'split') return;
@@ -137,9 +143,9 @@ export function DocumentEditorWorkspace() {
   return (
     <div
       className="flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden bg-[#0d0d0d] relative"
-      onDragOver={onDragOver}
+      onDragOverCapture={onDragOver}
       onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      onDropCapture={onDrop}
     >
       <SplitDropOverlay visible={dragOver != null} side={dragOver} />
       <CorpusOntologyStatusBanner />

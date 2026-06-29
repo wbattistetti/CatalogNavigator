@@ -7,6 +7,7 @@ import { useDocumentEditorController as useControllerHook } from './useDocumentE
 import { DictionarySelectionProvider } from './DictionarySelectionProvider';
 import { DocumentEditorNavigationProvider } from './DocumentEditorNavigationProvider';
 import { OntologyCorpusSegmentationProvider } from '../ontology-corpus/OntologyCorpusSegmentationContext';
+import { OntologyCorpusExtraProvider } from '../ontology-corpus/OntologyCorpusExtraContext';
 import {
   DocumentEditorControllerContext,
   type DictionaryAliasPickRequest,
@@ -54,7 +55,9 @@ function DocumentEditorControllerProvider({
       <DictionaryCatalogContext.Provider value={controller.dictionaryCatalog}>
         <DictionarySessionActionsContext.Provider value={controller.dictionarySessionActions}>
           <OntologyCorpusSegmentationProvider value={controller.corpusSegmentationContextValue}>
-            {children}
+            <OntologyCorpusExtraProvider value={controller.corpusExtraContextValue}>
+              {children}
+            </OntologyCorpusExtraProvider>
           </OntologyCorpusSegmentationProvider>
         </DictionarySessionActionsContext.Provider>
       </DictionaryCatalogContext.Provider>

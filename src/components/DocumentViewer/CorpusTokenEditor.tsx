@@ -16,6 +16,7 @@ import {
 import { useCorpusDescriptionFilter } from '../../features/ontology-corpus/useCorpusDescriptionFilter';
 import { useCorpusRows } from '../../features/ontology-corpus/useCorpusRows';
 import { useOntologyCorpusSegmentation } from '../../features/ontology-corpus/OntologyCorpusSegmentationContext';
+import { useOntologyCorpusExtra } from '../../features/ontology-corpus/OntologyCorpusExtraContext';
 import { useCorpusChipActions } from '../../features/ontology-corpus/useCorpusChipActions';
 import { useCorpusTokenMenus } from '../../features/ontology-corpus/useCorpusTokenMenus';
 import { CorpusTableHeader } from '../../features/ontology-corpus/corpus/CorpusTableHeader';
@@ -23,6 +24,7 @@ import { CorpusOntologyBuildProgress } from '../../features/ontology-corpus/corp
 import { CorpusSelectionBanner } from '../../features/ontology-corpus/corpus/CorpusSelectionBanner';
 import { CorpusContextMenus } from '../../features/ontology-corpus/corpus/CorpusContextMenus';
 import { useCorpusGlideRows } from '../../features/ontology-corpus/corpusGlide/useCorpusGlideRows';
+import { mergeExtraAnnotationsIntoGlideRowMap } from '../../features/ontology-corpus/corpusGlide/buildCorpusGlideRows';
 import {
   CorpusGlideOverlayProvider,
   type CorpusGlideOverlayContextValue,
@@ -76,6 +78,7 @@ export function CorpusTokenEditor({
   const { allRows, visibleRows } = useCorpusRows(descriptions, descriptionFilter, onRowFilterStatsChange);
 
   const segmentation = useOntologyCorpusSegmentation();
+  const { extraAnnotations } = useOntologyCorpusExtra();
   const tableRef = useRef<CorpusGlideGridHandle>(null);
 
   const cacheReady = segmentation.progress.ready;
@@ -100,6 +103,17 @@ export function CorpusTokenEditor({
     projectDictionaryId,
     categories,
     hasDisplayableSegmentation,
+  );
+
+  const displayGlideRowMap = useMemo(
+    () => mergeExtraAnnotationsIntoGlideRowMap(
+      glideRowMap,
+      extraAnnotations,
+      liveLoadedRefs,
+      projectDictionaryId,
+      categories,
+    ),
+    [glideRowMap, extraAnnotations, liveLoadedRefs, projectDictionaryId, categories],
   );
 
   const overlayValue = useMemo((): CorpusGlideOverlayContextValue => ({
@@ -293,7 +307,7 @@ export function CorpusTokenEditor({
       <CorpusGlideGrid
         ref={tableRef}
         visibleRows={visibleRows}
-        glideRowMap={glideRowMap}
+        glideRowMap={displayGlideRowMap}
         onClearSelectionClick={handleClearSelectionClick}
       />
     );

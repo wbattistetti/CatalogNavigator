@@ -4,6 +4,7 @@
 import type { Analysis } from './analysisTypes';
 import type { LoadedDictionaryRef } from './multiDictionarySegment';
 import type { TokenDictionary } from './tokenDictionary';
+import type { CorpusExtraAnnotations } from './corpusExtraAnnotations';
 
 export type AgentBundleMode = 'preview' | 'published';
 
@@ -91,6 +92,8 @@ export interface AgentBundleCompileInput {
   segmentExclusions?: SegmentExclusionsByText;
   /** Whole corpus rows omitted from catalog compile. */
   itemExclusions?: ReadonlySet<string>;
+  /** Per-row extra column tokens merged into catalog paths at compile time. */
+  extraAnnotations?: CorpusExtraAnnotations;
   dictionaryDirty?: boolean;
   analysisDirty?: boolean;
   pathsOutOfSync?: boolean;

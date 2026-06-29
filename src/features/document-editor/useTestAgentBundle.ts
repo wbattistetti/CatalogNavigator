@@ -21,6 +21,7 @@ function useTestAgentCompileInput() {
     leafDescriptionMap,
     corpusSegmentExclusions,
     corpusItemExclusions,
+    corpusExtraContextValue,
     analysisApi,
   } = useDocumentEditorController();
 
@@ -47,6 +48,7 @@ function useTestAgentCompileInput() {
       pathsOutOfSync: agentNeedsUpdate,
       segmentExclusions: corpusSegmentExclusions,
       itemExclusions: corpusItemExclusions,
+      extraAnnotations: corpusExtraContextValue.extraAnnotations,
     };
   }, [
     agentDictionaryContext,
@@ -60,6 +62,7 @@ function useTestAgentCompileInput() {
     liveLoadedRefs,
     corpusSegmentExclusions,
     corpusItemExclusions,
+    corpusExtraContextValue.extraAnnotations,
   ]);
 }
 
@@ -88,12 +91,14 @@ export function useTestPlanSegmentationRows(): RowSegmentation[] {
         input.loadedRefs,
         input.segmentExclusions,
         input.itemExclusions,
+        input.extraAnnotations,
       )
       : {
         descriptions: input.descriptions,
         dictionary: input.dictionary,
         segmentExclusions: input.segmentExclusions,
         itemExclusions: input.itemExclusions,
+        extraAnnotations: input.extraAnnotations,
       };
     return resolveCorpusSegmentationRows(segInput);
   }, [input]);

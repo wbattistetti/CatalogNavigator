@@ -1,6 +1,7 @@
 /**
  * Side-by-side layout for main editor tabs (drag tab to workspace edge to split).
  */
+import type { DragEvent } from 'react';
 import type { EditorTabId } from './editorTabIds';
 
 export type EditorSplitLayout =
@@ -8,6 +9,10 @@ export type EditorSplitLayout =
   | { type: 'split'; primary: EditorTabId; secondary: EditorTabId; ratio: number };
 
 export const EDITOR_TAB_DRAG_MIME = 'application/x-editor-tab';
+
+export function isEditorTabDragEvent(e: DragEvent): boolean {
+  return [...e.dataTransfer.types].includes(EDITOR_TAB_DRAG_MIME);
+}
 
 export function editorTabDragPayload(tabId: EditorTabId): string {
   return tabId;

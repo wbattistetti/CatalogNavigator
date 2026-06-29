@@ -1,30 +1,29 @@
 /**
- * Portaled hit layer for corpus segmentation chips — same layout as canvas, no row resize.
+ * Portaled editor for a single corpus extra cell — chip removal via X (double-click to open).
  */
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import type { GlideChipCellData, GlideChipPaint } from '../../../lib/glideChipRenderer';
-import { GLIDE_WRAP_PILL_GAP } from '../../../lib/glideWrapLayout';
-import { TABULAR_GLIDE_THEME } from '../../../components/DocumentViewer/tabularGlideTheme';
-import { useOntologyCorpusSegmentation } from '../OntologyCorpusSegmentationContext';
-import { useCorpusGlideOverlay } from './CorpusGlideOverlayContext';
-import type { GlideCellScreenRect } from './resolveGlideCellScreenRect';
+import type { GlideChipCellData, GlideChipPaint } from '../../../../lib/glideChipRenderer';
+import { GLIDE_WRAP_PILL_GAP } from '../../../../lib/glideWrapLayout';
+import { TABULAR_GLIDE_THEME } from '../../../../components/DocumentViewer/tabularGlideTheme';
+import { useOntologyCorpusExtra } from '../../OntologyCorpusExtraContext';
+import { useCorpusGlideOverlay } from '../CorpusGlideOverlayContext';
+import type { GlideCellScreenRect } from '../resolveGlideCellScreenRect';
 import {
   useDictionaryChipDragging,
   useDictionaryChipSelected,
-} from '../../../features/document-editor/dictionarySelectionStore';
-import { useCorpusChipActions } from '../../../components/DocumentViewer/CorpusChipActionsContext';
+} from '../../../document-editor/dictionarySelectionStore';
+import { useCorpusChipActions } from '../../../../components/DocumentViewer/CorpusChipActionsContext';
 
 const CELL_H_PAD = TABULAR_GLIDE_THEME.cellHorizontalPadding ?? 8;
 const CELL_V_PAD = TABULAR_GLIDE_THEME.cellVerticalPadding ?? 2;
-const UNMATCHED_COLOR = TABULAR_GLIDE_THEME.textLight ?? 'rgba(167, 243, 208, 0.55)';
 
 function resolvePortalRoot(): HTMLElement {
   return document.getElementById('portal') ?? document.body;
 }
 
-function GlideSegmentationHitChip({
+function ExtraEditorChip({
   paint,
   canonical,
   categorizable,
@@ -72,7 +71,7 @@ function GlideSegmentationHitChip({
           e.stopPropagation();
           onRemove();
         }}
-        title="Rimuovi dalla segmentazione"
+        title="Rimuovi da extra"
         className="flex-shrink-0 rounded p-0.5 opacity-0 transition-opacity group-hover/chip:opacity-100 text-red-400/70 hover:text-red-300 hover:bg-red-400/15"
       >
         <X className="h-2.5 w-2.5" />
@@ -81,27 +80,21 @@ function GlideSegmentationHitChip({
   );
 }
 
-export function CorpusGlideSegmentationHitLayer({
+export function CorpusExtraCellEditor({
+  rowIndex,
   chipData,
   anchor,
   onClose,
 }: {
+  rowIndex: number;
   chipData: GlideChipCellData;
   anchor: GlideCellScreenRect;
   onClose: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const overlay = useCorpusGlideOverlay();
-  const { lookup, removeSegment } = useOntologyCorpusSegmentation();
-  const sourceText = chipData.sourceText;
-  const segmentation = lookup(sourceText);
-  const segments = segmentation?.segments ?? chipData.segments.map((paint) => ({
-    text: paint.text,
-    dictionaryId: '',
-  }));
+  const { removeExtraTokenAt } = useOntologyCorpusExtra();
   const paints = chipData.segments;
-  const unmatched = segmentation?.unmatched ?? chipData.unmatched;
-  const paintByText = new Map(paints.map((p) => [p.text, p]));
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -132,10 +125,10 @@ export function CorpusGlideSegmentationHitLayer({
         backgroundColor: TABULAR_GLIDE_THEME.bgCell ?? '#0d0d0d',
       }}
     >
-      {segments.length === 0 && unmatched.length === 0 ? (
+      {paints.length === 0 ? (
         <span
           className="font-mono text-[12px] italic"
-          style={{ color: UNMATCHED_COLOR, lineHeight: '20px' }}
+          style={{ color: TABULAR_GLIDE_THEME.textLight, lineHeight: '20px' }}
         >
           —
         </span>
@@ -144,28 +137,19 @@ export function CorpusGlideSegmentationHitLayer({
           className="flex min-w-0 flex-wrap items-center"
           style={{ gap: GLIDE_WRAP_PILL_GAP, rowGap: 0, lineHeight: '20px' }}
         >
-          {segments.map((seg, i) => {
-            const paint = paintByText.get(seg.text) ?? paints[i];
-            if (!paint) return null;
-            const categorizable = overlay.editableCanonicalSet.has(seg.text);
+          {paints.map((paint, i) => {
+            const canonical = paint.text;
+            const categorizable = overlay.editableCanonicalSet.has(canonical);
             return (
-              <GlideSegmentationHitChip
-                key={`${seg.text}-${i}`}
+              <ExtraEditorChip
+                key={`${canonical}-${i}`}
                 paint={paint}
-                canonical={seg.text}
+                canonical={canonical}
                 categorizable={categorizable}
-                onRemove={() => removeSegment(sourceText, seg.text)}
+                onRemove={() => removeExtraTokenAt(rowIndex, canonical, i)}
               />
             );
           })}
-          {unmatched.length > 0 && (
-            <span
-              className="font-mono text-[12px] whitespace-nowrap"
-              style={{ color: UNMATCHED_COLOR, lineHeight: '20px' }}
-            >
-              {`+${unmatched.length} unmatched`}
-            </span>
-          )}
         </div>
       )}
     </div>,

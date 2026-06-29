@@ -36,6 +36,7 @@ import {
 } from '../../lib/columnRoles';
 import { useOntologyRefresh, type AgentDictionaryContext } from './useOntologyRefresh';
 import { useCorpusExclusions } from './useCorpusExclusions';
+import { useCorpusExtraAnnotations } from '../../hooks/useCorpusExtraAnnotations';
 import { useCatalogSanityReport } from './useCatalogSanityReport';
 import { usePersistedSegmentationCache, lookupCorpusSegmentation } from '../../hooks/usePersistedSegmentationCache';
 import { saveProjectBundle } from '../../application/project/saveProjectBundle';
@@ -43,6 +44,8 @@ import { resolveCorpusOntologyStatus } from '../../domain/project/corpusOntology
 import { isProjectDictionaryLayoutStable } from '../../domain/project/projectLayoutReady';
 import { applySegmentExclusions } from '../../lib/corpusSegmentationOverrides';
 import type { OntologyCorpusSegmentationValue } from '../ontology-corpus/OntologyCorpusSegmentationContext';
+import type { OntologyCorpusExtraContextValue } from '../ontology-corpus/OntologyCorpusExtraContext';
+import { useCorpusExtraColumnSelection } from '../ontology-corpus/useCorpusExtraColumnSelection';
 import type {
   ChatTurnReplayRequest,
   OpenDisambiguationFromChatOptions,
@@ -145,6 +148,18 @@ export function useDocumentEditorController({
     excludeCorpusItem,
     restoreCorpusItem,
   } = useCorpusExclusions(doc.id);
+  const {
+    extraAnnotations,
+    addExtraTokens,
+    removeExtraTokenAt,
+    clearAllExtraAnnotations,
+  } = useCorpusExtraAnnotations(
+    doc.id,
+    analysisApi.analysis,
+    analysisApi.analysisDirty,
+    analysisApi.updateCorpusExtraAnnotations,
+  );
+  const extraColumnSelection = useCorpusExtraColumnSelection();
   const {
     load,
     initialLoadDone,
@@ -352,7 +367,11 @@ export function useDocumentEditorController({
         descriptions,
         cache,
         loadedRefs,
-        { segmentExclusions: corpusSegmentExclusions },
+        {
+          segmentExclusions: corpusSegmentExclusions,
+          itemExclusions: corpusItemExclusions,
+          extraAnnotations,
+        },
       )
         .then(() => analysisApi.saveAnalysis())
         .catch(() => {
@@ -365,6 +384,8 @@ export function useDocumentEditorController({
     corpusSegmentation.buildCorpusSegmentation,
     syncItemPathsFromSegmentationCache,
     corpusSegmentExclusions,
+    corpusItemExclusions,
+    extraAnnotations,
     analysisApi,
   ]);
 
@@ -401,6 +422,7 @@ export function useDocumentEditorController({
     itemPaths: analysisApi.analysis?.item_paths,
     segmentExclusions: corpusSegmentExclusions,
     itemExclusions: corpusItemExclusions,
+    extraAnnotations,
     partialSegmentationAvailable: corpusSegmentation.partialSegmentationAvailable,
     partialSegmentationProcessed: corpusSegmentation.progress.processed,
     partialSegmentationTotal: corpusSegmentation.progress.total,
@@ -437,6 +459,28 @@ export function useDocumentEditorController({
     removeCorpusSegment,
   ]);
 
+  const corpusExtraContextValue = useMemo((): OntologyCorpusExtraContextValue => ({
+    extraAnnotations,
+    addExtraTokens,
+    removeExtraTokenAt,
+    clearAllExtraAnnotations,
+    lookupExtra: (rowIndex: number) => extraAnnotations.get(rowIndex) ?? [],
+    selectedRowIndices: extraColumnSelection.selectedRowIndices,
+    selectedDisplayRows: extraColumnSelection.selectedDisplayRows,
+    selectExtraCell: extraColumnSelection.selectExtraCell,
+    replaceExtraSelection: extraColumnSelection.replaceExtraSelection,
+    clearExtraSelection: extraColumnSelection.clearExtraSelection,
+    snapshotExtraSelectionForDrag: extraColumnSelection.snapshotExtraSelectionForDrag,
+    clearExtraDragSnapshot: extraColumnSelection.clearExtraDragSnapshot,
+    resolveDropTargetRowIndices: extraColumnSelection.resolveDropTargetRowIndices,
+  }), [
+    extraAnnotations,
+    addExtraTokens,
+    removeExtraTokenAt,
+    clearAllExtraAnnotations,
+    extraColumnSelection,
+  ]);
+
   const catalogDescriptions = useMemo(() => {
     const fromPanel = dictState?.getDescriptions() ?? agentDictionaryContext?.descriptions;
     if (fromPanel?.some((d) => d.trim().length > 0)) return fromPanel;
@@ -463,6 +507,7 @@ export function useDocumentEditorController({
     pathsOutOfSync: agentNeedsUpdate,
     segmentExclusions: corpusSegmentExclusions,
     itemExclusions: corpusItemExclusions,
+    extraAnnotations,
   });
 
   const handleDictionaryAfterSave = useCallback(
@@ -475,7 +520,8 @@ export function useDocumentEditorController({
         if (!analysisApi.hasTaxonomy) {
           syncItemPathsFromLoadedRefs(descriptions, liveRefs, {
             segmentExclusions: corpusSegmentExclusions,
-    itemExclusions: corpusItemExclusions,
+            itemExclusions: corpusItemExclusions,
+            extraAnnotations,
           });
         }
         bindGrammarTokens(tokens);
@@ -492,6 +538,7 @@ export function useDocumentEditorController({
       syncGrammarsFromTokens,
       corpusSegmentExclusions,
       corpusItemExclusions,
+      extraAnnotations,
     ],
   );
 
@@ -551,6 +598,7 @@ export function useDocumentEditorController({
         syncItemPathsFromLoadedRefs(agentDictionaryContext.descriptions, liveRefs, {
           segmentExclusions: corpusSegmentExclusions,
           itemExclusions: corpusItemExclusions,
+          extraAnnotations,
         });
         // Mark only after sync actually ran — avoids skipping mount when idle callback is cancelled.
         lastAgentMountRevision.current = agentMountRevision;
@@ -582,6 +630,7 @@ export function useDocumentEditorController({
     syncItemPathsFromLoadedRefs,
     corpusSegmentExclusions,
     corpusItemExclusions,
+    extraAnnotations,
   ]);
 
   const handleUnloadLibraryDictionary = useCallback(
@@ -602,7 +651,8 @@ export function useDocumentEditorController({
         if (descriptions.length > 0) {
           syncItemPathsFromLoadedRefs(descriptions, liveRefs, {
             segmentExclusions: corpusSegmentExclusions,
-    itemExclusions: corpusItemExclusions,
+            itemExclusions: corpusItemExclusions,
+            extraAnnotations,
           });
         }
 
@@ -622,6 +672,7 @@ export function useDocumentEditorController({
       syncGrammarsFromTokens,
       corpusSegmentExclusions,
       corpusItemExclusions,
+      extraAnnotations,
     ],
   );
 
@@ -826,6 +877,7 @@ export function useDocumentEditorController({
     liveLoadedRefs,
     pathOrderingCategories,
     corpusSegmentationContextValue,
+    corpusExtraContextValue,
     corpusSegmentation,
       corpusSegmentExclusions,
     corpusItemExclusions,

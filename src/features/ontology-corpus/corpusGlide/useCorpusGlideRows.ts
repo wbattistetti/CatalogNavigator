@@ -51,8 +51,7 @@ export function useCorpusGlideRows(
     }
 
     let cancelled = false;
-    setGlideRows([]);
-    setBuilding(true);
+    setBuilding(allRows.length > BUILD_CHUNK_SIZE);
     setBuildProgress({ processed: 0, total: allRows.length });
 
     const lookupRef = (text: string) =>
@@ -73,12 +72,14 @@ export function useCorpusGlideRows(
         loadedRefs,
         editingDictionaryId,
         categories,
+        new Map(),
       ));
       return () => {
         cancelled = true;
       };
     }
 
+    setGlideRows([]);
     const built: CorpusGlideRow[] = [];
     let index = 0;
 
@@ -92,6 +93,7 @@ export function useCorpusGlideRows(
         loadedRefs,
         editingDictionaryId,
         categories,
+        new Map(),
       ));
       index = end;
       setBuildProgress({ processed: index, total: allRows.length });

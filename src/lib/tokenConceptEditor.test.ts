@@ -77,6 +77,23 @@ describe('applyCanonicalConceptEdit', () => {
     expect(result.categories[0]?.tokenTexts).not.toContain('prima');
     expect(listAliasesForCanonical(result.tokens, 'prima visita')).toEqual(['syn']);
   });
+
+  it('reports category when alias conflicts with an existing canonical', () => {
+    const multiCategories: TokenCategory[] = [
+      { id: 'c1', name: 'esame', order: 0, tokenTexts: ['ecg'] },
+      { id: 'c2', name: 'altro', order: 1, tokenTexts: ['elettrocardiogramma'] },
+    ];
+    const multiTokens: TokenEntry[] = [
+      { text: 'ecg', enabled: true },
+      { text: 'elettrocardiogramma', enabled: true },
+    ];
+    expect(() => applyCanonicalConceptEdit(
+      multiTokens,
+      multiCategories,
+      'ecg',
+      'ecg: elettrocardiogramma',
+    )).toThrow('"elettrocardiogramma" è già un token canonico nella categoria «altro»');
+  });
 });
 
 describe('applyNewConceptLine', () => {
