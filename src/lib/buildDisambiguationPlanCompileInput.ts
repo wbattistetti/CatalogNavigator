@@ -15,7 +15,7 @@ import type { CorpusSegmentationEntry } from './corpusSegmentationCache';
 import { lookupCorpusSegmentation, yieldToMainThread } from './corpusSegmentationCache';
 import { getPathOrderingCategories } from './pathCanonicalize';
 import { normalizeCategoryOrders } from './dictionaryTree';
-import { buildCorpusItemsFromPaths } from './slotExtract';
+import { buildCorpusItemsWithConstraints } from './corpusItemCompile';
 
 export interface BuildDisambiguationPreparingProgress {
   phase: 'paths' | 'corpus_items';
@@ -88,12 +88,12 @@ async function buildCorpusItemsAsync(
   const total = itemPaths.length;
   if (total <= BATCH) {
     onPreparing?.({ phase: 'corpus_items', processed: total, total });
-    return buildCorpusItemsFromPaths(itemPaths, categories);
+    return buildCorpusItemsWithConstraints(itemPaths, categories);
   }
 
   const items: NonNullable<CompileDisambiguationPlanInput['corpusItems']> = [];
   for (let i = 0; i < itemPaths.length; i += BATCH) {
-    items.push(...buildCorpusItemsFromPaths(itemPaths.slice(i, i + BATCH), categories));
+    items.push(...buildCorpusItemsWithConstraints(itemPaths.slice(i, i + BATCH), categories));
     onPreparing?.({ phase: 'corpus_items', processed: Math.min(i + BATCH, total), total });
     await yieldToMainThread();
   }
@@ -237,7 +237,7 @@ export function buildDisambiguationPlanCompileInput(
     return {
       itemPaths: cachedPaths,
       categories,
-      corpusItems: buildCorpusItemsFromPaths(cachedPaths, categories),
+      corpusItems: buildCorpusItemsWithConstraints(cachedPaths, categories),
     };
   }
 
@@ -249,7 +249,7 @@ export function buildDisambiguationPlanCompileInput(
       return {
         itemPaths,
         categories,
-        corpusItems: buildCorpusItemsFromPaths(itemPaths, categories),
+        corpusItems: buildCorpusItemsWithConstraints(itemPaths, categories),
       };
     }
   }

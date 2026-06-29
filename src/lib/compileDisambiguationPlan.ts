@@ -1,9 +1,27 @@
 /**
  * Compiles the reachable disambiguation graph from catalog + dictionary categories.
- * Mirrors VB DialogEngine next-step logic (AgentSlotMatch + CatalogFilter planning mode).
+ * Mirrors VB DialogEngine (CatalogFilter + AgentSlotMatch + ask_age) for plan BFS:
+ * - corpus items include compiled vincolo age constraints (same as compileAgentBundle)
+ * - bootstrap seeds from first attributo segment (post start_question implicit NLU)
+ * - empty acquired → zero candidates; age filter uses total weeks like VB
  */
 import type { BundleCorpusItem, CompiledAgeConstraint } from './agentBundleTypes';
-import { pathSatisfiesAgeConstraints } from './constraintValidation';
+import {
+  ageYearsToTotalWeeks,
+  filterPlanCandidates,
+  planStateHasAcquiredAge,
+} from './catalogFilterPlan';
+import { pathSatisfiesAgeConstraintsFromTotalWeeks } from './constraintValidation';
+import { buildCorpusItemsWithConstraints } from './corpusItemCompile';
+import {
+  buildDisambiguationNodeKey,
+  buildPlanStateKey,
+  buildQueueStateKey,
+  planStateWithAgeAnswer,
+  planStateWithDisambiguationPick,
+  type PlanState,
+} from './compileDisambiguationPlanState';
+import { collectBootstrapSeedStates } from './planBootstrapSeeds';
 import {
   DISAMBIGUATION_MULTI_CHOICE_MARKER,
   DISAMBIGUATION_MULTI_CHOICE_THRESHOLD,
@@ -14,15 +32,13 @@ import {
   type DisambiguationQuestionStyle,
 } from './disambiguationPlanTypes';
 import { normalizeCategoryOrders, type TokenCategory } from './dictionaryTree';
-import { buildCorpusItemsFromPaths, normalizeSlotCategoryKey } from './slotExtract';
+import { normalizeSlotCategoryKey } from './slotExtract';
 import { buildVincoloAskSignature } from './disambiguationPlanMessages';
 import { isAgeVincoloCategoryName } from './vincoloResolutionGrammar';
 import {
   getItemAttributoValueSetKey,
-  getItemAttributoValues,
   parseValueSetKey,
   valueSetContainsAll,
-  valueSetsEqual,
 } from './valueSet';
 import { yieldToMainThread } from './corpusSegmentationCache';
 
@@ -78,12 +94,12 @@ export interface CompileDisambiguationPlanInput {
   corpusItems?: BundleCorpusItem[];
 }
 
-interface PlanState {
-  acquired: Record<string, string>;
-  ageYears: number | null;
-  /** Attributo categories committed via an explicit disambiguation option pick. */
-  exactAttributoCategories: string[];
-}
+export {
+  buildDisambiguationNodeKey,
+  buildPlanStateKey,
+  buildQueueStateKey,
+} from './compileDisambiguationPlanState';
+export type { PlanState } from './compileDisambiguationPlanState';
 
 interface NextStepResult {
   action: DisambiguationAction;
@@ -94,13 +110,6 @@ interface NextStepResult {
 
 function sortedAcquiredEntries(acquired: Record<string, string>): [string, string][] {
   return Object.entries(acquired).sort(([a], [b]) => a.localeCompare(b, 'it'));
-}
-
-/** Canonical state key including age (for node identity). */
-export function buildPlanStateKey(state: PlanState): string {
-  const parts = sortedAcquiredEntries(state.acquired).map(([k, v]) => `${k}=${v}`);
-  const base = parts.join('|');
-  return state.ageYears != null ? `${base}||age=${state.ageYears}` : base;
 }
 
 /**
@@ -115,25 +124,6 @@ export function buildExplorationStateKey(
   const acq = sortedAcquiredEntries(acquired).map(([k, v]) => `${k}=${v}`).join('|');
   const agePart = ageYears != null ? `||age=${ageYears}` : '';
   return `${acq}${agePart}||${fingerprintCandidatePathSet(candidatePaths)}`;
-}
-
-/** Dedup key for enqueued plan states (before expensive candidate filtering). */
-export function buildQueueStateKey(state: PlanState): string {
-  const exact = state.exactAttributoCategories.length === 0
-    ? ''
-    : `||exact:${[...state.exactAttributoCategories].sort((a, b) => a.localeCompare(b, 'it')).join(',')}`;
-  return `${buildPlanStateKey(state)}${exact}`;
-}
-
-/** Runtime lookup key for a disambiguation prompt at a given state. */
-export function buildDisambiguationNodeKey(
-  acquired: Record<string, string>,
-  categoryName: string,
-  options: string[],
-): string {
-  const statePart = sortedAcquiredEntries(acquired).map(([k, v]) => `${k}=${v}`).join('|');
-  const opts = [...options].sort((a, b) => a.localeCompare(b, 'it')).join('|');
-  return `${statePart}||${categoryName.trim()}||${opts}`;
 }
 
 function nonNoneOptions(options: string[]): string[] {
@@ -195,42 +185,6 @@ function isExactAttributoCategory(
   return exactAttributoCategories.some(
     (c) => c.trim() && c.trim() === categoryName.trim(),
   );
-}
-
-function itemMatchesAcquired(
-  item: BundleCorpusItem,
-  acquired: Record<string, string>,
-  categories: TokenCategory[],
-  exactAttributoCategories: readonly string[],
-): boolean {
-  for (const [catKey, setKey] of Object.entries(acquired)) {
-    const category = categories.find((c) => normalizeSlotCategoryKey(c.name) === catKey);
-    if (!category) continue;
-    const mentioned = parseValueSetKey(setKey);
-    const itemValues = getItemAttributoValues(item, category.name);
-    if (isExactAttributoCategory(exactAttributoCategories, category.name)) {
-      if (!valueSetsEqual(itemValues, mentioned)) return false;
-      continue;
-    }
-    if (!valueSetContainsAll(itemValues, mentioned)) return false;
-  }
-  return true;
-}
-
-function filterCandidates(
-  allItems: BundleCorpusItem[],
-  state: PlanState,
-  categories: TokenCategory[],
-): BundleCorpusItem[] {
-  let items = allItems.filter((item) =>
-    itemMatchesAcquired(item, state.acquired, categories, state.exactAttributoCategories),
-  );
-  if (state.ageYears != null) {
-    items = items.filter((item) =>
-      pathSatisfiesAgeConstraints(state.ageYears!, item.constraints as CompiledAgeConstraint[]),
-    );
-  }
-  return items;
 }
 
 function distinctAttributoValues(
@@ -359,7 +313,7 @@ function shouldAskAge(
   candidates: BundleCorpusItem[],
   categories: TokenCategory[],
 ): boolean {
-  if (state.ageYears != null) return false;
+  if (planStateHasAcquiredAge(state)) return false;
   if (candidates.length <= 1) return false;
   if (anyItemHasAgeConstraint(candidates)) return true;
   return hasUnresolvedAgeVincoloAmongCandidates(candidates, state.acquired, categories);
@@ -453,26 +407,19 @@ export function expandAgeSuccessorStates(
   const successors: PlanState[] = [];
 
   for (const age of probeAges) {
+    const totalWeeks = ageYearsToTotalWeeks(age);
     const filtered = candidates.filter((item) =>
-      pathSatisfiesAgeConstraints(age, item.constraints as CompiledAgeConstraint[]),
+      pathSatisfiesAgeConstraintsFromTotalWeeks(totalWeeks, item.constraints as CompiledAgeConstraint[]),
     );
     if (filtered.length === 0) continue;
     const setKey = fingerprintCandidatePathSet(filtered.map((i) => i.path));
     if (seenCandidateSets.has(setKey)) continue;
     seenCandidateSets.add(setKey);
-    successors.push({
-      acquired: { ...state.acquired },
-      ageYears: age,
-      exactAttributoCategories: [...state.exactAttributoCategories],
-    });
+    successors.push(planStateWithAgeAnswer(state, age));
   }
 
   if (successors.length === 0 && candidates.length > 0) {
-    successors.push({
-      acquired: { ...state.acquired },
-      ageYears: 30,
-      exactAttributoCategories: [...state.exactAttributoCategories],
-    });
+    successors.push(planStateWithAgeAnswer(state, 30));
   }
 
   return successors;
@@ -523,6 +470,7 @@ interface DisambiguationPlanBfsContext {
   confirmStates: number;
   deadStates: number;
   stuckStates: number;
+  bootstrapSeedCount: number;
 }
 
 function tryEnqueueState(ctx: DisambiguationPlanBfsContext, state: PlanState): void {
@@ -545,7 +493,7 @@ function initDisambiguationPlanBfs(
     throw new Error('Dizionario categorie mancante: impossibile calcolare il piano.');
   }
 
-  const corpusItems = input.corpusItems ?? buildCorpusItemsFromPaths(itemPaths, categories);
+  const corpusItems = input.corpusItems ?? buildCorpusItemsWithConstraints(itemPaths, categories);
 
   return {
     corpusItems,
@@ -560,11 +508,16 @@ function initDisambiguationPlanBfs(
     confirmStates: 0,
     deadStates: 0,
     stuckStates: 0,
+    bootstrapSeedCount: 0,
   };
 }
 
 function seedDisambiguationPlanQueue(ctx: DisambiguationPlanBfsContext): void {
-  tryEnqueueState(ctx, { acquired: {}, ageYears: null, exactAttributoCategories: [] });
+  const seeds = collectBootstrapSeedStates(ctx.corpusItems, ctx.categories);
+  ctx.bootstrapSeedCount = seeds.length;
+  for (const seed of seeds) {
+    tryEnqueueState(ctx, seed);
+  }
 }
 
 /** Processes one BFS step. Returns false when the queue is empty. */
@@ -572,7 +525,7 @@ function stepDisambiguationPlanBfs(ctx: DisambiguationPlanBfsContext): boolean {
   if (ctx.queue.length === 0) return false;
 
   const state = ctx.queue.shift()!;
-  const candidates = filterCandidates(ctx.corpusItems, state, ctx.categories);
+  const candidates = filterPlanCandidates(ctx.corpusItems, state, ctx.categories);
   const paths = candidates.map((c) => c.path);
   const explorationKey = buildExplorationStateKey(state.acquired, paths, state.ageYears);
 
@@ -640,14 +593,7 @@ function stepDisambiguationPlanBfs(ctx: DisambiguationPlanBfsContext): boolean {
     }
 
     for (const opt of step.options) {
-      const catKey = normalizeSlotCategoryKey(step.categoryName);
-      const exact = state.exactAttributoCategories.filter((c) => c !== step.categoryName);
-      exact.push(step.categoryName);
-      tryEnqueueState(ctx, {
-        acquired: { ...state.acquired, [catKey]: opt },
-        ageYears: state.ageYears,
-        exactAttributoCategories: exact,
-      });
+      tryEnqueueState(ctx, planStateWithDisambiguationPick(state, step.categoryName, opt));
     }
   }
 
@@ -657,6 +603,11 @@ function stepDisambiguationPlanBfs(ctx: DisambiguationPlanBfsContext): boolean {
 function finalizeDisambiguationPlanBfs(ctx: DisambiguationPlanBfsContext): DisambiguationPlanResult {
   const warnings: string[] = [];
 
+  if (ctx.bootstrapSeedCount === 0) {
+    warnings.push(
+      'Nessuno stato bootstrap dal primo segmento path: verifica categorie attributo nel dizionario.',
+    );
+  }
   if (ctx.stuckStates > 0) {
     warnings.push(
       `${ctx.stuckStates} stati terminali ambigui (più candidati ma nessuna categoria attributo da chiedere).`,
@@ -807,12 +758,24 @@ export function buildGuidedPathToTarget(
 
   const allItems = [...corpusItems];
   const cats = [...categories];
-  const state: PlanState = { acquired: {}, ageYears: null, exactAttributoCategories: [] };
+  const seeds = collectBootstrapSeedStates(allItems, cats);
+  const matchingSeed = seeds.find((seed) =>
+    filterPlanCandidates(allItems, seed, cats).some((c) => c.path === targetPath),
+  );
+  if (!matchingSeed) {
+    return {
+      reachable: false,
+      steps: [],
+      reason: 'Nessuno stato bootstrap raggiunge il target (primo segmento path).',
+    };
+  }
+
+  let state: PlanState = matchingSeed;
   const steps: GuidedPathStep[] = [];
   const MAX = 40;
 
   for (let i = 0; i < MAX; i += 1) {
-    const candidates = filterCandidates(allItems, state, cats);
+    const candidates = filterPlanCandidates(allItems, state, cats);
     if (!candidates.some((c) => c.path === targetPath)) {
       return { reachable: false, steps, reason: 'Target escluso dai candidati correnti.' };
     }
@@ -843,8 +806,9 @@ export function buildGuidedPathToTarget(
       const agesToTry = probeAges.length > 0 ? probeAges : [30, 45, 17];
       let picked: number | null = null;
       for (const age of agesToTry) {
+        const totalWeeks = ageYearsToTotalWeeks(age);
         const filtered = candidates.filter((item) =>
-          pathSatisfiesAgeConstraints(age, item.constraints as CompiledAgeConstraint[]),
+          pathSatisfiesAgeConstraintsFromTotalWeeks(totalWeeks, item.constraints as CompiledAgeConstraint[]),
         );
         if (filtered.some((c) => c.path === targetPath)) {
           picked = age;
@@ -854,7 +818,7 @@ export function buildGuidedPathToTarget(
       if (picked == null) {
         return { reachable: false, steps, reason: 'Età probe non mantiene il target nei candidati.' };
       }
-      state.ageYears = picked;
+      state = planStateWithAgeAnswer(state, picked);
       steps.push({ kind: 'age', userText: `${picked} anni` });
       continue;
     }
@@ -870,9 +834,7 @@ export function buildGuidedPathToTarget(
           reason: `Opzione target «${option}» non tra [${step.options.join(', ')}].`,
         };
       }
-      const catKey = normalizeSlotCategoryKey(step.categoryName);
-      state.acquired[catKey] = pick;
-      state.exactAttributoCategories = [...state.exactAttributoCategories, step.categoryName];
+      state = planStateWithDisambiguationPick(state, step.categoryName, pick);
       steps.push({
         kind: 'token',
         categoryName: step.categoryName,
