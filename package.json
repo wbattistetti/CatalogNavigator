@@ -18,6 +18,7 @@
     "db:migrate": "supabase migration up --local",
     "db:migrate:remote": "supabase db push",
     "db:seed-pharma": "tsx scripts/seed-pharma-dictionary.ts",
+    "db:seed-idi": "tsx scripts/seed-idi-dictionary.ts",
     "db:populate-pharma": "tsx scripts/populate-pharma-from-csv.ts"
   },
   "dependencies": {

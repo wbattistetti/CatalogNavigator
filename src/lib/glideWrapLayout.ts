@@ -11,7 +11,12 @@ export const GLIDE_WRAP_PILL_HEIGHT = 18;
 export const GLIDE_WRAP_PILL_PAD_X = 6;
 export const GLIDE_WRAP_RUN_GAP = 2;
 export const GLIDE_WRAP_PILL_GAP = 4;
-export const GLIDE_WRAP_CELL_V_PAD = 16;
+/** Top + bottom cell padding — matches TABULAR_GLIDE_THEME.cellVerticalPadding (2px each). */
+export const GLIDE_WRAP_CELL_V_PAD = 4;
+export const GLIDE_WRAP_CELL_H_PAD = 8;
+
+/** Canvas font string aligned with TABULAR_GLIDE_THEME (12px monospace). */
+export const GLIDE_CORPUS_FONT = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
 
 export type MeasureTextWidth = (text: string) => number;
 
@@ -144,12 +149,19 @@ export function estimateChipPillLines(
 }
 
 export function corpusGlideRowHeight(
-  descriptionLines: number,
-  segmentationLines: number,
+  lineCounts: readonly number[],
   minHeight = 48,
 ): number {
-  const contentLines = Math.max(descriptionLines, segmentationLines);
+  const contentLines = Math.max(1, ...lineCounts);
   return Math.max(minHeight, GLIDE_WRAP_CELL_V_PAD + contentLines * GLIDE_WRAP_LINE_HEIGHT);
+}
+
+/** Inner drawable width inside a Glide column (horizontal padding on both sides). */
+export function glideCorpusCellInnerWidth(
+  colWidth: number,
+  horizontalPad = GLIDE_WRAP_CELL_H_PAD,
+): number {
+  return Math.max(64, colWidth - horizontalPad * 2);
 }
 
 /** Fast monospace width estimate for row-height layout (no canvas). */
@@ -157,30 +169,102 @@ export function monospaceTextMeasure(charWidth = 6.4): MeasureTextWidth {
   return (text: string) => text.length * charWidth;
 }
 
+let glideCorpusTextMeasureCache: MeasureTextWidth | null = null;
+
+/**
+ * Text width measure for corpus row-height layout — same font metrics as canvas draw.
+ */
+export function glideCorpusTextMeasure(): MeasureTextWidth {
+  if (glideCorpusTextMeasureCache) return glideCorpusTextMeasureCache;
+
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      glideCorpusTextMeasureCache = (text: string) => {
+        ctx.font = GLIDE_CORPUS_FONT;
+        return ctx.measureText(text).width;
+      };
+      return glideCorpusTextMeasureCache;
+    }
+  }
+
+  glideCorpusTextMeasureCache = monospaceTextMeasure(7.1);
+  return glideCorpusTextMeasureCache;
+}
+
+/** Line count for chip pills + optional "+N unmatched" suffix (matches canvas draw). */
+export function chipPillLayoutLineCount(
+  segments: readonly GlideChipPaint[],
+  unmatchedCount: number,
+  maxWidth: number,
+  measure: MeasureTextWidth,
+): number {
+  if (segments.length === 0 && unmatchedCount === 0) return 1;
+  if (maxWidth <= 0) return 1;
+
+  const startX = 0;
+  const { lineCount, unmatchedX } = layoutChipPills(segments, startX, 0, maxWidth, measure);
+
+  if (unmatchedCount <= 0) return Math.max(1, lineCount);
+
+  const label = `+${unmatchedCount} unmatched`;
+  const labelWidth = measure(label);
+  if (segments.length > 0 && unmatchedX - startX + labelWidth > maxWidth) {
+    return Math.max(1, lineCount + 1);
+  }
+  return Math.max(1, lineCount);
+}
+
 export function estimateCorpusGlideRowHeight(input: {
   sourceText: string;
   descriptionRuns: readonly GlideDescRun[];
   segmentTexts: readonly string[];
+  extraSegmentTexts?: readonly string[];
   unmatchedCount: number;
   descriptionColWidth: number;
   segmentationColWidth: number;
+  extraColWidth: number;
   minHeight?: number;
 }): number {
-  const measure = monospaceTextMeasure();
-  const descInner = Math.max(64, input.descriptionColWidth - 16);
-  const segInner = Math.max(64, input.segmentationColWidth - 16);
-  const extraInner = Math.max(64, (input.extraColWidth ?? input.segmentationColWidth) - 16);
-  const descLines = input.descriptionRuns.length > 0
-    ? estimateDescriptionRunLines(input.descriptionRuns, descInner, measure)
-    : estimateWrappedTextLines(input.sourceText, descInner, measure);
-  const fakePaints: GlideChipPaint[] = input.segmentTexts.map((text) => ({
+  const measure = glideCorpusTextMeasure();
+  const descInner = glideCorpusCellInnerWidth(input.descriptionColWidth);
+  const segInner = glideCorpusCellInnerWidth(input.segmentationColWidth);
+  const extraInner = glideCorpusCellInnerWidth(input.extraColWidth);
+
+  const runs = input.descriptionRuns.length > 0
+    ? input.descriptionRuns
+    : (input.sourceText.length > 0 ? [{ kind: 'text' as const, text: input.sourceText }] : []);
+
+  const descLines = runs.length > 0
+    ? layoutDescriptionRuns(runs, 0, 0, descInner, measure).lineCount
+    : 1;
+
+  const segPaints: GlideChipPaint[] = input.segmentTexts.map((text) => ({
     text,
     bgColor: '',
     borderColor: '',
     fgColor: '',
   }));
-  const segLines = estimateChipPillLines(fakePaints, input.unmatchedCount, segInner, measure);
-  return corpusGlideRowHeight(descLines, segLines, input.minHeight);
+  const segLines = chipPillLayoutLineCount(segPaints, input.unmatchedCount, segInner, measure);
+
+  const extraTexts = input.extraSegmentTexts ?? [];
+  const extraLines = extraTexts.length > 0
+    ? layoutChipPills(
+      extraTexts.map((text) => ({
+        text,
+        bgColor: '',
+        borderColor: '',
+        fgColor: '',
+      })),
+      0,
+      0,
+      extraInner,
+      measure,
+    ).lineCount
+    : 0;
+
+  return corpusGlideRowHeight([descLines, segLines, extraLines], input.minHeight);
 }
 
 export const CORPUS_GLIDE_EXTRA_COL_WIDTH = 160;

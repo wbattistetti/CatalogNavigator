@@ -70,8 +70,8 @@ function buildDescriptionRuns(
     const paint = paintForSegment(span.canonical, loadedRefs, editingDictionaryId, categories);
     runs.push({
       kind: 'chip',
-      text: label.length > 40 ? `${label.slice(0, 39)}…` : label,
-      paint: { ...paint, text: label.length > 40 ? `${label.slice(0, 39)}…` : label },
+      text: label,
+      paint: { ...paint, text: label },
     });
     cursor = span.end;
   });
@@ -88,14 +88,15 @@ const EMPTY_SEGMENTATION: CorpusSegmentationEntry = { segments: [], unmatched: [
 /** Benchmark-style palette — instant preview chips without dictionary segmentation. */
 const PREVIEW_CHIP_COLORS = ['#f59e0b', '#38bdf8', '#34d399', '#a78bfa', '#f472b6'] as const;
 const MAX_PREVIEW_CHIPS = 8;
-const MAX_CHIP_LABEL_CHARS = 40;
-
-function truncateChipLabel(text: string): string {
-  if (text.length <= MAX_CHIP_LABEL_CHARS) return text;
-  return `${text.slice(0, MAX_CHIP_LABEL_CHARS - 1)}…`;
+function previewPaint(text: string, colorHex: string): GlideChipPaint {
+  const surface = chipSurfaceStyleFromColor(colorHex);
+  return {
+    text,
+    bgColor: surface.backgroundColor,
+    borderColor: surface.borderColor,
+    fgColor: surface.color,
+  };
 }
-
-/** Maps segmentation tokens to inline description chip runs (fast, no phrase re-match). */
 function buildDescriptionRunsFromSegmentation(
   text: string,
   segmentation: CorpusSegmentationEntry,
@@ -122,7 +123,7 @@ function buildDescriptionRunsFromSegmentation(
       runs.push({ kind: 'text', text: text.slice(cursor, absStart) });
     }
 
-    const displayLabel = truncateChipLabel(label);
+    const displayLabel = label;
     const paint = paintForSegment(canonical);
     runs.push({
       kind: 'chip',
@@ -150,17 +151,6 @@ function splitPreviewSegments(text: string): string[] {
   if (byBullet.length > 1) return byBullet.slice(0, MAX_PREVIEW_CHIPS);
 
   return [trimmed];
-}
-
-function previewPaint(text: string, colorHex: string): GlideChipPaint {
-  const surface = chipSurfaceStyleFromColor(colorHex);
-  const label = truncateChipLabel(text);
-  return {
-    text: label,
-    bgColor: surface.backgroundColor,
-    borderColor: surface.borderColor,
-    fgColor: surface.color,
-  };
 }
 
 /**

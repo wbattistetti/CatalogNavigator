@@ -1,9 +1,38 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+/** Standard local Supabase stack (`supabase start`). */
+const LOCAL_DEV_SUPABASE_URL = 'http://127.0.0.1:54321';
+const LOCAL_DEV_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+
+const envUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
+const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
+
+const supabaseUrl = envUrl || LOCAL_DEV_SUPABASE_URL;
+const supabaseAnonKey = envKey || LOCAL_DEV_ANON_KEY;
+
+if (!envUrl || !envKey) {
+  console.warn(
+    '[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY non impostate — uso stack locale di default.',
+  );
+}
+
+if (
+  supabaseUrl.includes('127.0.0.1') || supabaseUrl.includes('localhost')
+) {
+  if (envKey?.startsWith('sb_publishable_')) {
+    console.warn(
+      '[supabase] VITE_SUPABASE_ANON_KEY sembra una chiave cloud (sb_publishable_*). '
+      + 'Per lo stack locale usa la anon key JWT da "supabase status".',
+    );
+  }
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+export function supabaseConfigSummary(): { url: string; keyConfigured: boolean } {
+  return { url: supabaseUrl, keyConfigured: Boolean(envKey) };
+}
 
 export type ColumnRole = 'selector' | 'data' | 'description' | 'ontology' | 'ignore';
 

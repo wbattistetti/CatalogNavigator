@@ -2,8 +2,40 @@
  * Supabase CRUD for kb_projects catalog (Catalog Navigator landing).
  */
 import { industryLabel } from '../lib/dictionaryIndustries';
-import { supabase, type KbDocument, type KbProject } from '../lib/supabase';
+import { supabase, supabaseConfigSummary, type KbDocument, type KbProject } from '../lib/supabase';
 import type { ProjectCatalogRow, ProjectInfo, ProjectStatus } from '../types/project';
+
+const SUPABASE_FETCH_TIMEOUT_MS = 12_000;
+
+async function withSupabaseTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const { url } = supabaseConfigSummary();
+      reject(new Error(
+        `${label}: timeout (${SUPABASE_FETCH_TIMEOUT_MS / 1000}s). `
+        + `Supabase non risponde su ${url}. Avvia lo stack con "supabase start" o "npm run db:status".`,
+      ));
+    }, SUPABASE_FETCH_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function formatSupabaseError(message: string): string {
+  if (/fetch failed|failed to fetch|networkerror|timeout/i.test(message)) {
+    const { url } = supabaseConfigSummary();
+    return `${message} (endpoint: ${url})`;
+  }
+  if (/invalid api key|jwt|unauthorized|401/i.test(message)) {
+    return `${message}. Verifica VITE_SUPABASE_ANON_KEY in .env (per locale: output di "supabase status").`;
+  }
+  return message;
+}
 
 type ProjectRow = KbProject & {
   client?: string | null;
@@ -81,14 +113,22 @@ async function fetchDocumentsByProject(): Promise<Map<string, { id: string; name
 
 /** Lists all catalog projects with optional linked document metadata. */
 export async function fetchAllProjects(): Promise<ProjectCatalogRow[]> {
-  const [projRes, docMap] = await Promise.all([
-    supabase.from('kb_projects').select('*').order('updated_at', { ascending: false }),
-    fetchDocumentsByProject(),
-  ]);
-  if (projRes.error) throw new Error(projRes.error.message);
-  return (projRes.data ?? []).map((row) =>
-    mapProjectRow(row as ProjectRow, docMap.get(row.id) ?? null),
-  );
+  try {
+    const [projRes, docMap] = await withSupabaseTimeout(
+      Promise.all([
+        supabase.from('kb_projects').select('*').order('updated_at', { ascending: false }),
+        fetchDocumentsByProject(),
+      ]),
+      'Caricamento progetti',
+    );
+    if (projRes.error) throw new Error(formatSupabaseError(projRes.error.message));
+    return (projRes.data ?? []).map((row) =>
+      mapProjectRow(row as ProjectRow, docMap.get(row.id) ?? null),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(formatSupabaseError(message));
+  }
 }
 
 /** Recent projects (same source, limited for the Recenti tab). */

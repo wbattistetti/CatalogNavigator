@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  chipPillLayoutLineCount,
   corpusGlideRowHeight,
   estimateChipPillLines,
   estimateCorpusGlideRowHeight,
@@ -35,8 +36,8 @@ describe('glideWrapLayout', () => {
   });
 
   it('computes row height from description and segmentation lines', () => {
-    const height = corpusGlideRowHeight(4, 2);
-    expect(height).toBeGreaterThan(48);
+    const height = corpusGlideRowHeight([4, 2]);
+    expect(height).toBeGreaterThanOrEqual(48);
   });
 
   it('estimates corpus row height from glide row inputs', () => {
@@ -47,7 +48,21 @@ describe('glideWrapLayout', () => {
       unmatchedCount: 2,
       descriptionColWidth: 400,
       segmentationColWidth: 360,
+      extraColWidth: 160,
     });
-    expect(height).toBeGreaterThan(48);
+    expect(height).toBeGreaterThanOrEqual(48);
+  });
+
+  it('chipPillLayoutLineCount adds a line when unmatched label wraps', () => {
+    const measure = monospaceTextMeasure(8);
+    const paints = Array.from({ length: 6 }, (_, i) => ({
+      text: `token-${i}`,
+      bgColor: '#000',
+      borderColor: '#111',
+      fgColor: '#fff',
+    }));
+    const tight = chipPillLayoutLineCount(paints, 5, 120, measure);
+    const wide = chipPillLayoutLineCount(paints, 5, 800, measure);
+    expect(tight).toBeGreaterThanOrEqual(wide);
   });
 });

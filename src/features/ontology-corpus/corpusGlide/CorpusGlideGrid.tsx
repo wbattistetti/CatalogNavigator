@@ -266,13 +266,26 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
         corpusRow.text.length > 0 ? [{ kind: 'text', text: corpusRow.text }] : []
       ),
       segmentTexts: glideRow?.segPaints.map((p) => p.text) ?? [],
+      extraSegmentTexts: glideRow?.extraPaints.map((p) => p.text) ?? [],
       unmatchedCount: glideRow?.segmentation?.unmatched.length ?? 0,
       descriptionColWidth: columnWidths.description,
       segmentationColWidth: columnWidths.segmentation,
       extraColWidth: columnWidths.extra,
       minHeight: CORPUS_GLIDE_MIN_ROW_HEIGHT,
     });
-  }, [columnWidths.description, columnWidths.segmentation, columnWidths.extra]);
+  }, [columnWidths.description, columnWidths.segmentation, columnWidths.extra, glideRowMap]);
+
+  useEffect(() => {
+    if (!gridReady || visibleRows.length === 0) return;
+    const raf = requestAnimationFrame(() => {
+      gridRef.current?.updateCells(
+        visibleRows.flatMap((_, row) => (
+          [0, 1, 2, 3].map((col) => ({ cell: [col, row] as Item }))
+        )),
+      );
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [glideRowMap, gridReady, visibleRows, columnWidths.description, columnWidths.segmentation, columnWidths.extra]);
 
   useEffect(() => {
     if (!gridReady) return;
@@ -538,8 +551,7 @@ export const CorpusGlideGrid = forwardRef(function CorpusGlideGrid(
           rowSelect="none"
           columnSelect="none"
           onVisibleRegionChanged={onVisibleRegionChanged}
-          getRowHeight={getRowHeight}
-          rowHeight={CORPUS_GLIDE_MIN_ROW_HEIGHT}
+          rowHeight={getRowHeight}
           headerHeight={CORPUS_GLIDE_HEADER_HEIGHT}
           width={size.width}
           height={size.height}

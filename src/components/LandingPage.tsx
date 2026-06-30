@@ -49,6 +49,7 @@ export function LandingPage({
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
   const hasProjects = projects.length > 0;
+  const showProjectsTable = !loading && hasProjects;
 
   const filtered = useMemo(() => {
     if (tab === 'draft') return projects.filter((p) => p.status === 'draft');
@@ -116,9 +117,34 @@ export function LandingPage({
             </button>
           )}
         </div>
+
+        {loading && (
+          <div className="flex items-center justify-center gap-2 mt-6 text-emerald-400/50">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="font-mono text-xs">Caricamento progetti…</span>
+          </div>
+        )}
+
+        {loadError && (
+          <div className="mt-6 max-w-xl rounded border border-red-400/40 bg-red-950/30 px-4 py-3 text-center">
+            <p className="font-mono text-xs text-red-300">{loadError}</p>
+            <p className="mt-2 font-mono text-[10px] text-red-400/70">
+              Verifica che Supabase sia avviato (<code className="text-red-300/90">npm run db:status</code>
+              {' '}o <code className="text-red-300/90">supabase start</code>) e che{' '}
+              <code className="text-red-300/90">VITE_SUPABASE_URL</code> /{' '}
+              <code className="text-red-300/90">VITE_SUPABASE_ANON_KEY</code> siano corretti in .env.
+            </p>
+          </div>
+        )}
+
+        {!loading && !loadError && !hasProjects && (
+          <p className="mt-6 font-mono text-xs text-emerald-400/40">
+            Nessun progetto salvato. Crea il primo con &quot;Nuovo Progetto&quot;.
+          </p>
+        )}
       </div>
 
-      {hasProjects && (
+      {showProjectsTable && (
         <div id="projects-panel" className="flex-1 px-4 pb-10 max-w-6xl mx-auto w-full">
           <div className="border border-emerald-500/40 rounded-sm bg-[#050a06]">
             <div className="flex items-center justify-between px-4 py-3 border-b border-emerald-500/30">
@@ -162,12 +188,6 @@ export function LandingPage({
                 )}
               </div>
             </div>
-
-            {loadError && (
-              <p className="px-4 py-2 font-mono text-xs text-red-400 border-b border-emerald-500/20">
-                {loadError}
-              </p>
-            )}
 
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-16 text-emerald-400/40">
